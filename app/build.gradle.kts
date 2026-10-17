@@ -95,6 +95,7 @@ dependencies {
     // Directly used by app sources (were previously leaking transitively via :core:android api()).
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.datastore.preferences)
     // v4.0 audit fix (theme): the *platform* has no Theme.Material3 / DayNight
     // styles (the v3.3.9 themes referenced styles that never existed — the zip
     // could not have compiled). Material Components provides the real
