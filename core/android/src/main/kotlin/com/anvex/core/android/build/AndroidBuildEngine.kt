@@ -45,7 +45,11 @@ class AndroidBuildEngine(private val toolchain: ToolchainManager) {
 
     fun requestCancellation() {
         cancelled.set(true)
+        // A stuck Gradle child can ignore SIGTERM; escalate to SIGKILL so
+        // cancellation is actually bounded (destroyForcibly is a no-op if
+        // the process already died).
         running?.destroy()
+        running?.destroyForcibly()
     }
 
     /** Durable-task entry point used by AgentIdeBridge (no log streaming). */
