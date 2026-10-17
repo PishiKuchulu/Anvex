@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Anvex Harness v4.1</title>
+<link rel="stylesheet" href="styles.css">
+<!-- v4.1 (Nebula): fully OFFLINE head. JetBrains Mono is bundled locally
+     (./fonts/, SIL OFL — see @font-face in styles.css) and JSZip is bundled
+     locally as ./jszip.min.js. No CDN, no network, no blob: anywhere. -->
+<script src="/__runtime__/react.umd.js"></script>
+<script src="/__runtime__/react-dom.umd.js"></script>
+<script src="/__runtime__/babel.min.js"></script>
+<script src="./jszip.min.js"></script>
+<script src="bridge.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react" src="app.jsx"></script>
+
+</body>
+</html>

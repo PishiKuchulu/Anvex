@@ -1,0 +1,121 @@
+name: Build and verify Anvex APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anvex-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools, platforms;android-35, build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install icon verification dependency
+        run: python3 -m pip install --disable-pip-version-check Pillow
+
+      - name: Source and icon audit
+        run: |
+          python3 tools/deep_audit_30.py
+          python3 tools/verify_launcher_icon.py
+          python3 tools/verify_room_schema_snapshots.py
+
+      - name: Verify Gradle wrapper can run
+        run: ./gradlew --no-daemon --version
+
+      - name: Run aggregate source release gates
+        run: python3 tools/final_release_audit.py
+
+      - name: Generate source mirror
+        run: python3 tools/build_source_mirror.py
+
+      - name: Verify generated source mirror
+        run: python3 tools/verify_source_mirror.py
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon :core:engine:test :core:android:testDebugUnitTest :core:ai:test :app:testDebugUnitTest
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anvex-test-reports-${{ github.run_number }}-${{ github.run_attempt }}
+          path: '**/build/reports/tests/**'
+          if-no-files-found: ignore
+          retention-days: 14
+
+  apk:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools, platforms;android-35, build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install icon verification dependency
+        run: python3 -m pip install --disable-pip-version-check Pillow
+
+      - name: Source integrity gates
+        run: |
+          python3 tools/deep_audit_30.py
+          python3 tools/verify_room_schema_snapshots.py
+          ./gradlew --no-daemon --version
+          python3 tools/final_release_audit.py
+
+      - name: Generate source mirror
+        run: python3 tools/build_source_mirror.py
+
+      - name: Verify generated source mirror
+        run: python3 tools/verify_source_mirror.py
+
+      - name: Clean and build fresh debug APK
+        run: ./gradlew --no-daemon clean :app:assembleDebug
+
+      - name: Verify launcher icon inside generated APK
+        run: python3 tools/verify_launcher_icon.py --apk app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Write build provenance and checksums
+        run: python3 tools/write_apk_build_info.py app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload verified APK and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: anvex-debug-apk-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/BUILD-INFO.txt
+            app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v4.0 audit fix (theme): API 26-28 has no platform DayNight; Compose owns the
+  real theming, this frame just needs a matching dark/light pre-Compose surface.
+  values-night provides the dark variant for this level.
+-->
+<resources>
+    <style name="Theme.Anvex" parent="Theme.Material3.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

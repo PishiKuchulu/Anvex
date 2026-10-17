@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v4.0 audit fix (Android 12+): explicit data-extraction policy.
+  Anvex stores Android-Keystore-encrypted provider credentials — those keys
+  cannot leave the device, so cloud backup and device transfer are both fully
+  disabled for every data domain. allowBackup="false" remains the primary
+  control; these rules make the intent machine-checkable on Android 12+.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

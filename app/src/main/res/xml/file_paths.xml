@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v4.0: FileProvider scope.
+  - build-artifacts/ : in-app Gradle build APKs (GOAL 3 — share/install APK)
+  - exports/ : harness ZIP exports saved to app-external storage on API 26-28
+    (MediaStore.Downloads is used on API 29+ and needs no provider) and the
+    standalone root index.html export used by the browser fallback (GOAL 6).
+  Every path stays app-private; no broad root mapping is exposed.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="build_artifacts" path="build-artifacts/" />
+    <files-path name="exports" path="exports/" />
+    <external-files-path name="external_exports" path="Downloads/" />
+    <files-path name="generated" path="generated/" />
+    <cache-path name="shared" path="shared/" />
+    <cache-path name="camera" path="camera/" />
+</paths>

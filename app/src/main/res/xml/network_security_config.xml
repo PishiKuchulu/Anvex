@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v4.0 audit fix (cleartext scope): the previous base-config allowed cleartext HTTP
+  app-wide, justified by local-model servers. Anvex v4 is cloud-provider-only
+  (GOAL 5), so the base config is fail-closed HTTPS-only.
+
+  Cleartext remains permitted ONLY for loopback destinations:
+  - the in-app localhost preview / harness server (StaticPreviewServer + HarnessWebServer)
+  - `adb reverse`-style loopback proxies a developer may configure as a custom endpoint.
+
+  Platform limitation (documented, honest): network-security-config domain entries do
+  not support CIDR notation, so private LAN ranges (10.0.0.0/8, 192.168.0.0/16) cannot
+  be allow-listed here. LAN cleartext therefore fails closed at the platform layer;
+  ProviderRepository's own private-range HTTP exception is retained for loopback only.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">::1</domain>
+    </domain-config>
+</network-security-config>
