@@ -119,3 +119,29 @@ jobs:
             app/build/outputs/apk/debug/app-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: anvex-debug-apk-${{ github.run_number }}-${{ github.run_attempt }}
+          path: dist/
+
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest build — آخرین بیلد"
+          body: |
+            Rolling debug build of Anvex from the latest `main` commit.
+            Install at your own risk — this is a debug build for testing, not a signed release.
+
+            بیلد دیباگِ آخرین کامیتِ main — برای تست است، نه انتشار نهایی.
+          files: dist/app-debug.apk
+          prerelease: true

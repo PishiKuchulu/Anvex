@@ -1,9 +1,15 @@
-# Anvex — Command Deck for your code
+<p align="center">
+  <img src="docs/assets/anvex-wordmark.jpg" alt="ANVEX — AI Harness" width="720">
+</p>
 
-[![Build debug APK](https://github.com/PishiKuchulu/Anvex/actions/workflows/build-apk.yml/badge.svg)](https://github.com/PishiKuchulu/Anvex/actions/workflows/build-apk.yml)
-![version](https://img.shields.io/badge/version-4.4.4-blue)
-![minSdk](https://img.shields.io/badge/minSdk-26-green)
-![license](https://img.shields.io/badge/license-MIT-lightgrey)
+<p align="center">
+  <a href="https://github.com/PishiKuchulu/Anvex/actions/workflows/build-apk.yml"><img src="https://github.com/PishiKuchulu/Anvex/actions/workflows/build-apk.yml/badge.svg" alt="Build debug APK"></a>
+  <img src="https://img.shields.io/badge/version-4.4.4-blue" alt="version">
+  <img src="https://img.shields.io/badge/minSdk-26-green" alt="minSdk">
+  <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
+</p>
+
+<p align="center"><b>Command Deck for your code</b></p>
 
 **Anvex** is a full **AI coding-agent environment that lives on your Android phone**:
 chat with an agent that writes real files, run shell commands in an interactive
@@ -13,6 +19,10 @@ git — and even build APKs without leaving the app. A standalone Android port o
 durable on-device agent loop.
 
 > Your phone is no longer just a viewer for your code. It's the deck you command it from.
+
+<p align="center">
+  <img src="docs/assets/anvex-emblem.jpg" alt="Anvex emblem" width="320">
+</p>
 
 ---
 
