@@ -336,15 +336,8 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
             return m?.groupValues?.get(2) ?: content
         }
 
-        /** Port of upstream `cleanEscapedTags`. */
-        /**
-         * Narrowed port of upstream `cleanEscapedTags`: unescape only when the content has no raw `<`/`>` at
-         * all (the model escaped the whole file by mistake). Real HTML/JSX that legitimately contains
-         * `&lt;` also has raw tags and must not be rewritten.
-         */
+        /** Port of upstream `cleanEscapedTags` (unconditional, like bolt.diy). */
         internal fun cleanEscapedTags(content: String): String {
-            if (!content.contains("&lt;") && !content.contains("&gt;")) return content
-            if (content.contains('<') || content.contains('>')) return content
             return content.replace("&lt;", "<").replace("&gt;", ">")
         }
     }
