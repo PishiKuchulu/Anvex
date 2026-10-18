@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AssistChip
@@ -662,7 +663,7 @@ private fun KeyLinkRow(label: String, hint: String, onClick: () -> Unit) {
             )
         }
         Icon(
-            androidx.compose.material.icons.Icons.Filled.OpenInBrowser,
+            Icons.Filled.OpenInBrowser,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(20.dp),
