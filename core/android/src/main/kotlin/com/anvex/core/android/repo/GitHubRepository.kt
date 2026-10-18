@@ -31,6 +31,87 @@ class GitHubRepository(private val context: android.content.Context) {
     fun clearToken() { prefs.edit().remove(tokenKey).apply() }
     private fun token(): String = prefs.getString(tokenKey, null)?.let { runCatching { KeystoreCrypto.decrypt(it) }.getOrDefault("") } ?: ""
 
+    // -- GitHub Device Authorization Flow (OAuth for apps without a backend) --
+    // No client secret is needed; the user creates a GitHub OAuth App once and
+    // pastes its (public) client ID below. The 8-char user code is authorized at
+    // github.com/login/device, then we poll for the access token.
+
+    private val oauthClientIdKey = "oauth_client_id"
+    fun oauthClientId(): String = prefs.getString(oauthClientIdKey, "").orEmpty()
+    fun saveOauthClientId(id: String) { prefs.edit().putString(oauthClientIdKey, id.trim()).apply() }
+
+    data class DeviceCode(
+        val deviceCode: String,
+        val userCode: String,
+        val verificationUri: String,
+        val expiresInSec: Int,
+        val intervalSec: Int,
+    )
+
+    sealed interface DevicePoll {
+        data object Pending : DevicePoll
+        data object SlowDown : DevicePoll
+        data class Granted(val accessToken: String) : DevicePoll
+        data class Failed(val message: String) : DevicePoll
+    }
+
+    suspend fun requestDeviceCode(clientId: String): Result<DeviceCode> = withContext(Dispatchers.IO) {
+        runCatching {
+            val clean = clientId.trim()
+            require(clean.matches(Regex("[A-Za-z0-9]{5,64}"))) { "Invalid OAuth client ID." }
+            val body = "client_id=${java.net.URLEncoder.encode(clean, Charsets.UTF_8.name())}&scope=repo"
+                .toRequestBody("application/x-www-form-urlencoded".toMediaType())
+            val req = Request.Builder()
+                .url("https://github.com/login/device/code")
+                .header("Accept", "application/json")
+                .post(body)
+                .build()
+            http.newCall(req).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) error("GitHub device flow failed (HTTP ${response.code}).")
+                val json = JSONObject(text)
+                json.optString("error").takeIf { it.isNotBlank() }?.let {
+                    error("GitHub: $it — ${json.optString("error_description")}")
+                }
+                DeviceCode(
+                    deviceCode = json.getString("device_code"),
+                    userCode = json.getString("user_code"),
+                    verificationUri = json.optString("verification_uri", "https://github.com/login/device"),
+                    expiresInSec = json.optInt("expires_in", 900),
+                    intervalSec = json.optInt("interval", 5).coerceAtLeast(5),
+                )
+            }
+        }
+    }
+
+    suspend fun pollDeviceToken(clientId: String, deviceCode: DeviceCode): DevicePoll = withContext(Dispatchers.IO) {
+        runCatching {
+            val form = "client_id=${java.net.URLEncoder.encode(clientId.trim(), Charsets.UTF_8.name())}" +
+                "&device_code=${java.net.URLEncoder.encode(deviceCode.deviceCode, Charsets.UTF_8.name())}" +
+                "&grant_type=urn:ietf:params:oauth:grant-type:device_code"
+            val req = Request.Builder()
+                .url("https://github.com/login/oauth/access_token")
+                .header("Accept", "application/json")
+                .post(form.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                .build()
+            http.newCall(req).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) return@runCatching DevicePoll.Failed("GitHub device flow failed (HTTP ${response.code}).")
+                val json = JSONObject(text)
+                json.optString("access_token").takeIf { it.isNotBlank() }?.let {
+                    return@runCatching DevicePoll.Granted(it)
+                }
+                when (json.optString("error")) {
+                    "authorization_pending" -> DevicePoll.Pending
+                    "slow_down" -> DevicePoll.SlowDown
+                    "expired_token" -> DevicePoll.Failed("The code expired. Start again to get a new one.")
+                    "access_denied" -> DevicePoll.Failed("Authorization was denied on GitHub.")
+                    else -> DevicePoll.Failed(json.optString("error_description", "GitHub authorization failed."))
+                }
+            }
+        }.getOrElse { DevicePoll.Failed(it.message ?: "Network error.") }
+    }
+
     /**
      * v4.x cloud build: read-only access to the saved token so features that
      * share this store (e.g. CloudBuildRepository) never duplicate the
