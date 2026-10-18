@@ -4,6 +4,7 @@ import androidx.compose.material3.AlertDialog
 import com.anvex.app.ui.components.PythonRunnerDialog
 import com.anvex.app.ui.components.ProjectKnowledgeDialog
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.History
 import com.anvex.app.ui.components.FileVersion
 import com.anvex.app.ui.components.RestoreOutcome
@@ -82,6 +83,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -129,6 +131,7 @@ import com.anvex.app.ui.components.isRtlText
 import com.anvex.app.ui.screens.home.NewProjectHandoff
 import com.anvex.app.ui.screens.home.formatRelative
 import com.anvex.app.ui.theme.AnvexDimens
+import com.anvex.app.ui.components.AnvexIconTile
 import com.anvex.core.engine.QuickPrompts
 import com.anvex.core.model.ActionRecord
 import com.anvex.core.model.ActionStatus
@@ -732,39 +735,45 @@ private fun Composer(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // The tool buttons live in their own horizontally scrollable strip so a narrow
-                // screen can never push the Send button out of view (it used to share one
-                // overflowing Row, which hid Send on 360-400dp phones).
-                Row(
-                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onProject, enabled = enabled) {
-                        Icon(Icons.Filled.Folder, "Project instructions and files")
-                    }
-                    IconButton(onClick = onAttach, enabled = enabled) { Icon(Icons.Filled.AttachFile, "Attach file") }
-                    IconButton(onClick = onImage, enabled = enabled) { Icon(Icons.Filled.Image, "Attach image") }
-                    IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Filled.Mic, "Voice input") }
-                    IconButton(onClick = onCamera, enabled = enabled) { Icon(Icons.Filled.CameraAlt, "Take photo") }
-                    if (webAvailable) {
-                        FilterChip(
-                            selected = webOn,
-                            onClick = { onToggleWeb(!webOn) },
-                            label = { Text(tr("Web")) },
-                            enabled = enabled,
-                        )
-                    }
-                    ThinkingMenu(selected = thinkingLevel, enabled = enabled, onSelect = onThinkingLevel)
-                    modelLabel?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 6.dp).widthIn(max = 120.dp),
-                        )
-                    }
+                // v4.4.5 (UX): one "+" entry point instead of five undifferentiated
+                // icon buttons — the sheet groups them with labels, the
+                // professional pattern. Mic stays dedicated: first-class
+                // mobile input with its own flow. (The old horizontally
+                // scrolling strip is gone — it was a band-aid for the clutter.)
+                var showAttachSheet by remember { mutableStateOf(false) }
+                IconButton(onClick = { showAttachSheet = true }, enabled = enabled) {
+                    Icon(Icons.Filled.Add, tr("Add attachment"))
+                }
+                IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Filled.Mic, tr("Voice input")) }
+                if (webAvailable) {
+                    FilterChip(
+                        selected = webOn,
+                        onClick = { onToggleWeb(!webOn) },
+                        label = { Text(tr("Web")) },
+                        enabled = enabled,
+                    )
+                }
+                ThinkingMenu(selected = thinkingLevel, enabled = enabled, onSelect = onThinkingLevel)
+                if (modelLabel != null) {
+                    Text(
+                        modelLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 6.dp).weight(1f),
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                if (showAttachSheet) {
+                    AttachSheet(
+                        onDismiss = { showAttachSheet = false },
+                        onProject = { showAttachSheet = false; onProject() },
+                        onAttach = { showAttachSheet = false; onAttach() },
+                        onImage = { showAttachSheet = false; onImage() },
+                        onCamera = { showAttachSheet = false; onCamera() },
+                    )
                 }
                 Spacer(Modifier.width(8.dp))
                 val sendReady = canSend && enabled
@@ -797,6 +806,83 @@ private fun Composer(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * v4.4.5 (UX): the composer's "+" entry point. Five undifferentiated icon
+ * buttons became one labeled menu — the professional pattern (ChatGPT/Claude
+ * mobile do the same). All handlers already existed; this only reorganizes.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AttachSheet(
+    onDismiss: () -> Unit,
+    onProject: () -> Unit,
+    onAttach: () -> Unit,
+    onImage: () -> Unit,
+    onCamera: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(horizontal = 8.dp).padding(bottom = 24.dp)) {
+            Text(
+                tr("Add to message"),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            AttachOption(
+                icon = Icons.Filled.Folder,
+                title = tr("Project files"),
+                subtitle = tr("Instructions, docs and project context"),
+                onClick = onProject,
+            )
+            AttachOption(
+                icon = Icons.Filled.AttachFile,
+                title = tr("Attach file"),
+                subtitle = tr("Any document from storage"),
+                onClick = onAttach,
+            )
+            AttachOption(
+                icon = Icons.Filled.Image,
+                title = tr("Photo library"),
+                subtitle = tr("Pick an image"),
+                onClick = onImage,
+            )
+            AttachOption(
+                icon = Icons.Filled.CameraAlt,
+                title = tr("Take photo"),
+                subtitle = tr("Use the camera"),
+                onClick = onCamera,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AttachOption(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(AnvexDimens.radiusMedium))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AnvexIconTile(icon, modifier = Modifier.size(40.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.4.5 (unreleased) — Composer UX rework
+
+### Changed
+- Composer toolbar: the five undifferentiated icon buttons (project, attach,
+  image, mic, camera) are replaced by a single "+" entry point opening a
+  labeled bottom sheet (Project files / Attach file / Photo library / Take
+  photo). Mic stays dedicated as a first-class mobile input. The old
+  horizontally-scrolling button strip (which cut off the thinking chip on
+  narrow phones) is gone; the row is now [+][mic][thinking][model…][send].
+  All handlers are unchanged — pure reorganization. Persian strings added.
+
 ## 4.4.4 (unreleased) — Code-review hardening pass
 
 External code review (2026-10-16) findings addressed. No behavior change for

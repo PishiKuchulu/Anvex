@@ -21,6 +21,18 @@ fun tr(english: String): String {
 val LocalAppLanguage = androidx.compose.runtime.staticCompositionLocalOf<String?> { null }
 
 private val FA: Map<String, String> = mapOf(
+    // v4.4.5 (UX): composer "+" attach sheet.
+    "Add attachment" to "افزودن پیوست",
+    "Voice input" to "ورودی صوتی",
+    "Add to message" to "افزودن به پیام",
+    "Project files" to "فایل‌های پروژه",
+    "Instructions, docs and project context" to "دستورالعمل‌ها، اسناد و کانتکست پروژه",
+    "Attach file" to "الصاق فایل",
+    "Any document from storage" to "هر سندی از حافظه",
+    "Photo library" to "گالری تصاویر",
+    "Pick an image" to "انتخاب یک تصویر",
+    "Take photo" to "گرفتن عکس",
+    "Use the camera" to "استفاده از دوربین",
     "This is a restriction set by the provider, not an Anvex bug. Use an API key from the provider's console (for OpenCode: the OpenCode Console provider), or pick another provider such as a Gemini API key or an OpenRouter free model." to "این محدودیت از سمت ارائه‌دهنده است و باگ Anvex نیست. از کلید API کنسول همان سرویس استفاده کنید (برای OpenCode: ارائه‌دهنده‌ی OpenCode Console) یا ارائه‌دهنده‌ی دیگری مثل کلید Gemini API یا یک مدل رایگان OpenRouter را انتخاب کنید.",
     "Choose the project folder. If it already contains files they are kept and the folder is opened as the project." to "پوشه‌ی پروژه را انتخاب کنید. اگر از قبل فایل دارد، فایل‌ها حفظ می‌شوند و همان پوشه به‌عنوان پروژه باز می‌شود.",
     "App-wide terminal (no project)" to "ترمینال سراسری (بدون پروژه)",
