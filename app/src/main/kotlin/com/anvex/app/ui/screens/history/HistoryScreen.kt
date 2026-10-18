@@ -24,7 +24,7 @@ fun HistoryScreen(nav: NavController, projectId: String) {
     val graph = AppGraph.get(); val scope = rememberCoroutineScope()
     val changes by graph.mutations.observeRecent(projectId).collectAsState(initial = emptyList())
     var selected by remember { mutableStateOf<FileMutation?>(null) }
-    Scaffold(topBar = { TopAppBar(title = { Text(tr("Change history")) }, navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(tr("Change history")) }, navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back")) } }) }) { padding ->
         if (changes.isEmpty()) Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text(tr("No changes recorded yet.")) }
         else LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(changes, key = { "${it.path}:${it.timestamp}:${it.source.name}:${it.operation.name}" }) { m ->

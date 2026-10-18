@@ -1,6 +1,8 @@
 package com.anvex.app.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -75,7 +77,9 @@ fun DiffSheet(
                     DiffLineRow(line)
                 }
             }
-            Row(modifier = Modifier.padding(vertical = 12.dp)) {
+            // v4.4.5 (UX): scrollable — Persian labels are long and the third
+            // button was pushed off-screen on narrow phones.
+            Row(modifier = Modifier.padding(vertical = 12.dp).horizontalScroll(rememberScrollState())) {
                 if (operation != com.anvex.core.model.MutationOp.CREATE || before != null) {
                     TextButton(onClick = onRevert) { Text(tr("Revert this change")) }
                 }

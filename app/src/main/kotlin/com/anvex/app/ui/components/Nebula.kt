@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -117,7 +118,11 @@ fun GradientButton(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
-        val tint = if (enabled) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+        // v4.4.5 (UX): the label color follows the gradient's brightest end.
+        // White on the bright mint/cyan end was ~2:1 contrast on dark themes.
+        val tint = if (enabled) {
+            if (extras.accentEnd.luminance() > 0.35f) Color(0xFF101418) else Color.White
+        } else MaterialTheme.colorScheme.onSurfaceVariant
         if (icon != null) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
@@ -220,6 +225,13 @@ fun NebulaTopBar(
             }
         },
         actions = { actions() },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+        // v4.4.5 (UX): explicit content colors — a transparent container
+        // leaves contentColorFor() Unspecified (black-text fallback).
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
     )
 }

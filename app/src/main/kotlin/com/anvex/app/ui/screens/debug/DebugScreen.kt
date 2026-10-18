@@ -58,7 +58,20 @@ fun DebugScreen(nav: NavController) {
         }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text(tr("Debug panel")) }) }) { padding ->
+    // v4.4.5 (UX): this screen had no way back.
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text(tr("Debug panel")) },
+            navigationIcon = {
+                androidx.compose.material3.IconButton(onClick = { nav.popBackStack() }) {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = tr("Back"),
+                    )
+                }
+            },
+        )
+    }) { padding ->
         Column(
             Modifier
                 .padding(padding)

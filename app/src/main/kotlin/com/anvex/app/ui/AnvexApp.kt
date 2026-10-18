@@ -129,7 +129,10 @@ fun AnvexApp() {
     // back-stack and saved-state behavior across Home/Agent/Settings and project screens.
     com.anvex.app.ui.components.NebulaBackground {
     Scaffold(
+        // v4.4.5 (UX): explicit contentColor — latent black-text hazard for
+        // any future screen without its own Scaffold (see MemoryScreen fix).
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         bottomBar = {
             if (topLevel) {
                 NavigationBar(

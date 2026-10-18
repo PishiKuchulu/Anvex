@@ -60,7 +60,12 @@ fun AnvexCard(
     val nebula = com.anvex.app.ui.theme.LocalThemeStyle.current == com.anvex.core.android.repo.UiThemeStyle.NEBULA
     val extras = com.anvex.app.ui.theme.LocalBoltExtras.current
     val shape = RoundedCornerShape(if (nebula) 22.dp else AnvexDimens.radiusLarge)
-    val colors = CardDefaults.cardColors(containerColor = if (nebula) extras.glass else MaterialTheme.colorScheme.surface)
+    val colors = CardDefaults.cardColors(
+        containerColor = if (nebula) extras.glass else MaterialTheme.colorScheme.surface,
+        // v4.4.5 (UX): explicit — translucent glass makes contentColorFor()
+        // read luminance 1.0 (alpha ignored) and picks BLACK on dark canvas.
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    )
     val border = BorderStroke(1.dp, if (nebula) extras.glassBorder else MaterialTheme.colorScheme.outlineVariant)
     if (onClick == null) {
         Card(modifier = modifier, shape = shape, colors = colors, border = border, content = { content() })

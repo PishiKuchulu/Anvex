@@ -38,6 +38,8 @@ fun ProjectKnowledgeDialog(
     onDismiss: () -> Unit,
 ) {
     var text by remember { mutableStateOf(initial) }
+    // v4.4.5 (UX): per-file removal is destructive — confirm first.
+    var removeName by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(tr("Project instructions & files")) },
@@ -62,7 +64,7 @@ fun ProjectKnowledgeDialog(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        IconButton(onClick = { onRemoveFile(name) }) {
+                        IconButton(onClick = { removeName = name }) {
                             Icon(Icons.Filled.Delete, "Remove $name")
                         }
                     }
@@ -73,4 +75,14 @@ fun ProjectKnowledgeDialog(
         confirmButton = { TextButton(onClick = { onSave(text); onDismiss() }) { Text(tr("Save")) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Cancel")) } },
     )
+    removeName?.let { name ->
+        ConfirmDialog(
+            title = tr("Remove file?"),
+            text = tr("The knowledge file will be permanently removed from this project."),
+            confirmLabel = tr("Remove"),
+            destructive = true,
+            onConfirm = { onRemoveFile(name); removeName = null },
+            onDismiss = { removeName = null },
+        )
+    }
 }

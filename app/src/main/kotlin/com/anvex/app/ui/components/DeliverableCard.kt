@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
@@ -59,7 +60,7 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                 GradientBadge(icon, size = 40)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(displayName.ifBlank { "File" }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                    Text(displayName.ifBlank { "File" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         if (failed) (record.note ?: "Could not create the file")
                         else "${record.command?.uppercase().orEmpty()} · ${formatBytes(record.bytes)}",

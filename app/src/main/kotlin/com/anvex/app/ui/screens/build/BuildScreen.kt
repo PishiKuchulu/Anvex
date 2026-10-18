@@ -60,6 +60,8 @@ fun BuildScreen(nav: NavController, projectId: String) {
     var cloudVariant by remember { mutableStateOf("debug") }
     var cloudLogOpen by remember { mutableStateOf(false) }
     var cloudOpenError by remember { mutableStateOf<String?>(null) }
+    // v4.4.5 (UX): removing the toolchain bundle is expensive to undo.
+    var confirmRemoveToolchain by remember { mutableStateOf(false) }
     var cloudToken by remember { mutableStateOf("") }
     var tokenMessage by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
@@ -113,7 +115,7 @@ fun BuildScreen(nav: NavController, projectId: String) {
                             Icon(Icons.Filled.Archive, null); Spacer(Modifier.width(6.dp)); Text(tr("Import bundle"))
                         }
                         OutlinedButton(
-                            onClick = { vm.removeToolchain() },
+                            onClick = { confirmRemoveToolchain = true },
                             enabled = !building && toolchain.valid,
                             modifier = Modifier.weight(1f),
                         ) { Text(tr("Remove")) }
@@ -364,5 +366,15 @@ fun BuildScreen(nav: NavController, projectId: String) {
             }
             Spacer(Modifier.height(16.dp))
         }
+    }
+    if (confirmRemoveToolchain) {
+        com.anvex.app.ui.components.ConfirmDialog(
+            title = tr("Remove toolchain?"),
+            text = tr("The imported Android JDK/SDK/Gradle bundle will be deleted from this device. You will need to import it again to build."),
+            confirmLabel = tr("Remove"),
+            destructive = true,
+            onConfirm = { vm.removeToolchain(); confirmRemoveToolchain = false },
+            onDismiss = { confirmRemoveToolchain = false },
+        )
     }
 }

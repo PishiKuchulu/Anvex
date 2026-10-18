@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.4.5 (unreleased) — Composer UX rework
+## 4.4.5 (unreleased) — Composer UX rework + app-wide interaction-design defect round
 
 ### Changed
 - Composer toolbar: the five undifferentiated icon buttons (project, attach,
@@ -10,6 +10,39 @@
   horizontally-scrolling button strip (which cut off the thinking chip on
   narrow phones) is gone; the row is now [+][mic][thinking][model…][send].
   All handlers are unchanged — pure reorganization. Persian strings added.
+
+### Fixed (user-reported, 3 screenshots)
+- Memory screen: `Scaffold(containerColor=Transparent)` left contentColor
+  Unspecified → default text fell back to BLACK on the dark canvas (verified
+  by pixel-sampling the screenshot). Now explicit `onSurface`.
+- Settings "Style" row: 4 buttons in `ListItem` trailingContent squeezed the
+  headline column to one character wide ("Style" wrapped vertically). Now a
+  wrapping single-select `FilterChip` group under the headline.
+- Developer Center tabs: `PrimaryTabRow` split 8 tabs into ~50dp each and
+  labels wrapped vertically. Now `ScrollableTabRow`, 88dp min width.
+
+### Fixed (full-app static audit, 25 findings)
+- Same black-text root cause in `ProjectScaffold` (Chat/Editor/Preview/
+  Harness), `HomeScreen`, `AnvexCard` (Nebula), `AnvexApp` root scaffold,
+  and chat glass surfaces — all now carry explicit content colors.
+- `GradientButton`: label color now follows the gradient's brightest end
+  (white-on-bright-mint was ~2:1 contrast on dark themes).
+- User-bubble text: hardcoded White → `onPrimaryContainer` (was unreadable
+  on light-theme fills); attachment filenames and streaming text given
+  explicit colors.
+- Unreachable/overflowing controls: Developer Center capability chips →
+  `FlowRow`; DiffSheet/ArtifactCard button rows scrollable; Backup and
+  Provider-editor button rows get equal weights; `DeliverableCard`
+  filename ellipsis.
+- Destructive actions now confirm: remove toolchain, delete file/folder,
+  delete provider, delete project, remove skill / MCP server, remove
+  knowledge file (all via `ConfirmDialog`).
+- Dead controls: Home "Build"/"GitHub" quick actions disable (dimmed) when
+  no projects exist; providers "Connected" chip is now a static badge.
+- Accessibility: back buttons labeled for TalkBack on History/Usage/
+  Developer Center; Debug screen gains a back button.
+- Removed dead `SearchBar` composable in `EditorScreen` (superseded by
+  `ProjectSearchBar`).
 
 ## 4.4.4 (unreleased) — Code-review hardening pass
 

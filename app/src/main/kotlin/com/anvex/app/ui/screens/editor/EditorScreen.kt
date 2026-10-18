@@ -314,45 +314,6 @@ private fun ProjectSearchBar(
     }
 }
 
-@Composable
-private fun SearchBar(
-    query: String,
-    replace: String,
-    onQuery: (String) -> Unit,
-    onReplace: (String) -> Unit,
-    onReplaceAll: () -> Unit,
-    onClose: () -> Unit,
-) {
-    Surface(tonalElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQuery,
-                    placeholder = { Text(tr("Find")) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = "Close search")
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = replace,
-                    onValueChange = onReplace,
-                    placeholder = { Text(tr("Replace with")) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = onReplaceAll, enabled = query.isNotBlank()) {
-                    Text(tr("Replace all"))
-                }
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------- v4.4: Canvas shortcuts
 
 /** Port-language choices for the "Port to language" chip. */

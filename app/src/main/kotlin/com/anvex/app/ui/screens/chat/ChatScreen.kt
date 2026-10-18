@@ -951,7 +951,10 @@ private fun MessageBubble(
                         if (isUser) {
                             BidiText(
                                 message.content,
-                                style = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                                // v4.4.5 (UX): onPrimaryContainer pairs with the
+                                // bubble fill by design — hardcoded White was
+                                // unreadable on light-theme fills.
+                                style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onPrimaryContainer),
                                 modifier = Modifier.weight(1f),
                             )
                         } else {
@@ -1013,7 +1016,14 @@ private fun MessageBubble(
                 }
                 if (isUser) {
                     message.attachments.forEach { attachment ->
-                        Text(attachment.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                        // v4.4.5 (UX): explicit color — the bubble is a raw
+                        // background brush, so ambient content color is wrong.
+                        Text(
+                            attachment.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
                     }
                 }
                 message.artifact?.let { summary ->
@@ -1117,6 +1127,9 @@ private fun StreamingBubble(
         if (text.isNotBlank()) {
             Surface(
                 color = LocalBoltExtras.current.glass,
+                // v4.4.5 (UX): explicit — glass is translucent in some themes,
+                // leaving contentColorFor() Unspecified (black-text fallback).
+                contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, LocalBoltExtras.current.glassBorder),
                 modifier = Modifier.fillMaxWidth(0.96f),

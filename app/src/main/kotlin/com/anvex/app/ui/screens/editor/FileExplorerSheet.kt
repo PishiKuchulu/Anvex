@@ -57,6 +57,8 @@ fun FileExplorerSheet(
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     var newEntryDir by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var renamePath by remember { mutableStateOf<String?>(null) }
+    // v4.4.5 (UX): file/folder deletion is permanent — confirm first.
+    var deletePath by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
     val flat = remember(root, expanded.toMap()) { flatten(root, expanded) }
@@ -109,7 +111,7 @@ fun FileExplorerSheet(
                         },
                         onNewInDir = { isFolder -> newEntryDir = row.node.path to isFolder },
                         onRenameRequest = { renamePath = it },
-                        onDelete = { error = onDelete(it) },
+                        onDelete = { deletePath = it },
                         onDuplicate = { error = onDuplicate(it) },
                     )
                 }
@@ -136,6 +138,17 @@ fun FileExplorerSheet(
                 if (err == null) renamePath = null else error = err
             },
             onDismiss = { renamePath = null },
+        )
+    }
+
+    deletePath?.let { path ->
+        com.anvex.app.ui.components.ConfirmDialog(
+            title = tr("Delete permanently?"),
+            text = tr("This will permanently delete") + " \"$path\". " + tr("This cannot be undone."),
+            confirmLabel = tr("Delete"),
+            destructive = true,
+            onConfirm = { error = onDelete(path); deletePath = null },
+            onDismiss = { deletePath = null },
         )
     }
 }

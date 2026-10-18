@@ -68,7 +68,7 @@ fun DeveloperCenterScreen(nav: NavController) {
     Scaffold(topBar = {
         TopAppBar(
             title = { Text(tr("Developer Center")) },
-            navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
+            navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back")) } },
         )
     }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
@@ -148,7 +148,9 @@ fun DeveloperCenterScreen(nav: NavController) {
         item { OutlinedTextField(command, onCommandChange, label = { Text(tr("Command to classify")) }, modifier = Modifier.fillMaxWidth(), minLines = 2) }
         if (command.isNotBlank()) item { val a = ActionSafetyPolicy.assess(command); Card { ListItem(headlineContent = { Text(if (a.risk == ActionSafetyPolicy.Risk.REQUIRES_APPROVAL) "Approval required" else "Safe classification") }, supportingContent = { Text(a.reason) }) } }
         item { Text(tr("Capability grant"), style = MaterialTheme.typography.titleMedium) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) { ToolCapability.entries.filter { it != ToolCapability.READ_ONLY }.take(6).forEach { c -> FilterChip(selected = capability == c, onClick = { onCapability(c) }, label = { Text(c.name) }) } } }
+        // v4.4.5 (UX): FlowRow — the 6 capability chips overflowed a plain
+        // Row and chips 4-6 were unreachable.
+        item { FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) { ToolCapability.entries.filter { it != ToolCapability.READ_ONLY }.take(6).forEach { c -> FilterChip(selected = capability == c, onClick = { onCapability(c) }, label = { Text(c.name) }) } } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(5L to "5m", 15L to "15m", 60L to "1h").forEach { (minutes, label) -> FilterChip(selected = ttl == minutes * 60_000, onClick = { onTtl(minutes * 60_000) }, label = { Text(label) }) } } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(enabled = !granted, onClick = onGrant) { Text(tr("Allow")) }; OutlinedButton(enabled = granted, onClick = onRevoke) { Text(tr("Revoke")) } } }
     }

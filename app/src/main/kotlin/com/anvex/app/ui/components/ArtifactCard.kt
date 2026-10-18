@@ -246,7 +246,9 @@ fun VersionSheet(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-            Row(modifier = Modifier.padding(vertical = 12.dp)) {
+            // v4.4.5 (UX): scrollable — long labels pushed the third button
+            // off-screen on narrow phones.
+            Row(modifier = Modifier.padding(vertical = 12.dp).horizontalScroll(rememberScrollState())) {
                 if (version != null && !version.isCurrent && version.content != null) {
                     TextButton(onClick = { onRestore(version) }) { Text(tr("Restore this version")) }
                 }

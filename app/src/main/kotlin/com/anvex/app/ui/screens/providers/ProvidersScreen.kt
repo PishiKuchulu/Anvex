@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -156,7 +157,19 @@ private fun ZaiAccountCard(vm: ProvidersViewModel) {
                     )
                 }
                 when {
-                    connected != null -> AssistChip(onClick = { }, label = { Text(tr("Connected")) })
+                    // v4.4.5 (UX): a static badge — the old AssistChip showed a
+                    // tap ripple with zero effect (dead control).
+                    connected != null -> Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ) {
+                        Text(
+                            tr("Connected"),
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
                     login is ProvidersViewModel.ZaiLoginUi.Running -> {}
                     else -> {}
                 }
@@ -243,6 +256,8 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
     val saveMessage by vm.saveMessage.collectAsState()
     val credentialWarning by vm.credentialWarning.collectAsState()
     var showKey by remember { mutableStateOf(false) }
+    // v4.4.5 (UX): deleting a provider discards encrypted credentials.
+    var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(id, initialKind) { vm.loadForEdit(id, initialKind) }
 
@@ -409,20 +424,25 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
             }
 
             // ---- test connection ------------------------------------------------------
+            // v4.4.5 (UX): equal weights — three unweighted buttons could
+            // overflow narrow widths, and Delete appearing conditionally
+            // shifted the others.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { vm.testConnection() }, enabled = !testing) {
-                    Text(if (testing) "Testing…" else "Test connection")
+                Button(onClick = { vm.testConnection() }, enabled = !testing, modifier = Modifier.weight(1f)) {
+                    Text(if (testing) "Testing…" else "Test connection", maxLines = 1)
                 }
                 Button(
                     onClick = { vm.save { nav.popBackStack() } },
                     enabled = ui.name.isNotBlank() && ui.model.isNotBlank(),
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Text(tr("Save"))
+                    Text(tr("Save"), maxLines = 1)
                 }
                 if (!ui.isNew) {
-                    TextButton(onClick = {
-                        vm.delete(id) { nav.popBackStack() }
-                    }) { Text(tr("Delete"), color = MaterialTheme.colorScheme.error) }
+                    TextButton(
+                        onClick = { confirmDelete = true },
+                        modifier = Modifier.weight(1f),
+                    ) { Text(tr("Delete"), color = MaterialTheme.colorScheme.error, maxLines = 1) }
                 }
             }
 
@@ -498,6 +518,16 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
                 }
             }
         }
+    }
+    if (confirmDelete) {
+        com.anvex.app.ui.components.ConfirmDialog(
+            title = tr("Delete provider?"),
+            text = tr("The provider and its stored encrypted credentials will be permanently deleted."),
+            confirmLabel = tr("Delete"),
+            destructive = true,
+            onConfirm = { vm.delete(id) { nav.popBackStack() } },
+            onDismiss = { confirmDelete = false },
+        )
     }
 }
 

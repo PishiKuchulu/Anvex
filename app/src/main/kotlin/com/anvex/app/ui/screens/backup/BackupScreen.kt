@@ -108,10 +108,12 @@ fun BackupScreen(nav: NavController) {
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(enabled = !busy && password.chars.size >= 8, onClick = { export.launch("anvex-backup.json") }) { Text(tr("Export")) }
-                OutlinedButton(enabled = !busy && password.chars.size >= 8, onClick = { open.launch(arrayOf("application/json", "text/plain")) }) { Text(tr("Inspect backup")) }
-                Button(enabled = !busy && password.chars.size >= 8 && inspected != null, onClick = {
+            // v4.4.5 (UX): equal weights — "Inspect backup" is long (longer in
+            // Persian) and could clip at the screen edge on narrow phones.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(enabled = !busy && password.chars.size >= 8, onClick = { export.launch("anvex-backup.json") }, modifier = Modifier.weight(1f)) { Text(tr("Export"), maxLines = 1) }
+                OutlinedButton(enabled = !busy && password.chars.size >= 8, onClick = { open.launch(arrayOf("application/json", "text/plain")) }, modifier = Modifier.weight(1f)) { Text(tr("Inspect backup"), maxLines = 1) }
+                Button(enabled = !busy && password.chars.size >= 8 && inspected != null, modifier = Modifier.weight(1f), onClick = {
                     val payload = inspected ?: return@Button
                     scope.launch(Dispatchers.IO) {
                         busy = true

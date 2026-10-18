@@ -54,7 +54,10 @@ fun ProjectScaffold(
 
     NebulaBackground {
     Scaffold(
+        // v4.4.5 (UX): explicit contentColor — contentColorFor(Transparent)
+        // is Unspecified, whose text fallback is BLACK on the dark canvas.
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
             TopAppBar(
                 title = {
@@ -115,6 +118,9 @@ fun ProjectScaffold(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     scrolledContainerColor = androidx.compose.ui.graphics.Color.Transparent,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
             )
         },

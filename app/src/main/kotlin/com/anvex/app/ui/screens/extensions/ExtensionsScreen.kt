@@ -53,6 +53,9 @@ fun ExtensionsScreen(nav: NavController) {
     val busy by vm.busy.collectAsState()
 
     var tab by remember { mutableStateOf(0) }
+    // v4.4.5 (UX): removals delete files / stored tokens — confirm first.
+    var removeSkillId by remember { mutableStateOf<String?>(null) }
+    var removeServerId by remember { mutableStateOf<String?>(null) }
     var githubUrl by remember { mutableStateOf("") }
     var serverName by remember { mutableStateOf("") }
     var serverUrl by remember { mutableStateOf("") }
@@ -135,7 +138,7 @@ fun ExtensionsScreen(nav: NavController) {
                                 enabled = !plugin.builtIn,
                             )
                             if (!plugin.builtIn) {
-                                TextButton(onClick = { vm.removeSkill(plugin.id) }) { Text(tr("Remove")) }
+                                TextButton(onClick = { removeSkillId = plugin.id }) { Text(tr("Remove")) }
                             }
                         }
                     }
@@ -219,12 +222,32 @@ fun ExtensionsScreen(nav: NavController) {
                                 OutlinedButton(onClick = { vm.testServer(server) }, enabled = !busy) {
                                     Text(tr("Test connection"))
                                 }
-                                TextButton(onClick = { vm.removeServer(server.id) }) { Text(tr("Remove")) }
+                                TextButton(onClick = { removeServerId = server.id }) { Text(tr("Remove")) }
                             }
                         }
                     }
                 }
             }
         }
+    }
+    removeSkillId?.let { id ->
+        com.anvex.app.ui.components.ConfirmDialog(
+            title = tr("Remove skill?"),
+            text = tr("The skill's files will be permanently deleted."),
+            confirmLabel = tr("Remove"),
+            destructive = true,
+            onConfirm = { vm.removeSkill(id); removeSkillId = null },
+            onDismiss = { removeSkillId = null },
+        )
+    }
+    removeServerId?.let { id ->
+        com.anvex.app.ui.components.ConfirmDialog(
+            title = tr("Remove MCP server?"),
+            text = tr("The server's name, URL and stored token will be permanently deleted."),
+            confirmLabel = tr("Remove"),
+            destructive = true,
+            onConfirm = { vm.removeServer(id); removeServerId = null },
+            onDismiss = { removeServerId = null },
+        )
     }
 }

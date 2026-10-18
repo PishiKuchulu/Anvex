@@ -61,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -152,6 +153,9 @@ fun HomeScreen(nav: NavController) {
     }
     var menuFor by remember { mutableStateOf<String?>(null) }
     var renameFor by remember { mutableStateOf<String?>(null) }
+    // v4.4.5 (UX): deleting a whole project is the most destructive action
+    // in the app — confirm first.
+    var deleteProject by remember { mutableStateOf<com.anvex.core.model.Project?>(null) }
 
     val openExistingLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -210,7 +214,10 @@ fun HomeScreen(nav: NavController) {
     }
 
     Scaffold(
+        // v4.4.5 (UX): explicit contentColor — transparent container would
+        // leave it Unspecified (black text fallback on dark canvas).
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
             TopAppBar(
                 title = {
@@ -239,6 +246,9 @@ fun HomeScreen(nav: NavController) {
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
             )
         },
@@ -356,6 +366,7 @@ fun HomeScreen(nav: NavController) {
                         icon = Icons.Filled.Build,
                         title = "Build",
                         subtitle = "APK",
+                        enabled = projects.isNotEmpty(),
                         onClick = {
                             projects.firstOrNull()?.let { nav.navigate(Routes.build(it.id)) }
                         },
@@ -375,6 +386,7 @@ fun HomeScreen(nav: NavController) {
                         icon = Icons.Filled.Cloud,
                         title = "GitHub",
                         subtitle = "Sync",
+                        enabled = projects.isNotEmpty(),
                         onClick = {
                             projects.firstOrNull()?.let { nav.navigate(Routes.github(it.id)) }
                         },
@@ -409,6 +421,17 @@ fun HomeScreen(nav: NavController) {
             },
             onChooseFolder = { workspaceLauncher.launch(null) },
             onDismiss = { showNewDialog = false },
+        )
+    }
+
+    deleteProject?.let { project ->
+        com.anvex.app.ui.components.ConfirmDialog(
+            title = tr("Delete project?"),
+            text = tr("The project and all its files, chats and history will be permanently deleted. This cannot be undone."),
+            confirmLabel = tr("Delete"),
+            destructive = true,
+            onConfirm = { vm.delete(project.id); deleteProject = null },
+            onDismiss = { deleteProject = null },
         )
     }
 
@@ -453,7 +476,7 @@ fun HomeScreen(nav: NavController) {
                 DropdownMenuItem(text = { Text(tr("Build APK")) }, onClick = { nav.navigate(Routes.build(project.id)); menuFor = null })
                 DropdownMenuItem(text = { Text(tr("GitHub sync")) }, onClick = { nav.navigate(Routes.github(project.id)); menuFor = null })
                 DropdownMenuItem(text = { Text(tr("Export ZIP")) }, onClick = { exportLauncher.launch("${project.name}.zip") })
-                DropdownMenuItem(text = { Text(tr("Delete")) }, onClick = { vm.delete(project.id); menuFor = null })
+                DropdownMenuItem(text = { Text(tr("Delete")) }, onClick = { deleteProject = project; menuFor = null })
             }
         }
     }
@@ -465,9 +488,14 @@ private fun QuickAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
+    // v4.4.5 (UX): a visible button must never be a silent no-op.
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    AnvexCard(modifier = modifier, onClick = onClick) {
+    AnvexCard(
+        modifier = modifier.alpha(if (enabled) 1f else 0.45f),
+        onClick = if (enabled) onClick else null,
+    ) {
         Column(
             Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
