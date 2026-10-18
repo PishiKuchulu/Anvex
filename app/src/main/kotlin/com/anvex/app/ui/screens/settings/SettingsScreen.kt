@@ -2,6 +2,7 @@ package com.anvex.app.ui.screens.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,7 +83,7 @@ import kotlinx.coroutines.launch
  * backed by the REAL settings storage — no mock toggles, no fake states.
  * Rows inside each category are ordered (language first, destructive last).
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(nav: NavController) {
     val vm: SettingsViewModel = viewModel { SettingsViewModel() }

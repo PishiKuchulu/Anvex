@@ -4,6 +4,7 @@ package com.anvex.app.ui.screens.developer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -142,7 +143,9 @@ fun DeveloperCenterScreen(nav: NavController) {
     }
 }
 
-@Composable private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capability: ToolCapability, onCapability: (ToolCapability) -> Unit, ttl: Long, onTtl: (Long) -> Unit, granted: Boolean, onGrant: () -> Unit, onRevoke: () -> Unit) {
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capability: ToolCapability, onCapability: (ToolCapability) -> Unit, ttl: Long, onTtl: (Long) -> Unit, granted: Boolean, onGrant: () -> Unit, onRevoke: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text(tr("Dangerous Action Approval"), style = MaterialTheme.typography.headlineSmall); Text(tr("The UI is only an approval front-end. Actual execution must still pass the runtime safety gate and durable grant check."), style = MaterialTheme.typography.bodySmall) }
         item { OutlinedTextField(command, onCommandChange, label = { Text(tr("Command to classify")) }, modifier = Modifier.fillMaxWidth(), minLines = 2) }
