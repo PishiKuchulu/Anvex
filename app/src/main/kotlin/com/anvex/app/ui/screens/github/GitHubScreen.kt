@@ -199,7 +199,8 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                             IconButton(onClick = {
                                 val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                 cm.setPrimaryClip(android.content.ClipData.newPlainText("GitHub code", code.userCode))
-                                status = tr("Code copied.")
+                                // v4.4.6: tr() is @Composable — not callable from onClick.
+                                status = "Code copied."
                             }) {
                                 Icon(androidx.compose.material.icons.Icons.Filled.ContentCopy, contentDescription = tr("Copy"))
                             }
