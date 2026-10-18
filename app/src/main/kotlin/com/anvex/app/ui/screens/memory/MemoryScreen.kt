@@ -57,7 +57,11 @@ fun MemoryScreen(nav: NavController) {
 
     NebulaBackground {
         Scaffold(
+            // v4.4.5: explicit contentColor — contentColorFor(Color.Transparent)
+            // resolves to Unspecified, whose ultimate text fallback is BLACK,
+            // which made default-colored text unreadable on the dark canvas.
             containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             topBar = {
                 NebulaTopBar(
                     title = "Memory",

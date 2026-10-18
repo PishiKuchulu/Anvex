@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Memory as MemoryIcon
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SettingsSuggest
 import androidx.compose.material.icons.filled.Terminal
@@ -461,28 +462,34 @@ private fun AppearanceCategory(
             ListItem(
                 headlineContent = { Text(tr("Style")) },
                 supportingContent = {
-                    Text(
-                        when (settings?.uiThemeStyle ?: UiThemeStyle.PROFESSIONAL) {
-                            UiThemeStyle.AURORA -> "Aurora — cyan/slate dark ladder, mono badges, status accents (web-prototype port)"
-                            UiThemeStyle.NEBULA -> "Nebula — deep-space canvas, violet→cyan gradient, glass cards"
-                            UiThemeStyle.PROFESSIONAL -> "Professional — Command Deck: Linear/Vercel dark, JetBrains Mono, 8pt grid (default)"
-                            UiThemeStyle.GLASS -> "Glass — Glassmorphism / Expressive Material 3"
-                        }
-                    )
-                },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        UiThemeStyle.entries.forEach { style ->
-                            TextButton(onClick = { vm.setThemeStyle(style) }) {
-                                Text(
-                                    when (style) {
-                                        UiThemeStyle.AURORA -> "Aurora"
-                                        UiThemeStyle.NEBULA -> "Nebula"
-                                        UiThemeStyle.PROFESSIONAL -> "Professional"
-                                        UiThemeStyle.GLASS -> "Glass"
+                    // v4.4.5 (UX): the four style buttons used to live in
+                    // trailingContent and squeezed the headline column to one
+                    // character wide ("Style" wrapped vertically). They are now
+                    // a wrapping single-select chip group with full width.
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            when (settings?.uiThemeStyle ?: UiThemeStyle.PROFESSIONAL) {
+                                UiThemeStyle.AURORA -> "Aurora — cyan/slate dark ladder, mono badges, status accents (web-prototype port)"
+                                UiThemeStyle.NEBULA -> "Nebula — deep-space canvas, violet→cyan gradient, glass cards"
+                                UiThemeStyle.PROFESSIONAL -> "Professional — Command Deck: Linear/Vercel dark, JetBrains Mono, 8pt grid (default)"
+                                UiThemeStyle.GLASS -> "Glass — Glassmorphism / Expressive Material 3"
+                            }
+                        )
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            UiThemeStyle.entries.forEach { style ->
+                                FilterChip(
+                                    selected = (settings?.uiThemeStyle ?: UiThemeStyle.PROFESSIONAL) == style,
+                                    onClick = { vm.setThemeStyle(style) },
+                                    label = {
+                                        Text(
+                                            when (style) {
+                                                UiThemeStyle.AURORA -> "Aurora"
+                                                UiThemeStyle.NEBULA -> "Nebula"
+                                                UiThemeStyle.PROFESSIONAL -> "Professional"
+                                                UiThemeStyle.GLASS -> "Glass"
+                                            }
+                                        )
                                     },
-                                    color = if (settings?.uiThemeStyle == style) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }

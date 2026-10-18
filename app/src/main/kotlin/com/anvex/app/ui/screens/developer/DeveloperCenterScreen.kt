@@ -72,8 +72,21 @@ fun DeveloperCenterScreen(nav: NavController) {
         )
     }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            PrimaryTabRow(selectedTabIndex = tabs.indexOf(selected)) {
-                tabs.forEach { label -> Tab(selected == label, { selected = label }, text = { Text(label) }) }
+            // v4.4.5 (UX): PrimaryTabRow split 8 tabs into ~50dp each and the
+            // labels wrapped vertically ("He/alt/h"). ScrollableTabRow gives
+            // each tab a readable minimum width instead.
+            ScrollableTabRow(
+                selectedTabIndex = tabs.indexOf(selected),
+                edgePadding = 16.dp,
+            ) {
+                tabs.forEach { label ->
+                    Tab(
+                        selected = selected == label,
+                        onClick = { selected = label },
+                        text = { Text(label, maxLines = 1, softWrap = false) },
+                        modifier = Modifier.widthIn(min = 88.dp),
+                    )
+                }
             }
             status?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary) }
             when (selected) {
