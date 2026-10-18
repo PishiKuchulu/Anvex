@@ -92,6 +92,10 @@ class ChatSessionTest {
         override suspend fun deleteForProject(projectId: String) {}
         override suspend fun deleteAll() {}
         override suspend fun projectIdsMatching(query: String): List<String> = emptyList()
+        override suspend fun directConversationIds(): List<String> = emptyList()
+        override suspend fun firstForProject(projectId: String) = stored.values.firstOrNull()
+        override suspend fun countForProject(projectId: String): Int = 0
+        override suspend fun lastMessageTime(projectId: String): Long? = null
     }
 
     private class FakeMutationDao : MutationDao {

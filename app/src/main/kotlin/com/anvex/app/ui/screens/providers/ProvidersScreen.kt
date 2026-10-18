@@ -662,7 +662,7 @@ private fun KeyLinkRow(label: String, hint: String, onClick: () -> Unit) {
             )
         }
         Icon(
-            androidx.compose.material.icons.Icons.Filled.OpenInNew,
+            androidx.compose.material.icons.Icons.Filled.OpenInBrowser,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(20.dp),

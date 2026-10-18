@@ -1,5 +1,7 @@
 package com.anvex.app.ui.screens.home
 
+import com.anvex.app.R
+
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult

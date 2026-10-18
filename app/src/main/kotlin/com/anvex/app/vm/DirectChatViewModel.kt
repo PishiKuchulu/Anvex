@@ -307,11 +307,6 @@ class DirectChatViewModel : ViewModel() {
         }
     }
 
-    override fun onCleared() {
-        _session.value?.close()
-        super.onCleared()
-    }
-
     // ---- attachments (adapted from ChatViewModel; persists into the
     // conversation's app-private sandbox instead of a project workspace) ----
 
