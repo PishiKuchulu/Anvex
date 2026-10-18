@@ -83,7 +83,7 @@ import kotlinx.coroutines.launch
  * backed by the REAL settings storage — no mock toggles, no fake states.
  * Rows inside each category are ordered (language first, destructive last).
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(nav: NavController) {
     val vm: SettingsViewModel = viewModel { SettingsViewModel() }
@@ -412,6 +412,7 @@ private fun WorkspaceCategory(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AppearanceCategory(
     settings: com.anvex.core.android.repo.AppSettings?,
