@@ -10,6 +10,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,11 +42,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -197,93 +201,15 @@ fun PreviewScreen(nav: NavController, projectId: String) {
             }
         },
     ) { modifier ->
-        Column(modifier.fillMaxSize()) {
-            project?.let { p ->
-                if (p.type == ProjectType.VITE || p.type == ProjectType.UNKNOWN) {
-                    Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
-                        Text(
-                            "This project needs a bundler/dev server (npm run dev), which cannot run on Android. " +
-                                "Static files are still editable and exportable; preview supports HTML/CSS/JS and React (via CDN) projects.",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        )
-                    }
-                }
-            }
+        // v4.4.6: the header block height is measured explicitly and the WebView
+        // is padded below it. weight() on AndroidView proved unreliable on
+        // device (content rendered behind the banner); this is deterministic.
+        var headerHeightPx by remember { mutableIntStateOf(0) }
+        val density = LocalDensity.current
+        Box(modifier.fillMaxSize()) {
+            var lastLoaded by remember { mutableStateOf("") }
+            var lastTick by remember { mutableStateOf(0) }
             url?.let { entryUrl ->
-                // Architect item 3: quick-open row — entry HTML files plus every
-                // mermaid/SVG diagram, so diagram files are reachable in preview
-                // exactly like HTML/React entries.
-                if (previewFiles.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        previewFiles.forEach { path ->
-                            val selected = entryUrl.endsWith(android.net.Uri.encode(path, "/"))
-                            FilterChip(
-                                selected = selected,
-                                onClick = { vm.openFile(path) },
-                                label = {
-                                    Text(
-                                        path.substringAfterLast('/'),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-                val state = rememberLazyListState()
-                // v4.4.4 (smoothness): follow the tail only when already at the
-                // bottom — instant jump, no animation fighting console emissions.
-                LaunchedEffect(console.size) {
-                    if (console.isNotEmpty()) {
-                        val last = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index
-                        if (last == null || last >= console.size - 3) state.scrollToItem(console.size - 1)
-                    }
-                }
-                var lastLoaded by remember { mutableStateOf("") }
-                var lastTick by remember { mutableStateOf(0) }
-                if (showConsole) {
-                    Surface(tonalElevation = 2.dp) {
-                        Column(Modifier.fillMaxWidth().height(180.dp)) {
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                                Text(
-                                    "Console (${console.size})",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.weight(1f).padding(top = 6.dp),
-                                )
-                                IconButton(onClick = { vm.clearConsole() }, modifier = Modifier.height(32.dp)) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "Clear console")
-                                }
-                            }
-                            LazyColumn(state = state) {
-                                // v4.4.4 (smoothness): stable keys for console inserts.
-                                items(console, key = { "${it.ts}:${it.text.hashCode()}" }) { line ->
-                                    Text(
-                                        line.text,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp,
-                                        color = when (line.level) {
-                                            "error" -> MaterialTheme.colorScheme.error
-                                            "warn" -> MaterialTheme.colorScheme.secondary
-                                            else -> MaterialTheme.colorScheme.onSurface
-                                        },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 1.dp),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
@@ -370,11 +296,10 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                             webView.reload()
                         }
                     },
-                    // v4.4.5 (UX): weight(1f) — the canonical "fill remaining Column
-                    // space" pattern. fillMaxSize() here let the WebView measure
-                    // against the full Column height and render behind the
-                    // bundler banner above it.
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    // v4.4.6: explicit top padding below the measured header —
+                    // weight() on AndroidView rendered behind the banner on device.
+                    modifier = Modifier.fillMaxSize()
+                        .padding(top = with(density) { headerHeightPx.toDp() }),
                     onRelease = { webView ->
                         runCatching { webView.stopLoading() }
                         runCatching { webView.removeJavascriptInterface("__anvex") }
@@ -393,6 +318,99 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 12.dp),
                     )
+                }
+            }
+            // Header overlay: banner + quick-open + console, measured explicitly.
+            // The WebView above is padded below this block's height.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { headerHeightPx = it.size.height }
+            ) {
+                project?.let { p ->
+                    if (p.type == ProjectType.VITE || p.type == ProjectType.UNKNOWN) {
+                        Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+                            Text(
+                                "This project needs a bundler/dev server (npm run dev), which cannot run on Android. " +
+                                    "Static files are still editable and exportable; preview supports HTML/CSS/JS and React (via CDN) projects.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            )
+                        }
+                    }
+                }
+                url?.let { entryUrl ->
+                    // Architect item 3: quick-open row — entry HTML files plus every
+                    // mermaid/SVG diagram, so diagram files are reachable in preview
+                    // exactly like HTML/React entries.
+                    if (previewFiles.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            previewFiles.forEach { path ->
+                                val selected = entryUrl.endsWith(android.net.Uri.encode(path, "/"))
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { vm.openFile(path) },
+                                    label = {
+                                        Text(
+                                            path.substringAfterLast('/'),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    val state = rememberLazyListState()
+                    // v4.4.4 (smoothness): follow the tail only when already at the
+                    // bottom — instant jump, no animation fighting console emissions.
+                    LaunchedEffect(console.size) {
+                        if (console.isNotEmpty()) {
+                            val last = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                            if (last == null || last >= console.size - 3) state.scrollToItem(console.size - 1)
+                        }
+                    }
+                    if (showConsole) {
+                        Surface(tonalElevation = 2.dp) {
+                            Column(Modifier.fillMaxWidth().height(180.dp)) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                                    Text(
+                                        "Console (${console.size})",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.weight(1f).padding(top = 6.dp),
+                                    )
+                                    IconButton(onClick = { vm.clearConsole() }, modifier = Modifier.height(32.dp)) {
+                                        Icon(Icons.Filled.Delete, contentDescription = "Clear console")
+                                    }
+                                }
+                                LazyColumn(state = state) {
+                                    // v4.4.4 (smoothness): stable keys for console inserts.
+                                    items(console, key = { "${it.ts}:${it.text.hashCode()}" }) { line ->
+                                        Text(
+                                            line.text,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = when (line.level) {
+                                                "error" -> MaterialTheme.colorScheme.error
+                                                "warn" -> MaterialTheme.colorScheme.secondary
+                                                else -> MaterialTheme.colorScheme.onSurface
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 1.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

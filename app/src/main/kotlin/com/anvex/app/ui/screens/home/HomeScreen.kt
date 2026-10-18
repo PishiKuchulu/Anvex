@@ -241,8 +241,9 @@ fun HomeScreen(nav: NavController) {
                     Spacer(Modifier.width(10.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                         Text(tr("Anvex"), style = MaterialTheme.typography.titleLarge)
+                        // v4.4.6: subtitle is just "Your AI Agent".
                         Text(
-                            "Your AI agent, with memory",
+                            "Your AI Agent",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

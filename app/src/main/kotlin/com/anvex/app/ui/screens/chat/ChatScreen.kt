@@ -75,7 +75,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.StopCircle
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -133,7 +132,6 @@ import com.anvex.app.ui.screens.home.NewProjectHandoff
 import com.anvex.app.ui.screens.home.formatRelative
 import com.anvex.app.ui.theme.AnvexDimens
 import com.anvex.app.ui.components.AnvexIconTile
-import com.anvex.core.engine.QuickPrompts
 import com.anvex.core.model.ActionRecord
 import com.anvex.core.model.ActionStatus
 import com.anvex.core.model.ChatMessage
@@ -387,12 +385,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 }
             }
 
-            if (messages.isEmpty() && input.isEmpty() && !streamUi.streaming) {
-                QuickPromptRow(
-                    onPrompt = { input = it },
-                    enabled = true,
-                )
-            }
+            // v4.4.6: quick prompt chips removed per user request.
             if (attachments.isNotEmpty()) {
                 AttachmentRow(attachments, onRemove = { uri ->
                     releaseAttachment(uri)
@@ -591,22 +584,6 @@ private fun EmptyChatState() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(0.86f),
         )
-    }
-}
-
-@Composable
-private fun QuickPromptRow(onPrompt: (String) -> Unit, enabled: Boolean) {
-    androidx.compose.foundation.lazy.LazyRow(
-        contentPadding = PaddingValues(horizontal = AnvexDimens.page),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(QuickPrompts.defaults.take(3), key = { it.title }) { item ->
-            AssistChip(
-                onClick = { onPrompt(item.prompt) },
-                enabled = enabled,
-                label = { Text(item.title, maxLines = 1) },
-            )
-        }
     }
 }
 
