@@ -61,7 +61,7 @@ class ChatRepository(private val dao: MessageDao) {
     /** v4.4.6: first message + count for a direct-chat conversation list row. */
     suspend fun conversationSummary(projectId: String): Pair<ChatMessage?, Int> {
         val first = dao.firstForProject(projectId)?.let {
-            runCatching { toDomain(it) }.getOrNull()
+            runCatching { it.toDomain() }.getOrNull()
         }
         return first to dao.countForProject(projectId)
     }
