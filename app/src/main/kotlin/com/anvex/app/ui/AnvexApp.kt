@@ -76,6 +76,7 @@ object Routes {
     const val AGENT_CENTER = "agent-center"
     const val TERMINAL = "terminal/{projectId}"
     const val HARNESS = "harness/{projectId}"
+    const val SIGNING_KEY = "signing-key"
 
     fun providerEdit(id: String, kind: String? = null) =
         if (kind.isNullOrBlank()) "provider/$id" else "provider/$id?kind=$kind"
@@ -198,6 +199,7 @@ private fun AnvexNavHost(navController: NavHostController, modifier: Modifier) {
         composable(Routes.MEMORY) { MemoryScreen(navController) }
         composable(Routes.USAGE) { UsageScreen(navController) }
         composable(Routes.BACKUP) { BackupScreen(navController) }
+        composable(Routes.SIGNING_KEY) { com.anvex.app.ui.screens.signing.SigningKeyScreen(navController) }
         composable(Routes.DEVELOPER) { DeveloperCenterScreen(navController) }
         composable(Routes.EXTENSIONS) { com.anvex.app.ui.screens.extensions.ExtensionsScreen(navController) }
         composable(Routes.AGENT_CENTER) { AgentCenterScreen(null) }

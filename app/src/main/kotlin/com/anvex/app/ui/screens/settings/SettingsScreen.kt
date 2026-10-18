@@ -575,6 +575,7 @@ private fun DeveloperCategory(nav: NavController) {
     SettingsRow(Icons.Filled.BugReport, tr("Debug panel"), tr("Runtime status, memory, logs and provider tests"), nav = nav, route = Routes.DEBUG)
     SettingsRow(Icons.Filled.DeveloperMode, tr("Developer Center"), tr("Health, recovery, tasks, snapshots, skills and LAN access"), nav = nav, route = Routes.DEVELOPER)
     SettingsRow(Icons.Filled.SettingsSuggest, tr("Agent Center"), tr("Launch and monitor real durable agent tasks"), nav = nav, route = Routes.AGENT_CENTER)
+    SettingsRow(Icons.Filled.Key, tr("Signing key"), tr("Generate an APK signing key on-device and push secrets to GitHub"), nav = nav, route = Routes.SIGNING_KEY)
     AnvexSectionHeader(tr("About"))
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         ListItem(
