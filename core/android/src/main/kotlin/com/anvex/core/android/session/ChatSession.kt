@@ -83,6 +83,12 @@ class ChatSession(
     private val actionTimeoutMs: Long = DEFAULT_ACTION_TIMEOUT_MS,
     /** v4.2: memory, custom instructions and read-only tools (all optional; defaults keep old behavior). */
     private val extras: SessionExtras = SessionExtras(),
+    /**
+     * v4.4.6: project-less direct chat. Uses the conversational prompt (no file
+     * tools, no artifact protocol) and fails file actions closed — the stub FS
+     * passed by the caller has no workspace.
+     */
+    private val directChat: Boolean = false,
 ) {
     data class ActionUi(
         val actionId: String,
@@ -251,7 +257,17 @@ class ChatSession(
                 webAllowed = runCatching { extras.webTools() }.getOrDefault(false)
                 val projectContext = runCatching { projectContextProvider() }.getOrDefault("")
                 val exportWanted = UserIntentClassifier.requestsExport(userText)
-                val systemPrompt = SystemPromptFactory.buildAssistantPrompt(
+                val systemPrompt = if (directChat) {
+                    SystemPromptFactory.buildDirectChatPrompt(
+                        SystemPromptFactory.DirectChatPromptOptions(
+                            memoryEnabled = memoryOn,
+                            memoryBlock = if (memoryOn) runCatching { extras.memoryBlock() }.getOrDefault("") else "",
+                            customInstructions = runCatching { extras.customInstructions() }.getOrDefault(""),
+                            webTools = webAllowed,
+                        )
+                    )
+                } else {
+                    SystemPromptFactory.buildAssistantPrompt(
                     SystemPromptFactory.AssistantPromptOptions(
                         executionRequired = UserIntentClassifier.requiresExecution(userText),
                         exportRequested = exportWanted,
@@ -263,9 +279,13 @@ class ChatSession(
                         maxToolRounds = MAX_TOOL_ROUNDS,
                     )
                 )
+                }
                 val turns = ArrayList<ChatTurn>()
                 history.forEach { turns.add(historyTurn(it)) }
-                turns.add(ChatTurn(MessageRole.USER, userText + "\n\n" + SystemPromptFactoryCompat.contextBlock(context)))
+                // v4.4.6: direct chat has no workspace — no file context block.
+                val userTurnText = if (directChat) userText
+                    else userText + "\n\n" + SystemPromptFactoryCompat.contextBlock(context)
+                turns.add(ChatTurn(MessageRole.USER, userTurnText))
 
                 var round = 0
                 var exportRetried = false

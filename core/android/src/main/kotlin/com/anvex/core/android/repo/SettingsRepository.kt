@@ -26,9 +26,12 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
  * GLASS — Glassmorphism / expressive Material 3 variant with translucent surfaces.
  * AURORA — v4.4 port of the untitled.zip web-prototype design language: cyan/slate
  *   dark ladder (#070b14→#050811), cyan primary, semantic status accents, mono badges.
+ * MIDNIGHT — deep-navy dark-first, ice-blue accent; calm and focused.
+ * FOREST — deep-green dark-first, mint accent; easy on the eyes.
+ * EMBER — warm-charcoal dark-first, amber accent; cozy contrast.
  */
 @Serializable
-enum class UiThemeStyle { PROFESSIONAL, GLASS, NEBULA, AURORA }
+enum class UiThemeStyle { PROFESSIONAL, GLASS, NEBULA, AURORA, MIDNIGHT, FOREST, EMBER }
 
 @Serializable
 enum class AppLanguage { SYSTEM, ENGLISH, PERSIAN }

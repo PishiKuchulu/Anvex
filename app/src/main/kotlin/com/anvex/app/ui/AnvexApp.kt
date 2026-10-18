@@ -9,16 +9,14 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -65,6 +63,7 @@ object Routes {
     const val PROVIDER_EDIT = "provider/{id}?kind={kind}"
     const val DEBUG = "debug"
     const val CHAT = "chat/{projectId}"
+    const val DIRECT_CHAT = "direct-chat"
     const val EDITOR = "editor/{projectId}?file={file}"
     const val PREVIEW = "preview/{projectId}"
     const val BUILD = "build/{projectId}"
@@ -97,6 +96,7 @@ fun AnvexApp() {
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     val topLevel = currentRoute == Routes.HOME ||
+        currentRoute == Routes.DIRECT_CHAT ||
         currentRoute == Routes.AGENT_CENTER ||
         currentRoute == Routes.MEMORY ||
         currentRoute == Routes.SETTINGS
@@ -135,35 +135,42 @@ fun AnvexApp() {
         contentColor = MaterialTheme.colorScheme.onSurface,
         bottomBar = {
             if (topLevel) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                    tonalElevation = 0.dp,
-                ) {
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.HOME,
-                        onClick = { navController.navigateTop(Routes.HOME) },
-                        icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-                        label = { Text(tr("Home")) },
-                    )
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.AGENT_CENTER,
-                        onClick = { navController.navigateTop(Routes.AGENT_CENTER) },
-                        icon = { Icon(Icons.Filled.AutoAwesome, contentDescription = null) },
-                        label = { Text(tr("Agent")) },
-                    )
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.MEMORY,
-                        onClick = { navController.navigateTop(Routes.MEMORY) },
-                        icon = { Icon(Icons.Filled.Psychology, contentDescription = null) },
-                        label = { Text(tr("Memory")) },
-                    )
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.SETTINGS,
-                        onClick = { navController.navigateTop(Routes.SETTINGS) },
-                        icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                        label = { Text(tr("Settings")) },
-                    )
-                }
+                // v4.4.5 (UX): the floating Command Deck dock — same component
+                // as the project tabs, replacing the chunky full-width bar.
+                com.anvex.app.ui.components.AnvexDock(
+                    listOf(
+                        com.anvex.app.ui.components.DockItem(
+                            label = tr("Home"),
+                            icon = Icons.Filled.Home,
+                            selected = currentRoute == Routes.HOME,
+                            onClick = { navController.navigateTop(Routes.HOME) },
+                        ),
+                        com.anvex.app.ui.components.DockItem(
+                            label = tr("Chat"),
+                            icon = Icons.AutoMirrored.Filled.Chat,
+                            selected = currentRoute == Routes.DIRECT_CHAT,
+                            onClick = { navController.navigateTop(Routes.DIRECT_CHAT) },
+                        ),
+                        com.anvex.app.ui.components.DockItem(
+                            label = tr("Agent"),
+                            icon = Icons.Filled.AutoAwesome,
+                            selected = currentRoute == Routes.AGENT_CENTER,
+                            onClick = { navController.navigateTop(Routes.AGENT_CENTER) },
+                        ),
+                        com.anvex.app.ui.components.DockItem(
+                            label = tr("Memory"),
+                            icon = Icons.Filled.Psychology,
+                            selected = currentRoute == Routes.MEMORY,
+                            onClick = { navController.navigateTop(Routes.MEMORY) },
+                        ),
+                        com.anvex.app.ui.components.DockItem(
+                            label = tr("Settings"),
+                            icon = Icons.Filled.Settings,
+                            selected = currentRoute == Routes.SETTINGS,
+                            onClick = { navController.navigateTop(Routes.SETTINGS) },
+                        ),
+                    ),
+                )
             }
         },
     ) { padding ->
@@ -194,6 +201,10 @@ private fun AnvexNavHost(navController: NavHostController, modifier: Modifier) {
         composable(Routes.DEVELOPER) { DeveloperCenterScreen(navController) }
         composable(Routes.EXTENSIONS) { com.anvex.app.ui.screens.extensions.ExtensionsScreen(navController) }
         composable(Routes.AGENT_CENTER) { AgentCenterScreen(null) }
+        // v4.4.6: project-less direct chat — top-level Chat tab.
+        composable(Routes.DIRECT_CHAT) {
+            com.anvex.app.ui.screens.chat.DirectChatScreen(navController)
+        }
         composable(Routes.TERMINAL, arguments = listOf(navArgument("projectId") { type = NavType.StringType })) { entry ->
             val projectId = requireNotNull(entry.arguments?.getString("projectId")) { "Missing required navigation argument: projectId" }
             TerminalScreen(navController, projectId)

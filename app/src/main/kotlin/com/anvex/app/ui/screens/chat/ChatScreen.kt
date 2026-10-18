@@ -4,6 +4,7 @@ import androidx.compose.material3.AlertDialog
 import com.anvex.app.ui.components.PythonRunnerDialog
 import com.anvex.app.ui.components.ProjectKnowledgeDialog
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.History
 import com.anvex.app.ui.components.FileVersion
@@ -294,6 +295,19 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 IconButton(onClick = vm::cancel) {
                     Icon(Icons.Filled.StopCircle, contentDescription = "Stop generation")
                 }
+            }
+            // v4.4.6: export the conversation as a Markdown transcript.
+            IconButton(
+                onClick = {
+                    val title = project?.name ?: "Chat"
+                    val uri = com.anvex.app.ui.components.ChatTranscriptExporter
+                        .writeToCache(context, title, messages)
+                    if (uri != null) com.anvex.app.ui.components.ChatTranscriptExporter
+                        .share(context, uri, title)
+                },
+                enabled = messages.isNotEmpty(),
+            ) {
+                Icon(Icons.Filled.Share, contentDescription = tr("Export chat"))
             }
         },
     ) { modifier ->

@@ -55,6 +55,21 @@ class ChatRepository(private val dao: MessageDao) {
 
     suspend fun deleteAllHistory() = dao.deleteAll()
 
+    /** v4.4.6: ids of project-less direct-chat conversations. */
+    suspend fun directConversationIds(): List<String> = dao.directConversationIds()
+
+    /** v4.4.6: first message + count for a direct-chat conversation list row. */
+    suspend fun conversationSummary(projectId: String): Pair<ChatMessage?, Int> {
+        val first = dao.firstForProject(projectId)?.let {
+            runCatching { toDomain(it) }.getOrNull()
+        }
+        return first to dao.countForProject(projectId)
+    }
+
+    /** v4.4.6: newest message timestamp of a conversation (0 when empty). */
+    suspend fun lastMessageTime(projectId: String): Long =
+        dao.lastMessageTime(projectId) ?: 0L
+
     suspend fun usageSummary(): List<ChatMessage> = dao.allAssistantUsage().mapNotNull { it.toDomain() }
 
     private fun MessageEntity.toDomain(): ChatMessage? = try {

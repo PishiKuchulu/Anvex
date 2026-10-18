@@ -179,8 +179,8 @@ class StaticPreviewServer(
                         val html = """
                             <!doctype html><html><head><meta charset="utf-8">
                             <meta name="viewport" content="width=device-width,initial-scale=1">
-                            <style>body{font-family:system-ui;background:#0b1020;color:#e6edf3;display:flex;
-                            align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:24px}</style>
+                            <style>html,body{height:100%;margin:0}body{font-family:system-ui;background:#0b1020;color:#e6edf3;display:flex;
+                            align-items:center;justify-content:center;min-height:100%;text-align:center;padding:24px;box-sizing:border-box}</style>
                             </head><body><div><h2>No index.html yet</h2>
                             <p>Ask the AI to create your app, or add an index.html in the editor.</p></div></body></html>
                         """.trimIndent()

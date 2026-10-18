@@ -1,6 +1,51 @@
 # Changelog
 
-## 4.4.5 (unreleased) — Composer UX rework + app-wide interaction-design defect round
+## 4.4.6 (unreleased) — Command Deck dock, direct Chat tab, back-navigation fix, Preview overlap fix
+
+### Added
+- New top-level **Chat** tab (5th in the main dock): project-less direct
+  conversation with the agent — no folder needed. Conversations live in a
+  navigation drawer (list, new, delete with ConfirmDialog); the thread
+  supports streaming, markdown, web-search toggle, and file/image attachments
+  (file picker, photo library, camera; images/PDFs/text/ZIPs handled like the
+  project chat). Runs on a dedicated `DirectChatViewModel` + `ChatSession`
+  in direct-chat mode: conversational system prompt (no file tools, no
+  artifact protocol), memory + custom instructions + web search wired through,
+  attachments persisted per-conversation in app-private storage.
+- **Export chat transcript**: both the project Agent chat and the direct Chat
+  tab can export the conversation as a Markdown file through the system share
+  sheet (`ChatTranscriptExporter`).
+- **Create project from chat**: the direct Chat tab can turn the active
+  conversation into a new project, handing a capped transcript to the
+  project's Agent tab via the existing new-project handoff.
+- **Guided first API key**: the providers empty state now shows where to get
+  a key (Google AI Studio, OpenRouter — opened in the system browser, no
+  pricing claims) next to the "Add provider" flow.
+- 3 new theme styles (Settings → Appearance): **Midnight** (deep-navy,
+  ice-blue), **Forest** (deep-green, mint), **Ember** (warm-charcoal, amber) —
+  each with dark/light schemes and matching Command Deck extras.
+
+### Changed
+- Bottom navigation (both the main tabs and the project tabs) is now the
+  floating Command Deck dock: a compact rounded container, 22dp icons with
+  10sp labels, and a 4dp selection dot instead of the chunky full-width M3
+  pill bar. One shared `AnvexDock` component drives both bars.
+- Project "Chat" tab renamed to "Agent" (it is the project's coding agent).
+- Home header: the generic sparkle tile is replaced by the real Anvex emblem
+  (`anvex_emblem` drawable, circular crop); the title/subtitle stay plain text.
+
+### Fixed
+- Back navigation: switching project tabs (Chat/Editor/Preview/Harness/Build)
+  pushed every tab onto the back stack, so Back walked through visited tabs
+  instead of leaving the project. Tab switches now pop to Home first — Back
+  from any project tab returns to the main screen.
+- Preview: the bundler banner overlapped the WebView content ("No index.html
+  yet" was sliced by the banner's bottom edge). The WebView now uses
+  `weight(1f)` (the canonical fill-remaining-Column-space pattern) instead of
+  `fillMaxSize()`, and the placeholder page centers with `min-height:100%`
+  instead of `100vh`.
+
+## 4.4.5 — Composer UX rework + app-wide interaction-design defect round
 
 ### Changed
 - Composer toolbar: the five undifferentiated icon buttons (project, attach,

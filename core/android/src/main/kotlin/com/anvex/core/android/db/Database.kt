@@ -225,6 +225,22 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE role = 'ASSISTANT' AND usageJson IS NOT NULL ORDER BY createdAt DESC")
     suspend fun allAssistantUsage(): List<MessageEntity>
+
+    /** v4.4.6: distinct project-less direct-chat conversation ids ("direct/<uuid>"). */
+    @Query("SELECT DISTINCT projectId FROM messages WHERE projectId LIKE 'direct/%' ESCAPE '\\' ORDER BY projectId")
+    suspend fun directConversationIds(): List<String>
+
+    /** v4.4.6: first message of a conversation (for list titles). */
+    @Query("SELECT * FROM messages WHERE projectId = :projectId ORDER BY createdAt ASC LIMIT 1")
+    suspend fun firstForProject(projectId: String): MessageEntity?
+
+    /** v4.4.6: message count of a conversation. */
+    @Query("SELECT COUNT(*) FROM messages WHERE projectId = :projectId")
+    suspend fun countForProject(projectId: String): Int
+
+    /** v4.4.6: newest message timestamp of a conversation (for list sorting). */
+    @Query("SELECT MAX(createdAt) FROM messages WHERE projectId = :projectId")
+    suspend fun lastMessageTime(projectId: String): Long?
 }
 
 @Dao

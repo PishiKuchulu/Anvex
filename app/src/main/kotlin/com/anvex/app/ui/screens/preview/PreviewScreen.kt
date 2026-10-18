@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -370,7 +371,11 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                             webView.reload()
                         }
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    // v4.4.5 (UX): weight(1f) — the canonical "fill remaining Column
+                    // space" pattern. fillMaxSize() here let the WebView measure
+                    // against the full Column height and render behind the
+                    // bundler banner above it.
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     onRelease = { webView ->
                         runCatching { webView.stopLoading() }
                         runCatching { webView.removeJavascriptInterface("__anvex") }

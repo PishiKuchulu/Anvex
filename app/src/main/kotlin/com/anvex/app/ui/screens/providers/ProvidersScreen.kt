@@ -93,6 +93,8 @@ fun ProvidersScreen(nav: NavController) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                // v4.4.6: guided first key — where to get one, without pricing claims.
+                item { ProviderKeyGuideCard() }
             } else {
                 items(providers, key = { it.id }) { provider ->
                     Card(onClick = { nav.navigate(Routes.providerEdit(provider.id)) }) {
@@ -607,6 +609,64 @@ private fun ModelPicker(models: List<com.anvex.core.model.ModelInfo>, current: S
                 }
             }
         }
+    }
+}
+
+/**
+ * v4.4.6: guided first key. Two well-known places to obtain an API key,
+ * opened in the system browser. No pricing or free-tier claims — those change;
+ * the key pages themselves describe current terms.
+ */
+@Composable
+private fun ProviderKeyGuideCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Card {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(tr("Where to get an API key"), style = MaterialTheme.typography.titleSmall)
+            Text(
+                tr("Create a key on one of these sites, then tap \"Add provider\" and paste it."),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
+            KeyLinkRow(
+                label = "Google AI Studio",
+                hint = tr("Gemini API key"),
+                onClick = { openInSystemBrowser(context, "https://aistudio.google.com/apikey") },
+            )
+            KeyLinkRow(
+                label = "OpenRouter",
+                hint = tr("Many models, one key"),
+                onClick = { openInSystemBrowser(context, "https://openrouter.ai/keys") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun KeyLinkRow(label: String, hint: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            androidx.compose.material.icons.Icons.Filled.OpenInNew,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

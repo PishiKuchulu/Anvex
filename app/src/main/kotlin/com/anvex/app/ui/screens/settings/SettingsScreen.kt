@@ -475,6 +475,9 @@ private fun AppearanceCategory(
                                 UiThemeStyle.NEBULA -> "Nebula — deep-space canvas, violet→cyan gradient, glass cards"
                                 UiThemeStyle.PROFESSIONAL -> "Professional — Command Deck: Linear/Vercel dark, JetBrains Mono, 8pt grid (default)"
                                 UiThemeStyle.GLASS -> "Glass — Glassmorphism / Expressive Material 3"
+                                UiThemeStyle.MIDNIGHT -> "Midnight — deep-navy dark, ice-blue accent; calm and focused"
+                                UiThemeStyle.FOREST -> "Forest — deep-green dark, mint accent; easy on the eyes"
+                                UiThemeStyle.EMBER -> "Ember — warm-charcoal dark, amber accent; cozy contrast"
                             }
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -489,6 +492,9 @@ private fun AppearanceCategory(
                                                 UiThemeStyle.NEBULA -> "Nebula"
                                                 UiThemeStyle.PROFESSIONAL -> "Professional"
                                                 UiThemeStyle.GLASS -> "Glass"
+                                                UiThemeStyle.MIDNIGHT -> "Midnight"
+                                                UiThemeStyle.FOREST -> "Forest"
+                                                UiThemeStyle.EMBER -> "Ember"
                                             }
                                         )
                                     },

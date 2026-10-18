@@ -331,10 +331,214 @@ private val NebulaExtrasLight = AnvexExtras(
     glass = Color(0xB3FFFFFF), glassBorder = Color(0x33000000),
 )
 
+// ------------------------------------------------------------------ midnight
+// v4.4.6: deep-navy dark-first theme, ice-blue accent.
+
+private val MidnightDarkScheme = darkColorScheme(
+    primary = Color(0xFF7DD3FC),
+    onPrimary = Color(0xFF06283D),
+    primaryContainer = Color(0xFF0E3A56),
+    onPrimaryContainer = Color(0xFFD6EFFF),
+    secondary = Color(0xFF8EA6C4),
+    onSecondary = Color(0xFF0B1526),
+    secondaryContainer = Color(0xFF1B2A44),
+    onSecondaryContainer = Color(0xFFD3E2F7),
+    tertiary = Color(0xFF818CF8),
+    onTertiary = Color(0xFF1B1F4D),
+    tertiaryContainer = Color(0xFF2A3168),
+    onTertiaryContainer = Color(0xFFE0E4FF),
+    background = Color(0xFF060B18),
+    onBackground = Color(0xFFE6EDF7),
+    surface = Color(0xFF0A1224),
+    onSurface = Color(0xFFE6EDF7),
+    surfaceVariant = Color(0xFF14203A),
+    onSurfaceVariant = Color(0xFF93A3BC),
+    outline = Color(0xFF2A3A58),
+    outlineVariant = Color(0xFF1A2740),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF4F171B),
+    onErrorContainer = Color(0xFFFFDAD6),
+)
+
+private val MidnightLightScheme = lightColorScheme(
+    primary = Color(0xFF0369A1),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD2EBFF),
+    onPrimaryContainer = Color(0xFF06283D),
+    secondary = Color(0xFF3D5A80),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFD8E6F7),
+    onSecondaryContainer = Color(0xFF0B1526),
+    tertiary = Color(0xFF4F46E5),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFE0E4FF),
+    onTertiaryContainer = Color(0xFF1B1F4D),
+    background = Color(0xFFF2F6FD),
+    onBackground = Color(0xFF0A1424),
+    surface = Color.White,
+    onSurface = Color(0xFF0A1424),
+    surfaceVariant = Color(0xFFE4ECF8),
+    onSurfaceVariant = Color(0xFF44546E),
+    outline = Color(0xFF6E7F9A),
+    outlineVariant = Color(0xFFCBD8EC),
+)
+
+private val MidnightExtrasDark = AnvexExtras(
+    accentStart = Color(0xFF38BDF8), accentEnd = Color(0xFF818CF8),
+    canvasTop = Color(0xFF0A1430), canvasBottom = Color(0xFF04070F),
+    userBubbleStart = Color(0xFF0369A1), userBubbleEnd = Color(0xFF4F46E5),
+    glass = Color(0x1AFFFFFF), glassBorder = Color(0x2EFFFFFF),
+)
+
+private val MidnightExtrasLight = AnvexExtras(
+    accentStart = Color(0xFF0284C7), accentEnd = Color(0xFF6366F1),
+    canvasTop = Color(0xFFEAF2FD), canvasBottom = Color(0xFFF7FAFE),
+    userBubbleStart = Color(0xFF38BDF8), userBubbleEnd = Color(0xFF818CF8),
+    glass = Color(0xB3FFFFFF), glassBorder = Color(0x33000000),
+)
+
+// ------------------------------------------------------------------ forest
+// v4.4.6: deep-green dark-first theme, mint accent.
+
+private val ForestDarkScheme = darkColorScheme(
+    primary = Color(0xFF6EE7B7),
+    onPrimary = Color(0xFF06301F),
+    primaryContainer = Color(0xFF0C4A2E),
+    onPrimaryContainer = Color(0xFFD2F8E4),
+    secondary = Color(0xFF93A894),
+    onSecondary = Color(0xFF0E1A12),
+    secondaryContainer = Color(0xFF223526),
+    onSecondaryContainer = Color(0xFFD6E4D6),
+    tertiary = Color(0xFFA3E635),
+    onTertiary = Color(0xFF25310A),
+    tertiaryContainer = Color(0xFF3A4A15),
+    onTertiaryContainer = Color(0xFFE7F9C8),
+    background = Color(0xFF07120C),
+    onBackground = Color(0xFFE6F2E9),
+    surface = Color(0xFF0B1B12),
+    onSurface = Color(0xFFE6F2E9),
+    surfaceVariant = Color(0xFF152619),
+    onSurfaceVariant = Color(0xFF93A894),
+    outline = Color(0xFF2C4231),
+    outlineVariant = Color(0xFF1C2D21),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF4F171B),
+    onErrorContainer = Color(0xFFFFDAD6),
+)
+
+private val ForestLightScheme = lightColorScheme(
+    primary = Color(0xFF047857),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFC9F2DF),
+    onPrimaryContainer = Color(0xFF06301F),
+    secondary = Color(0xFF3F5A45),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFD8E8DA),
+    onSecondaryContainer = Color(0xFF0E1A12),
+    tertiary = Color(0xFF4D7C0F),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFE4F5C2),
+    onTertiaryContainer = Color(0xFF25310A),
+    background = Color(0xFFF1F8F2),
+    onBackground = Color(0xFF0C1710),
+    surface = Color.White,
+    onSurface = Color(0xFF0C1710),
+    surfaceVariant = Color(0xFFE3EDE4),
+    onSurfaceVariant = Color(0xFF46564A),
+    outline = Color(0xFF6E7F72),
+    outlineVariant = Color(0xFFC9D8CC),
+)
+
+private val ForestExtrasDark = AnvexExtras(
+    accentStart = Color(0xFF34D399), accentEnd = Color(0xFFA3E635),
+    canvasTop = Color(0xFF0C2115), canvasBottom = Color(0xFF040905),
+    userBubbleStart = Color(0xFF047857), userBubbleEnd = Color(0xFF4D7C0F),
+    glass = Color(0x1AFFFFFF), glassBorder = Color(0x2EFFFFFF),
+)
+
+private val ForestExtrasLight = AnvexExtras(
+    accentStart = Color(0xFF059669), accentEnd = Color(0xFF65A30D),
+    canvasTop = Color(0xFFE9F5EC), canvasBottom = Color(0xFFF6FAF7),
+    userBubbleStart = Color(0xFF6EE7B7), userBubbleEnd = Color(0xFFA3E635),
+    glass = Color(0xB3FFFFFF), glassBorder = Color(0x33000000),
+)
+
+// ------------------------------------------------------------------ ember
+// v4.4.6: warm-charcoal dark-first theme, amber accent.
+
+private val EmberDarkScheme = darkColorScheme(
+    primary = Color(0xFFFBBF24),
+    onPrimary = Color(0xFF3A2404),
+    primaryContainer = Color(0xFF5A3A0C),
+    onPrimaryContainer = Color(0xFFFFEDCB),
+    secondary = Color(0xFFB09A80),
+    onSecondary = Color(0xFF1D1409),
+    secondaryContainer = Color(0xFF33261A),
+    onSecondaryContainer = Color(0xFFEADDCB),
+    tertiary = Color(0xFFFB7185),
+    onTertiary = Color(0xFF4A1020),
+    tertiaryContainer = Color(0xFF672033),
+    onTertiaryContainer = Color(0xFFFFD9E0),
+    background = Color(0xFF140D08),
+    onBackground = Color(0xFFF5EBDD),
+    surface = Color(0xFF1D130C),
+    onSurface = Color(0xFFF5EBDD),
+    surfaceVariant = Color(0xFF2C2015),
+    onSurfaceVariant = Color(0xFFB09A80),
+    outline = Color(0xFF4A3A28),
+    outlineVariant = Color(0xFF332619),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF4F171B),
+    onErrorContainer = Color(0xFFFFDAD6),
+)
+
+private val EmberLightScheme = lightColorScheme(
+    primary = Color(0xFFB45309),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFFFE6BE),
+    onPrimaryContainer = Color(0xFF3A2404),
+    secondary = Color(0xFF6B5B45),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFEFE2CC),
+    onSecondaryContainer = Color(0xFF1D1409),
+    tertiary = Color(0xFFBE123C),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFFFD9E0),
+    onTertiaryContainer = Color(0xFF4A1020),
+    background = Color(0xFFFBF6F0),
+    onBackground = Color(0xFF1C130A),
+    surface = Color.White,
+    onSurface = Color(0xFF1C130A),
+    surfaceVariant = Color(0xFFF0E7D6),
+    onSurfaceVariant = Color(0xFF5C4F3D),
+    outline = Color(0xFF7E6E58),
+    outlineVariant = Color(0xFFDCCFB6),
+)
+
+private val EmberExtrasDark = AnvexExtras(
+    accentStart = Color(0xFFF59E0B), accentEnd = Color(0xFFFB7185),
+    canvasTop = Color(0xFF241509), canvasBottom = Color(0xFF0C0704),
+    userBubbleStart = Color(0xFFB45309), userBubbleEnd = Color(0xFFBE123C),
+    glass = Color(0x1AFFFFFF), glassBorder = Color(0x2EFFFFFF),
+)
+
+private val EmberExtrasLight = AnvexExtras(
+    accentStart = Color(0xFFD97706), accentEnd = Color(0xFFF43F5E),
+    canvasTop = Color(0xFFFAF1E3), canvasBottom = Color(0xFFFCF8F2),
+    userBubbleStart = Color(0xFFFBBF24), userBubbleEnd = Color(0xFFFB7185),
+    glass = Color(0xB3FFFFFF), glassBorder = Color(0x33000000),
+)
+
 private fun extrasFor(style: UiThemeStyle, dark: Boolean, scheme: androidx.compose.material3.ColorScheme): AnvexExtras =
     when (style) {
         UiThemeStyle.NEBULA -> if (dark) NebulaExtrasDark else NebulaExtrasLight
         UiThemeStyle.AURORA -> if (dark) AuroraExtrasDark else AuroraExtrasLight
+        UiThemeStyle.MIDNIGHT -> if (dark) MidnightExtrasDark else MidnightExtrasLight
+        UiThemeStyle.FOREST -> if (dark) ForestExtrasDark else ForestExtrasLight
+        UiThemeStyle.EMBER -> if (dark) EmberExtrasDark else EmberExtrasLight
         else -> AnvexExtras(
             accentStart = scheme.primary, accentEnd = scheme.tertiary,
             canvasTop = scheme.background, canvasBottom = scheme.background,
@@ -367,6 +571,9 @@ fun AnvexTheme(
         style == UiThemeStyle.NEBULA -> if (useDark) NebulaDarkScheme else NebulaLightScheme
         style == UiThemeStyle.GLASS -> if (useDark) GlassDarkScheme else GlassLightScheme
         style == UiThemeStyle.AURORA -> if (useDark) AuroraDarkScheme else AuroraLightScheme
+        style == UiThemeStyle.MIDNIGHT -> if (useDark) MidnightDarkScheme else MidnightLightScheme
+        style == UiThemeStyle.FOREST -> if (useDark) ForestDarkScheme else ForestLightScheme
+        style == UiThemeStyle.EMBER -> if (useDark) EmberDarkScheme else EmberLightScheme
         else -> if (useDark) ProfessionalDarkScheme else ProfessionalLightScheme
     }
     val shapes = when {

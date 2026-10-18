@@ -20,8 +20,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -33,7 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.anvex.app.ui.Routes
 import com.anvex.app.i18n.tr
@@ -125,42 +122,43 @@ fun ProjectScaffold(
             )
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                tonalElevation = 0.dp,
-            ) {
-                NavigationBarItem(
-                    selected = currentTab == ProjectTab.CHAT,
-                    onClick = { nav.replaceTab(Routes.chat(projectId)) },
-                    icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
-                    label = { Text(tr("Chat")) },
-                )
-                NavigationBarItem(
-                    selected = currentTab == ProjectTab.EDITOR,
-                    onClick = { nav.replaceTab(Routes.editor(projectId)) },
-                    icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                    label = { Text(tr("Editor")) },
-                )
-                NavigationBarItem(
-                    selected = currentTab == ProjectTab.PREVIEW,
-                    onClick = { nav.replaceTab(Routes.preview(projectId)) },
-                    icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
-                    label = { Text(tr("Preview")) },
-                )
-                // v4.0 (GOAL 2): the durable-agent harness workspace.
-                NavigationBarItem(
-                    selected = currentTab == ProjectTab.HARNESS,
-                    onClick = { nav.replaceTab(Routes.harness(projectId)) },
-                    icon = { Icon(Icons.Filled.AutoAwesome, contentDescription = null) },
-                    label = { Text(tr("Harness")) },
-                )
-                NavigationBarItem(
-                    selected = currentTab == ProjectTab.BUILD,
-                    onClick = { nav.replaceTab(Routes.build(projectId)) },
-                    icon = { Icon(Icons.Filled.Build, contentDescription = null) },
-                    label = { Text(tr("Build")) },
-                )
-            }
+            // v4.4.5 (UX): the floating Command Deck dock replaces the
+            // full-width M3 NavigationBar; project Chat is now "Agent".
+            AnvexDock(
+                listOf(
+                    DockItem(
+                        label = tr("Agent"),
+                        icon = Icons.AutoMirrored.Filled.Chat,
+                        selected = currentTab == ProjectTab.CHAT,
+                        onClick = { nav.replaceTab(Routes.chat(projectId)) },
+                    ),
+                    DockItem(
+                        label = tr("Editor"),
+                        icon = Icons.Filled.Edit,
+                        selected = currentTab == ProjectTab.EDITOR,
+                        onClick = { nav.replaceTab(Routes.editor(projectId)) },
+                    ),
+                    DockItem(
+                        label = tr("Preview"),
+                        icon = Icons.Filled.PlayArrow,
+                        selected = currentTab == ProjectTab.PREVIEW,
+                        onClick = { nav.replaceTab(Routes.preview(projectId)) },
+                    ),
+                    // v4.0 (GOAL 2): the durable-agent harness workspace.
+                    DockItem(
+                        label = tr("Harness"),
+                        icon = Icons.Filled.AutoAwesome,
+                        selected = currentTab == ProjectTab.HARNESS,
+                        onClick = { nav.replaceTab(Routes.harness(projectId)) },
+                    ),
+                    DockItem(
+                        label = tr("Build"),
+                        icon = Icons.Filled.Build,
+                        selected = currentTab == ProjectTab.BUILD,
+                        onClick = { nav.replaceTab(Routes.build(projectId)) },
+                    ),
+                ),
+            )
         },
     ) { padding ->
         content(
@@ -180,5 +178,9 @@ fun ProjectScaffold(
 private fun NavController.replaceTab(route: String) {
     navigate(route) {
         launchSingleTop = true
+        // v4.4.5 (UX): project tabs replace each other instead of stacking —
+        // Back from any project tab must leave the project for Home,
+        // not walk back through previously visited tabs.
+        popUpTo(Routes.HOME)
     }
 }

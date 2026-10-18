@@ -1,0 +1,634 @@
+package com.anvex.app.ui.screens.chat
+
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.MenuOpen
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import com.anvex.app.i18n.tr
+import com.anvex.app.ui.Routes
+import com.anvex.app.ui.components.AnvexIconTile
+import com.anvex.app.ui.components.ChatTranscriptExporter
+import com.anvex.app.ui.components.ConfirmDialog
+import com.anvex.app.ui.components.MarkdownText
+import com.anvex.app.vm.DirectChatViewModel
+import com.anvex.core.model.ChatMessage
+import com.anvex.core.model.MessageRole
+import kotlinx.coroutines.launch
+import java.io.File
+import java.text.DateFormat
+import java.util.Date
+
+/**
+ * v4.4.6: project-less direct chat — a top-level Chat tab for conversing with
+ * the agent without a folder/project. Conversations live in a drawer; the
+ * thread supports text, image/file attachments (via the activity pickers),
+ * web search toggle, and streaming.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DirectChatScreen(nav: NavController) {
+    val vm: DirectChatViewModel = viewModel()
+    val conversations by vm.conversations.collectAsState()
+    val activeId by vm.activeId.collectAsState()
+    val messages by vm.messages.collectAsState()
+    val sessionState by vm.sessionState.collectAsState()
+    val streamActive by vm.streamActive.collectAsState()
+    val noProvider by vm.noProviderConfigured.collectAsState()
+    val activeModel by vm.activeModel.collectAsState()
+    val webOn by vm.webSearchOn.collectAsState()
+    val webAvail by vm.webSearchAvailable.collectAsState()
+    val attachmentError by vm.attachmentError.collectAsState()
+
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    var input by remember { mutableStateOf("") }
+    val attachments = remember { mutableStateListOf<Uri>() }
+    var attachSheet by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<DirectChatViewModel.Conversation?>(null) }
+    val sheetState = rememberModalBottomSheetState()
+    val listState = rememberLazyListState()
+
+    val activeTitle = conversations.firstOrNull { it.id == activeId }?.title ?: tr("Chat")
+
+    // v4.4.5 (smoothness): follow the tail only when already at the bottom.
+    LaunchedEffect(messages.size, sessionState.streamText.length) {
+        val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+        val total = messages.size + if (sessionState.streamText.isNotEmpty()) 1 else 0
+        if (last == null || last >= total - 3) {
+            if (total > 0) listState.scrollToItem((total - 1).coerceAtLeast(0))
+        }
+    }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            attachments.add(uri)
+        }
+    }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) attachments.add(uri)
+    }
+    var cameraTarget by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        val uri = cameraTarget
+        cameraTarget = null
+        if (saved && uri != null) attachments.add(uri)
+    }
+
+    fun send() {
+        val text = input.trim()
+        if (text.isEmpty() && attachments.isEmpty()) return
+        if (sessionState.streaming) return
+        vm.send(text, attachments.toList())
+        input = ""
+        attachments.clear()
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        tr("Conversations"),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { vm.newConversation() }) {
+                        Icon(Icons.Filled.Add, contentDescription = tr("New chat"))
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                conversations.forEach { conv ->
+                    NavigationDrawerItem(
+                        label = {
+                            Column {
+                                Text(conv.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                                        .format(Date(conv.lastAt)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
+                        icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
+                        badge = {
+                            IconButton(
+                                onClick = { deleteTarget = conv },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = tr("Delete"),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        },
+                        selected = conv.id == activeId,
+                        onClick = {
+                            vm.selectConversation(conv.id)
+                            scope.launch { drawerState.close() }
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                }
+                if (conversations.isEmpty()) {
+                    Text(
+                        tr("No conversations yet"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+            }
+        }
+        },
+    ) {
+        Scaffold(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(activeTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Filled.Menu, contentDescription = tr("Conversations"))
+                        }
+                    },
+                    actions = {
+                        if (webAvail) {
+                            FilterChip(
+                                selected = webOn,
+                                onClick = { vm.setWebSearch(!webOn) },
+                                label = { Text(tr("Web")) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Language, contentDescription = null, modifier = Modifier.size(16.dp))
+                                },
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        // v4.4.6: export transcript as Markdown.
+                        IconButton(
+                            onClick = {
+                                val uri = ChatTranscriptExporter.writeToCache(context, activeTitle, messages)
+                                if (uri != null) ChatTranscriptExporter.share(context, uri, activeTitle)
+                            },
+                            enabled = messages.isNotEmpty(),
+                        ) {
+                            Icon(Icons.Filled.Share, contentDescription = tr("Export chat"))
+                        }
+                        // v4.4.6: create a project from this conversation.
+                        IconButton(
+                            onClick = {
+                                vm.createProjectFromActive(activeTitle) { id ->
+                                    nav.navigate(Routes.chat(id))
+                                }
+                            },
+                            enabled = messages.isNotEmpty(),
+                        ) {
+                            Icon(Icons.Filled.CreateNewFolder, contentDescription = tr("Create project from chat"))
+                        }
+                        IconButton(onClick = { vm.newConversation() }) {
+                            Icon(Icons.Filled.Add, contentDescription = tr("New chat"))
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                )
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                if (attachmentError != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                attachmentError!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(onClick = { vm.clearAttachmentError() }, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Filled.Close, contentDescription = tr("Dismiss"), modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+
+                if (noProvider) {
+                    // No provider configured — honest empty state, not a dead chat.
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            AnvexIconTile(Icons.AutoMirrored.Filled.Chat, modifier = Modifier.size(56.dp))
+                            Spacer(Modifier.height(12.dp))
+                            Text(tr("Connect your AI provider"), style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                tr("Set up a provider to start chatting"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            androidx.compose.material3.Button(onClick = { nav.navigate(Routes.PROVIDERS) }) {
+                                Text(tr("Set up"))
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 16.dp, vertical = 8.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (messages.isEmpty() && !streamActive) {
+                            item {
+                                Box(
+                                    modifier = Modifier.fillParentMaxSize(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        AnvexIconTile(Icons.AutoMirrored.Filled.Chat, modifier = Modifier.size(64.dp))
+                                        Spacer(Modifier.height(12.dp))
+                                        Text(
+                                            tr("Ask anything"),
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            tr("No project needed — just chat"),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        if (activeModel != null) {
+                                            Spacer(Modifier.height(8.dp))
+                                            Text(
+                                                activeModel!!,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        items(messages, key = { it.id }) { msg ->
+                            DirectMessageBubble(msg)
+                        }
+                        if (sessionState.streamText.isNotEmpty()) {
+                            item(key = "streaming") {
+                                StreamingBubble(
+                                    text = sessionState.streamText,
+                                    reasoning = sessionState.streamReasoning,
+                                )
+                            }
+                        }
+                        if (sessionState.statusLine != null && sessionState.streaming) {
+                            item(key = "status") {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        sessionState.statusLine!!,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        if (sessionState.error != null) {
+                            item(key = "error") {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.errorContainer,
+                                    shape = RoundedCornerShape(12.dp),
+                                ) {
+                                    Text(
+                                        "${sessionState.error!!.userTitle}: ${sessionState.error!!.message}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.padding(12.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Attachments preview strip.
+                    if (attachments.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            attachments.forEach { uri ->
+                                FilterChip(
+                                    selected = false,
+                                    onClick = { attachments.remove(uri) },
+                                    label = {
+                                        Text(
+                                            uri.lastPathSegment?.substringAfterLast('/')?.take(18) ?: "file",
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        Icon(Icons.Filled.Close, contentDescription = tr("Remove"), modifier = Modifier.size(14.dp))
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    // Composer.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        IconButton(onClick = { attachSheet = true }) {
+                            Icon(Icons.Filled.AttachFile, contentDescription = tr("Attach"))
+                        }
+                        OutlinedTextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text(tr("Message")) },
+                            shape = RoundedCornerShape(24.dp),
+                            maxLines = 5,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        if (sessionState.streaming) {
+                            IconButton(onClick = { vm.cancel() }) {
+                                Icon(Icons.Filled.Stop, contentDescription = tr("Stop"))
+                            }
+                        } else {
+                            IconButton(
+                                onClick = { send() },
+                                enabled = input.isNotBlank() || attachments.isNotEmpty(),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Send,
+                                    contentDescription = tr("Send"),
+                                    tint = if (input.isNotBlank() || attachments.isNotEmpty())
+                                        MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (deleteTarget != null) {
+        ConfirmDialog(
+            title = tr("Delete conversation"),
+            text = tr("Delete this conversation and its messages? This cannot be undone."),
+            confirmLabel = tr("Delete"),
+            destructive = true,
+            onConfirm = {
+                vm.deleteConversation(deleteTarget!!.id)
+                deleteTarget = null
+            },
+            onDismiss = { deleteTarget = null },
+        )
+    }
+
+    if (attachSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { attachSheet = false },
+            sheetState = sheetState,
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                Text(tr("Attach"), style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(12.dp))
+                AttachRow(
+                    icon = Icons.Filled.AttachFile,
+                    label = tr("Attach file"),
+                    onClick = {
+                        attachSheet = false
+                        filePicker.launch(arrayOf("*/*"))
+                    },
+                )
+                AttachRow(
+                    icon = Icons.Filled.Image,
+                    label = tr("Photo library"),
+                    onClick = {
+                        attachSheet = false
+                        photoPicker.launch("image/*")
+                    },
+                )
+                AttachRow(
+                    icon = Icons.Filled.PhotoCamera,
+                    label = tr("Take photo"),
+                    onClick = {
+                        attachSheet = false
+                        val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+                        val file = File(dir, "direct-${System.currentTimeMillis()}.jpg")
+                        val uri = FileProvider.getUriForFile(
+                            context, "${context.packageName}.fileprovider", file
+                        )
+                        cameraTarget = uri
+                        cameraLauncher.launch(uri)
+                    },
+                )
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectMessageBubble(msg: ChatMessage) {
+    val isUser = msg.role == MessageRole.USER
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = if (isUser) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth(if (isUser) 0.85f else 1f),
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                if (msg.attachments.isNotEmpty()) {
+                    Text(
+                        msg.attachments.joinToString(", ") { it.name },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                if (isUser) {
+                    Text(msg.content, style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    MarkdownText(msg.content)
+                }
+                if (msg.error != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        msg.error!!,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StreamingBubble(text: String, reasoning: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                if (reasoning.isNotBlank()) {
+                    Text(
+                        reasoning.take(600),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                Row {
+                    Text(
+                        text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AnvexIconTile(icon, modifier = Modifier.size(40.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
