@@ -81,6 +81,11 @@ object ArtifactHygienePolicy {
         }
         val name = parts.last()
         if (name in excludedNames || secretName.containsMatchIn(name)) return false
+        // Private keys and keystores must never leave the device via sync or
+        // artifact packaging — a .p12 is binary, so the secret-content scan
+        // cannot see it; the extension is the only reliable signal.
+        val ext = name.substringAfterLast('.', "").lowercase()
+        if (ext in setOf("p12", "pfx", "keystore", "jks", "key", "pem")) return false
         return true
     }
 

@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ArtifactPackagingTest {
+    @Test fun `keystores and private keys are never included`() {
+        for (name in listOf("release.p12", "key.pfx", "app.keystore", "debug.jks", "id.key", "cert.pem")) {
+            assertFalse("must exclude $name", ArtifactHygienePolicy.include(name))
+            assertFalse("must exclude nested $name", ArtifactHygienePolicy.include("app/$name"))
+        }
+        assertTrue(ArtifactHygienePolicy.include("app/MainActivity.kt"))
+    }
+
     @Test fun zipIsDeterministicAndSorted() {
         val a = ArtifactPackager.zip("source", listOf(ArtifactFileSpec("a.txt", "A".toByteArray()), ArtifactFileSpec("b.txt", "B".toByteArray())))
         ZipInputStream(a.bytes.inputStream()).use { zip ->
