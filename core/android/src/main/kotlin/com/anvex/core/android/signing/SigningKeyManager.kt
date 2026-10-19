@@ -1,6 +1,7 @@
 package com.anvex.core.android.signing
 
 import android.util.Base64
+import com.goterl.lazysodium.LazySodiumAndroid
 import com.goterl.lazysodium.SodiumAndroid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -101,10 +102,11 @@ object SigningKeyManager {
 
     private fun sealedBox(message: ByteArray, recipientPublicKey: ByteArray): ByteArray {
         require(recipientPublicKey.size == 32) { "Invalid GitHub repository public key." }
-        val sodium = SodiumAndroid() // loads libsodium native library
+        // cryptoBoxSeal lives on the LazySodium wrapper (boolean result), not on SodiumAndroid.
+        val lazySodium = LazySodiumAndroid(SodiumAndroid())
         val cipher = ByteArray(SEAL_BYTES + message.size)
-        val rc = sodium.cryptoBoxSeal(cipher, message, message.size.toLong(), recipientPublicKey)
-        require(rc == 0) { "Sealed-box encryption failed." }
+        val ok = lazySodium.cryptoBoxSeal(cipher, message, message.size.toLong(), recipientPublicKey)
+        require(ok) { "Sealed-box encryption failed." }
         return cipher
     }
 
