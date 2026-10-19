@@ -1,8 +1,11 @@
 package com.anvex.core.android.signing
 
 import android.util.Base64
-import com.goterl.lazysodium.LazySodiumAndroid
-import com.goterl.lazysodium.SodiumAndroid
+import org.bouncycastle.crypto.engines.XSalsa20Engine
+import org.bouncycastle.crypto.macs.Poly1305
+import org.bouncycastle.crypto.params.KeyParameter
+import org.bouncycastle.crypto.params.ParametersWithIV
+import org.bouncycastle.math.ec.rfc7748.X25519
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -97,17 +100,103 @@ object SigningKeyManager {
     // -- GitHub Actions secrets -------------------------------------------------
     // Secrets are encrypted with the repository's public key using libsodium's
     // sealed box (X25519 + XSalsa20-Poly1305), exactly as GitHub requires.
+    // Implemented with pure BouncyCastle primitives (no JNA/native loader —
+    // the JNA-based first version crashed on device).
 
     private const val SEAL_BYTES = 48 // crypto_box_SEALBYTES: 32 (epk) + 16 (MAC)
 
     private fun sealedBox(message: ByteArray, recipientPublicKey: ByteArray): ByteArray {
         require(recipientPublicKey.size == 32) { "Invalid GitHub repository public key." }
-        // cryptoBoxSeal lives on the LazySodium wrapper (boolean result), not on SodiumAndroid.
-        val lazySodium = LazySodiumAndroid(SodiumAndroid())
-        val cipher = ByteArray(SEAL_BYTES + message.size)
-        val ok = lazySodium.cryptoBoxSeal(cipher, message, message.size.toLong(), recipientPublicKey)
-        require(ok) { "Sealed-box encryption failed." }
-        return cipher
+        val random = SecureRandom()
+
+        // Ephemeral X25519 keypair.
+        val esk = ByteArray(32)
+        X25519.generatePrivateKey(random, esk)
+        val epk = ByteArray(32)
+        X25519.generatePublicKey(esk, 0, epk, 0)
+
+        // crypto_box_beforenm: k = HSalsa20(X25519(esk, pk), zeros(16)).
+        val shared = ByteArray(32)
+        if (!X25519.calculateAgreement(esk, 0, recipientPublicKey, 0, shared, 0)) {
+            throw IllegalStateException("X25519 agreement failed.")
+        }
+        val beforenm = hsalsa20(shared, ByteArray(16))
+
+        // XSalsa20-Poly1305 with a zero nonce (crypto_box_seal construction).
+        val xsalsa = XSalsa20Engine()
+        xsalsa.init(true, ParametersWithIV(KeyParameter(beforenm), ByteArray(24)))
+
+        // First 32 keystream bytes are the Poly1305 one-time key; the message
+        // keystream continues from byte 32.
+        val polyKey = ByteArray(32)
+        xsalsa.processBytes(ByteArray(32), 0, 32, polyKey, 0)
+        val ciphertext = ByteArray(message.size)
+        xsalsa.processBytes(message, 0, message.size, ciphertext, 0)
+
+        val poly = Poly1305()
+        poly.init(KeyParameter(polyKey))
+        poly.update(ciphertext, 0, ciphertext.size)
+        val tag = ByteArray(poly.macSize)
+        poly.doFinal(tag, 0)
+
+        esk.wipe()
+        shared.wipe()
+        beforenm.wipe()
+        polyKey.wipe()
+        return epk + tag + ciphertext
+    }
+
+    /**
+     * HSalsa20: the Salsa20 core (20 rounds) without feed-forward, outputting
+     * words (0, 5, 10, 15, 6, 7, 8, 9) as 32 bytes.
+     */
+    private fun hsalsa20(key: ByteArray, input16: ByteArray): ByteArray {
+        require(key.size == 32 && input16.size == 16)
+        val x = IntArray(16)
+        x[0] = 0x61707865
+        x[1] = 0x3320646e
+        x[2] = 0x79622d32
+        x[3] = 0x6b206574
+        for (i in 0 until 8) x[4 + i] = leDecode(key, i * 4)
+        for (i in 0 until 4) x[12 + i] = leDecode(input16, i * 4)
+
+        repeat(10) {
+            qr(x, 0, 4, 8, 12)
+            qr(x, 5, 9, 13, 1)
+            qr(x, 10, 14, 2, 6)
+            qr(x, 15, 3, 7, 11)
+            qr(x, 0, 1, 2, 3)
+            qr(x, 5, 6, 7, 4)
+            qr(x, 10, 11, 8, 9)
+            qr(x, 15, 14, 13, 12)
+        }
+
+        val out = ByteArray(32)
+        val sel = intArrayOf(x[0], x[5], x[10], x[15], x[6], x[7], x[8], x[9])
+        for (i in sel.indices) leEncode(sel[i], out, i * 4)
+        return out
+    }
+
+    private fun qr(y: IntArray, a: Int, b: Int, c: Int, d: Int) {
+        y[b] = y[b] xor rotl(y[a] + y[d], 7)
+        y[c] = y[c] xor rotl(y[b] + y[a], 9)
+        y[d] = y[d] xor rotl(y[c] + y[b], 13)
+        y[a] = y[a] xor rotl(y[d] + y[c], 18)
+    }
+
+    private fun rotl(v: Int, n: Int): Int = (v shl n) or (v ushr (32 - n))
+
+    private fun leDecode(b: ByteArray, off: Int): Int =
+        (b[off].toInt() and 0xff) or
+            ((b[off + 1].toInt() and 0xff) shl 8) or
+            ((b[off + 2].toInt() and 0xff) shl 16) or
+            ((b[off + 3].toInt() and 0xff) shl 24)
+
+    private fun leEncode(v: Int, b: ByteArray, off: Int) {
+        b[off] = v.toByte()
+        b[off + 1] = (v ushr 8).toByte()
+        b[off + 2] = (v ushr 16).toByte()
+        b[off + 3] = (v ushr 24).toByte()
     }
 
     private data class RepoPublicKey(val keyId: String, val keyBase64: String)

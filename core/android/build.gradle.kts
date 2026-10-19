@@ -39,7 +39,6 @@ dependencies {
     // v4.4.6: on-device APK signing-key generation (RSA + self-signed cert) and
     // GitHub Actions secret push (libsodium sealed box).
     implementation(libs.bouncycastle.bcpkix)
-    implementation(libs.lazysodium.android)
 
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)

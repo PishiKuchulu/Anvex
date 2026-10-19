@@ -81,8 +81,11 @@ class SigningKeyViewModel : ViewModel() {
                 ).getOrThrow()
                 _pushDone.value = true
                 _status.value = "4 secrets pushed to $owner/$repo."
-            } catch (e: Exception) {
-                _status.value = e.message ?: "Secret push failed."
+            } catch (t: Throwable) {
+                // Throwable, not just Exception: crypto/native failures can
+                // surface as Errors (e.g. UnsatisfiedLinkError), which must
+                // never crash the app from here.
+                _status.value = t.message ?: "Secret push failed."
             } finally {
                 storePassword.wipe()
                 keyPassword.wipe()
