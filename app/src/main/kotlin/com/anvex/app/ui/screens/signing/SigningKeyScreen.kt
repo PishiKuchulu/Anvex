@@ -1,6 +1,7 @@
 package com.anvex.app.ui.screens.signing
 
-import android.os.Environment
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,7 +49,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.anvex.app.i18n.tr
 import com.anvex.app.vm.SigningKeyViewModel
-import java.io.File
 
 /**
  * v4.4.6: on-device APK signing-key factory.
@@ -75,6 +75,23 @@ fun SigningKeyScreen(nav: NavController, vm: SigningKeyViewModel = viewModel()) 
     var repo by remember { mutableStateOf("") }
     var pushStorePw by remember { mutableStateOf("") }
     var pushKeyPw by remember { mutableStateOf("") }
+
+    // v4.4.6: SAF picker — the user chooses where the .p12 goes (the old
+    // app-private path under Android/data is not browsable on modern Android).
+    // rememberLauncherForActivityResult keeps the callback fresh via
+    // rememberUpdatedState, so `generated` below is always current.
+    val downloadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/x-pkcs12"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = generated?.pkcs12 ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                ?: throw IllegalStateException("Could not open the chosen file.")
+            "Saved — keep a backup somewhere safe."
+        }.onSuccess { vm.setStatus(it) }
+            .onFailure { vm.setStatus(it.message ?: "Download failed.") }
+    }
 
     Scaffold(
         topBar = {
@@ -181,16 +198,7 @@ fun SigningKeyScreen(nav: NavController, vm: SigningKeyViewModel = viewModel()) 
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = {
-                            runCatching {
-                                val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                                    ?: throw IllegalStateException("Storage unavailable.")
-                                val file = File(dir, "${gen.alias}-release.p12")
-                                file.writeBytes(gen.pkcs12)
-                                "Saved to ${file.absolutePath}"
-                            }.onSuccess { vm.setStatus(it) }
-                                .onFailure { vm.setStatus(it.message ?: "Download failed.") }
-                        },
+                        onClick = { downloadLauncher.launch("${gen.alias}-release.p12") },
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Filled.Download, null)
