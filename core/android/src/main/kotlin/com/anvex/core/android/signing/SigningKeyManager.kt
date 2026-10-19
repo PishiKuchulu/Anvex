@@ -280,6 +280,9 @@ object SigningKeyManager {
 /** Zeroes a password array after use. */
 fun CharArray.wipe() { this.fill('\u0000') }
 
+/** Zero out a byte array holding secret material. */
+fun ByteArray.wipe() { this.fill(0) }
+
 /** UTF-8 bytes of a password without creating an intermediate [String]. */
 fun CharArray.toUtf8Bytes(): ByteArray {
     val buf = Charsets.UTF_8.encode(java.nio.CharBuffer.wrap(this))
