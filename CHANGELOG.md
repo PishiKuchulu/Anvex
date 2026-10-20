@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Real bundled Node.js (nodejs-mobile)
+## 4.5.0 — Real bundled Node.js (nodejs-mobile)
 
 ### Added
 - **Real Node.js 18 in the in-app backend** (nodejs-mobile, libnode 18.20.4).
