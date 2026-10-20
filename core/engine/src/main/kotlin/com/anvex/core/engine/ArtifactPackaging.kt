@@ -6,7 +6,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /** Supported user-facing generated file formats. */
-enum class ArtifactFormat { ZIP, PDF, TXT, MD, JSON }
+enum class ArtifactFormat { ZIP, PDF, TXT, MD, JSON, MP4 }
 
 /** One central policy for generated source/document artifacts. */
 object ArtifactHygienePolicy {

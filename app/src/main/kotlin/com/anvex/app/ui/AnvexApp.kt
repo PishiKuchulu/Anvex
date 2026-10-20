@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -136,6 +137,13 @@ fun AnvexApp() {
         contentColor = MaterialTheme.colorScheme.onSurface,
         bottomBar = {
             if (topLevel) {
+                // v4.6 (keyboard fix): imePadding on the bottom bar makes the
+                // Scaffold's content padding GROW by the keyboard height, so
+                // every top-level screen (notably Direct Chat, whose composer
+                // had no IME handling at all) is lifted above the keyboard by
+                // layout measurement — not by inset propagation that nested
+                // scaffolds/consumers can swallow.
+                Box(Modifier.imePadding()) {
                 // v4.4.5 (UX): the floating Command Deck dock — same component
                 // as the project tabs, replacing the chunky full-width bar.
                 com.anvex.app.ui.components.AnvexDock(
@@ -172,6 +180,7 @@ fun AnvexApp() {
                         ),
                     ),
                 )
+                }
             }
         },
     ) { padding ->

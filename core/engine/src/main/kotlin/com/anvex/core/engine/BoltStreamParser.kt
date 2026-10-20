@@ -244,7 +244,14 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                 val outputName = extractAttribute(tag, "outputName") ?: "download"
                 val paths = (extractAttribute(tag, "paths") ?: "").split("|").map { it.trim() }.filter { it.isNotBlank() }
                 val title = extractAttribute(tag, "title") ?: ""
-                BoltAction.ArtifactAction("", format, outputName, paths, title)
+                // v4.6 (media): render parameters for format="mp4" — invalid or
+                // missing values stay 0 and the renderer applies its defaults.
+                val source = extractAttribute(tag, "source") ?: ""
+                val durationSec = extractAttribute(tag, "duration")?.toIntOrNull() ?: 0
+                val fps = extractAttribute(tag, "fps")?.toIntOrNull() ?: 0
+                val width = extractAttribute(tag, "width")?.toIntOrNull() ?: 0
+                val height = extractAttribute(tag, "height")?.toIntOrNull() ?: 0
+                BoltAction.ArtifactAction("", format, outputName, paths, title, source, durationSec, fps, width, height)
             }
             "mcp" -> BoltAction.ToolAction(
                 type,

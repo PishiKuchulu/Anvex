@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
@@ -52,6 +53,7 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
     val icon = when (record.command?.lowercase()) {
         "zip" -> Icons.Filled.FolderZip
         "pdf" -> Icons.Filled.PictureAsPdf
+        "mp4" -> Icons.Filled.Movie
         else -> Icons.Filled.Description
     }
     GlassCard(modifier.fillMaxWidth()) {

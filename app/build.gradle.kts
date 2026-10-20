@@ -13,8 +13,8 @@ android {
         applicationId = "com.anvex.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 72
-        versionName = "4.5.0"
+        versionCode = 73
+        versionName = "4.6.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -54,6 +54,19 @@ android {
                     keyPassword = keyPass
                 }
             }
+        }
+    }
+    // v4.6: per-architecture APKs alongside the universal one. The bundled
+    // libnode.so is ~60MB per ABI, so the 4.5.0 universal APK reached 164MB;
+    // each split carries exactly one architecture (~60MB) while the universal
+    // APK keeps working for anyone unsure which one they need. AGP assigns
+    // the splits distinct version codes automatically.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
         }
     }
     compileOptions {

@@ -60,4 +60,27 @@ object UserIntentClassifier {
         if (informationalStarts.matches(normalized)) return false
         return exportKeywords.any { normalized.contains(it) }
     }
+
+    private val mediaKeywords = listOf(
+        // English — matched as substrings of longer words on purpose ("videos", "animated").
+        "video", "mp4", "webm", "motion graphic", "motion-graphics", "showreel", "show reel",
+        "animated gif", "gif animation", "teaser video",
+        // Persian — bare "انیمیشن" is intentionally absent: adding animation to a
+        // web page is a normal project edit, not a request for a video file.
+        "ویدیو", "ویدئو", "موشن گرافیک", "موشن‌گرافیک", "تیزر", "کلیپ ویدیویی", "فایل ویدیویی", "گیف متحرک",
+    )
+
+    /**
+     * v4.6: True when the user wants an actual VIDEO file (motion graphics, animation,
+     * clip, showreel…). Before this existed, a video request had no valid output path in
+     * the prompt at all, so the model fell back to its web default and delivered an
+     * index.html page that merely *described* a video. Same informational-question
+     * guard as [requestsExport]: "how do I make a video?" is a conversation.
+     */
+    fun requestsMedia(text: String): Boolean {
+        val normalized = text.trim().lowercase()
+        if (normalized.isBlank()) return false
+        if (informationalStarts.matches(normalized)) return false
+        return mediaKeywords.any { normalized.contains(it) }
+    }
 }

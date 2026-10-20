@@ -37,9 +37,11 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,7 +66,9 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Check
@@ -126,6 +130,7 @@ import com.anvex.app.ui.components.NebulaChip
 import com.anvex.app.ui.theme.LocalBoltExtras
 import com.anvex.app.ui.components.ProjectScaffold
 import com.anvex.app.ui.components.ProjectTab
+import com.anvex.app.ui.components.quotedReplyText
 import com.anvex.app.ui.components.directionalTextStyle
 import com.anvex.app.ui.components.isRtlText
 import com.anvex.app.ui.screens.home.NewProjectHandoff
@@ -148,6 +153,23 @@ import com.anvex.app.i18n.tr
  */
 @Immutable
 data class ProviderChoices(val items: List<ProviderConfig>)
+
+/**
+ * v4.6 (scroll fix): true only when the list's bottom edge is actually at the
+ * end of the content. The previous check compared item INDEXES ("last visible
+ * index >= count - 2"), which is almost always true while a LONG streaming
+ * bubble fills the viewport — so every stream chunk called scrollToItem and
+ * cancelled the user's own scrolling; the list could not be scrolled at all
+ * until generation finished. A streaming item taller than the viewport now
+ * fails this check while the user reads its middle, and auto-follow resumes
+ * only when they return to the true bottom.
+ */
+internal fun LazyListState.isPinnedToBottom(): Boolean {
+    val info = layoutInfo
+    val last = info.visibleItemsInfo.lastOrNull() ?: return true
+    if (last.index != info.totalItemsCount - 1) return false
+    return last.offset + last.size <= info.viewportEndOffset + 4
+}
 
 @Composable
 fun ChatScreen(nav: NavController, projectId: String) {
@@ -176,6 +198,9 @@ fun ChatScreen(nav: NavController, projectId: String) {
 
     var input by remember { mutableStateOf(NewProjectHandoff.takePendingPrompt()) }
     val attachments = remember { mutableStateListOf<Uri>() }
+    // v4.6: long-press message actions (reply / copy / share / select text).
+    var actionMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var replyTo by remember { mutableStateOf<ChatMessage?>(null) }
 
     // Phase 3.2: a share sheet payload assigned to this chat is applied once on open.
     LaunchedEffect(vm.projectId) {
@@ -275,11 +300,13 @@ fun ChatScreen(nav: NavController, projectId: String) {
     // near the bottom — instant jump, no animation fighting stream emissions
     // or stealing a deliberate scroll-up. (StreamingBubble follows its own
     // tail while streaming; this covers committed messages.)
+    // v4.6: pinned is now measured by the last item's bottom EDGE (see
+    // isPinnedToBottom) and never fires mid-gesture — the index-based check
+    // made the list unscrollable during streaming.
     LaunchedEffect(messages.size) {
         val count = listState.layoutInfo.totalItemsCount
-        if (count > 0) {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
-            if (last == null || last >= count - 2) listState.scrollToItem(count - 1)
+        if (count > 0 && !listState.isScrollInProgress && listState.isPinnedToBottom()) {
+            listState.scrollToItem(count - 1)
         }
     }
 
@@ -335,6 +362,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     val onRunPython = remember { { code: String -> pythonCode = code } }
                     val onVersions = remember { { path: String -> versionPath = path; versionIndex = vm.versionsFor(path).size; restoreOutcome = null } }
                     val onEditUser = remember(message) { { if (message.role == MessageRole.USER) { editing = message; editText = message.content } } }
+                    val onShowActions = remember(message) { { actionMessage = message } }
                     MessageBubble(
                         message,
                         projectId,
@@ -351,6 +379,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                         // v4.4 (architect feature 8): edit an earlier user message → branch.
                         onEditUser = onEditUser,
                         versionsRev = persistedMutations.size,
+                        onShowActions = onShowActions,
                     )
                 }
                 branchNote?.let { note ->
@@ -405,6 +434,32 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     }
                 }
             }
+            // v4.6: reply quote bar — the quoted message rides along as a
+            // Markdown blockquote in the sent text (see quotedReplyText).
+            replyTo?.let { target ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Reply, null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        target.content.replace('\n', ' '),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { replyTo = null }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Close, tr("Cancel"), modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
             Composer(
                 value = input,
                 enabled = !streamUi.streaming,
@@ -412,15 +467,18 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 onAttach = { filePicker.launch(arrayOf("*/*")) },
                 onImage = { imagePicker.launch(arrayOf("image/*")) },
                 onSend = {
-                    val text = input
+                    val raw = input
                     input = ""
+                    val quote = replyTo
+                    replyTo = null
+                    val text = if (quote != null) quotedReplyText(quote.content, raw) else raw
                     vm.send(text, attachments.toList())
                     // Grants are transferred to the message attachments (retry re-opens
                     // via the same URIs); do not release them here.
                     attachmentGrants.clear()
                     attachments.clear()
                 },
-                canSend = input.isNotBlank() || attachments.isNotEmpty(),
+                canSend = input.isNotBlank() || attachments.isNotEmpty() || replyTo != null,
                 thinkingLevel = thinkingLevel,
                 onThinkingLevel = vm::setThinkingLevel,
                 onVoice = { startVoiceInput(context, voiceLauncher) },
@@ -438,6 +496,14 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 onToggleWeb = vm::setWebSearch,
             )
         }
+    }
+
+    actionMessage?.let { target ->
+        com.anvex.app.ui.components.MessageActionSheet(
+            content = target.content,
+            onReply = { replyTo = target; actionMessage = null },
+            onDismiss = { actionMessage = null },
+        )
     }
 
     val mcpRequest by vm.mcpApproval.collectAsState()
@@ -878,6 +944,7 @@ private fun AttachOption(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
     message: ChatMessage,
@@ -895,6 +962,8 @@ private fun MessageBubble(
     onEditUser: () -> Unit = {},
     /** v4.4.4 (smoothness): bumps when the mutation journal grows — invalidates cached version counts. */
     versionsRev: Int = 0,
+    /** v4.6: long-press on the bubble opens the message action sheet. */
+    onShowActions: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val isUser = message.role == MessageRole.USER
@@ -928,7 +997,11 @@ private fun MessageBubble(
                 .then(
                     if (isUser) Modifier.background(extras.userBubbleBrush, bubbleShape)
                     else Modifier.background(extras.glass, bubbleShape).border(BorderStroke(1.dp, extras.glassBorder), bubbleShape)
-                ),
+                )
+                // v4.6: long-press anywhere on the bubble opens the action
+                // sheet (reply / copy / share / select text). Inner icon
+                // buttons keep their own clicks.
+                .combinedClickable(onClick = {}, onLongClick = onShowActions),
         ) {
             Column(Modifier.padding(14.dp)) {
                 message.reasoning?.let { trace ->
@@ -1097,11 +1170,13 @@ private fun StreamingBubble(
     val statusLine = s.statusLine
     val reasoning = s.streamReasoning
     // Follow the tail while streaming; never steal a deliberate scroll-up.
+    // v4.6: edge-based pinned check + no firing while the user is scrolling —
+    // previously this effect cancelled the user's scroll on every chunk
+    // whenever this (tall) bubble was the last visible item.
     LaunchedEffect(text.length / 160) {
         val count = listState.layoutInfo.totalItemsCount
-        if (count > 0) {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
-            if (last == null || last >= count - 2) listState.scrollToItem(count - 1)
+        if (count > 0 && !listState.isScrollInProgress && listState.isPinnedToBottom()) {
+            listState.scrollToItem(count - 1)
         }
     }
     Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {

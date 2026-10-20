@@ -127,6 +127,8 @@ private val FA: Map<String, String> = mapOf(
     "Pushed ✓" to "پوش شد ✓",
     "Generate an APK signing key on-device and push secrets to GitHub" to "ساخت کلید امضای APK روی گوشی و پوش سکرت‌ها به گیت‌هاب",
     "Copy" to "کپی",
+    "Reply" to "پاسخ",
+    "Select text" to "انتخاب متن",
     "Code copied." to "کد کپی شد.",
     "Conversations" to "گفتگوها",
     "Context · optional" to "زمینه · اختیاری",

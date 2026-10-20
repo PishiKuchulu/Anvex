@@ -256,7 +256,10 @@ class ChatSession(
                 memoryOn = runCatching { extras.memoryEnabled() }.getOrDefault(false)
                 webAllowed = runCatching { extras.webTools() }.getOrDefault(false)
                 val projectContext = runCatching { projectContextProvider() }.getOrDefault("")
-                val exportWanted = UserIntentClassifier.requestsExport(userText)
+                // v4.6: a video request takes precedence over generic export —
+                // its deliverable is a rendered MP4, not a packaged document.
+                val mediaWanted = UserIntentClassifier.requestsMedia(userText)
+                val exportWanted = !mediaWanted && UserIntentClassifier.requestsExport(userText)
                 val systemPrompt = if (directChat) {
                     SystemPromptFactory.buildDirectChatPrompt(
                         SystemPromptFactory.DirectChatPromptOptions(
@@ -271,6 +274,7 @@ class ChatSession(
                     SystemPromptFactory.AssistantPromptOptions(
                         executionRequired = UserIntentClassifier.requiresExecution(userText),
                         exportRequested = exportWanted,
+                        mediaRequested = mediaWanted,
                         memoryEnabled = memoryOn,
                         memoryBlock = if (memoryOn) runCatching { extras.memoryBlock() }.getOrDefault("") else "",
                         customInstructions = listOf(runCatching { extras.customInstructions() }.getOrDefault(""), projectContext)
@@ -289,6 +293,7 @@ class ChatSession(
 
                 var round = 0
                 var exportRetried = false
+                var mediaRetried = false
                 while (true) {
                     val roundId = if (round == 0) assistantId else "$assistantId-r$round"
                     observations.clear()
@@ -434,6 +439,22 @@ class ChatSession(
                         _state.value = _state.value.copy(statusLine = "Packaging the requested file…")
                         continue
                     }
+                    // Media contract: a video request that produced no MP4 (typically
+                    // an index.html animation page instead) is corrected exactly once,
+                    // mirroring the export contract above.
+                    val mediaDelivered = generatedRecords.any {
+                        it.type == "artifact" && it.status == ActionStatus.COMPLETE.name && it.command == "mp4"
+                    }
+                    val mediaMissing = mediaWanted && !mediaRetried && !canceled && failure == null &&
+                        gathered.isEmpty() && !mediaDelivered
+                    if (mediaMissing && round < MAX_TOOL_ROUNDS) {
+                        mediaRetried = true
+                        turns.add(ChatTurn(MessageRole.ASSISTANT, roundText.toString().ifBlank { "(no video delivered)" }))
+                        turns.add(ChatTurn(MessageRole.USER, MEDIA_CORRECTION))
+                        round++
+                        _state.value = _state.value.copy(statusLine = "Rendering the requested video…")
+                        continue
+                    }
                     if (canceled || failure != null || gathered.isEmpty() || round >= MAX_TOOL_ROUNDS) break
 
                     // Agent loop: feed tool results back and let the model continue.
@@ -501,6 +522,10 @@ class ChatSession(
                 } else {
                     runCatching {
                         val generated = when (action.format.lowercase()) {
+                            "mp4" -> manager.createVideo(
+                                projectId, fs, action.source, action.outputName,
+                                action.durationSec, action.fps, action.width, action.height,
+                            ) { progress -> _state.value = _state.value.copy(statusLine = progress) }
                             "zip" -> manager.packageProject(projectId, fs, action.paths, action.outputName)
                             "pdf" -> manager.createPdf(projectId, action.title, action.content, action.outputName)
                             "txt" -> manager.createDocument(projectId, action.content, ArtifactFormat.TXT, action.outputName)
@@ -801,6 +826,15 @@ class ChatSession(
             "The user asked for a downloadable file, but no file was delivered. Reply with the project files " +
             "written by file actions (only the missing ones), then exactly one <boltAction type=\"artifact\" " +
             "format=\"zip\"> as the LAST action of a <boltArtifact>. Do not reply with an HTML page, a README or a link."
+
+        const val MEDIA_CORRECTION =
+            "The user asked for a VIDEO file, but no MP4 was delivered. An HTML page is not a video. Reply with " +
+            "a <boltArtifact> that (1) writes ONE self-contained render page (e.g. render.html) with a file action — " +
+            "a single <canvas> plus a global window.__anvexSeek(ms) function that draws the complete frame for that " +
+            "exact timestamp as a pure function of ms, all CSS/JS inline — and (2) ends with exactly one " +
+            "<boltAction type=\"artifact\" format=\"mp4\" source=\"render.html\" duration=\"15\" fps=\"30\" " +
+            "width=\"1280\" height=\"720\" outputName=\"video.mp4\"/> as the LAST action. Do not deliver an " +
+            "index.html preview page as the result."
         private const val MAX_TOOL_RESULT_CHARS = 60_000
     }
 }

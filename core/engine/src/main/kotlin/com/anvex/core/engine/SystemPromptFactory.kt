@@ -42,9 +42,9 @@ ${RuntimeCapabilityReport.describe().prependIndent("    ").trimEnd()}
   The model must not confuse Preview capabilities with the Android execution runtime. In Preview, `npm run dev`, `node`, `npx`, `vite`, and `tsc` do not run. Agent/Terminal may run supported real processes only when explicitly available and policy/approval permits them. Never claim a process or build succeeded without a runtime result.
 
   GUIDELINES for choosing project shapes:
-  - STRONGLY PREFER self-contained static projects (HTML/CSS/JS) unless the user explicitly requires React.
+  - STRONGLY PREFER self-contained static projects (HTML/CSS/JS) unless the user explicitly requires React — this preference applies ONLY when the deliverable is a web project for the Preview.
   - For React projects: keep them standard Vite-style layouts (index.html, src/main.jsx, src/App.jsx) with plain ESM imports; react and react-dom resolve offline, other dependencies declared in package.json resolve via CDN at preview time.
-  - Always keep a working index.html at the project root as the preview entry.
+  - When the deliverable is a web project, keep a working index.html at the project root as the preview entry. When the user asked for a NON-web deliverable (a downloadable file, archive, document, or video), index.html is NOT the deliverable and must never be presented as one — follow the delivery rules at the end of this prompt.
   - Use CDN references (e.g. <script src="https://cdn.jsdelivr.net/...">) when a library is easier that way, and note that they need internet.
   - TypeScript files are transpiled at preview time (type stripping only).
 
@@ -210,6 +210,7 @@ For project-mutation requests, think first and reply with the artifact that cont
     - `txt`, `md`, `json`: write UTF-8 generated documents.
     - Never include secrets, credentials, tokens, build caches, or generated AI/PFP internals in a source ZIP.
   - Generated files exist only after the packaging runtime returns a successful result.
+  - Video files: `<boltAction type="artifact" format="mp4" source="render.html" duration="15" fps="30" width="1280" height="720" outputName="name.mp4"/>` renders a REAL MP4 on-device from a deterministic canvas page (see the media delivery rules in the assistant prompt). A video request is never fulfilled by an HTML page.
 </agent_runtime>
 """
 
@@ -217,6 +218,8 @@ For project-mutation requests, think first and reply with the artifact that cont
     data class AssistantPromptOptions(
         val executionRequired: Boolean = false,
         val exportRequested: Boolean = false,
+        /** v4.6: the user asked for an actual video file — the media contract applies. */
+        val mediaRequested: Boolean = false,
         val memoryEnabled: Boolean = false,
         val memoryBlock: String = "",
         val customInstructions: String = "",
@@ -231,7 +234,7 @@ For project-mutation requests, think first and reply with the artifact that cont
      * memory and the user's standing instructions.
      */
     fun buildAssistantPrompt(o: AssistantPromptOptions, cwd: String = "/home/project"): String = buildString {
-        append(buildSystemPrompt(cwd, executionRequired = o.executionRequired && !o.exportRequested))
+        append(buildSystemPrompt(cwd, executionRequired = o.executionRequired && !o.exportRequested && !o.mediaRequested))
         append("""
 
 <agent_runtime>
@@ -240,20 +243,41 @@ For project-mutation requests, think first and reply with the artifact that cont
   - Generated files: `<boltAction type="artifact" format="zip|pdf|txt|md|json" outputName="name.ext" paths="path1|path2">body</boltAction>`
     - zip packages the selected project files (omit `paths` for the whole project); pdf uses the body as text and `title`; txt/md/json write the body as UTF-8.
     - Never include secrets, credentials, tokens or build caches in a source ZIP.
+  - Video files: `<boltAction type="artifact" format="mp4" source="render.html" duration="15" fps="30" width="1280" height="720" outputName="name.mp4"/>` — the runtime renders a REAL MP4 video file on-device from the page named by `source` (see <media_delivery_rules>). The body of an mp4 action is ignored.
 </agent_runtime>
 
 <file_delivery_rules>
   HIGHEST PRIORITY — these override the static-site guidance above.
+  - The requested deliverable TYPE is binding. A request for a video means a video file, a request for an archive means a ZIP, a request for a document means that document. NEVER substitute a web page (index.html) for a non-web deliverable, and never describe the deliverable instead of producing it.
   - If the user wants a downloadable file (ZIP, PDF, TXT, MD, JSON; "export", "package", "give me the source"), deliver a REAL file with the artifact action. NEVER answer with an HTML page, README or link that only describes the file.
   - "Create an app's source and give it as a ZIP" means: write every project file with file actions FIRST, then emit exactly ONE zip artifact action as the LAST action of the same <boltArtifact>.
   - An Android/Kotlin, Python, Node or Flutter project is just text files: write them, then zip them. It is not a web page unless the user asked for a web page.
   - After the action succeeds the user sees a file card with Save and Share buttons. Do not tell them to open a browser, and never claim a file exists before the action succeeded.
 </file_delivery_rules>
+
+<media_delivery_rules>
+  HIGHEST PRIORITY for video / motion-graphics / animation-file requests.
+  - A request for a video, motion graphics, showreel, teaser, clip or animated file is fulfilled ONLY by a real MP4 produced with the mp4 artifact action. An HTML page that plays an animation in the Preview is NOT a video and is never an acceptable substitute.
+  - How it works: you write ONE self-contained render page (e.g. render.html) with a file action, then emit the mp4 artifact action as the LAST action of the same <boltArtifact>. The runtime loads the page off-screen, seeks it frame by frame, captures each frame, and encodes an H.264 MP4. Rendering can take a while — that is normal.
+  - The render page MUST implement the deterministic frame contract:
+    * A single <canvas> sized exactly width×height, CSS margin/padding 0, background painted by the script.
+    * A global function `window.__anvexSeek(ms)` that draws the COMPLETE frame for that exact timestamp (milliseconds from 0 to duration*1000) and returns. Drawing must be a pure function of ms: no dependence on requestAnimationFrame progress, wall-clock time, or randomness without a fixed seed.
+    * All CSS/JS inline in the one file; no external fonts, images, scripts or network assets (they will not load during rendering).
+    * You may ALSO animate live via requestAnimationFrame for the Preview, but __anvexSeek must be able to draw any frame on demand.
+  - Choose duration/fps/size from the request (defaults: 10s, 30fps, 1280×720; max 30s). Name the output after the content (e.g. showreel.mp4).
+  - The video has no audio track — do not promise sound, music or narration in the video.
+</media_delivery_rules>
 """)
         if (o.exportRequested) {
             append("""
 EXPORT CONTRACT FOR THIS TURN:
   The user asked for a file deliverable. Your reply MUST contain a <boltArtifact> whose LAST action is <boltAction type="artifact" ...> in the requested format (zip when unspecified). If the project files it should contain do not exist yet, create them first. Do not substitute an HTML page.
+""")
+        }
+        if (o.mediaRequested) {
+            append("""
+MEDIA CONTRACT FOR THIS TURN:
+  The user asked for a VIDEO file. Your reply MUST contain a <boltArtifact> that (1) writes ONE self-contained render page (e.g. render.html) implementing `window.__anvexSeek(ms)` exactly as specified in <media_delivery_rules>, and (2) ends with exactly ONE <boltAction type="artifact" format="mp4" source="render.html" ...> action as the LAST action. Do NOT deliver an index.html preview page as the result, do NOT stop after describing the video, and do NOT claim the video exists before the mp4 action succeeds.
 """)
         }
         append("""

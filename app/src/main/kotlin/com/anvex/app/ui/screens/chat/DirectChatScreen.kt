@@ -4,7 +4,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
@@ -24,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.MenuOpen
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
@@ -56,6 +59,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -68,7 +72,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -76,9 +82,14 @@ import androidx.navigation.NavController
 import com.anvex.app.i18n.tr
 import com.anvex.app.ui.Routes
 import com.anvex.app.ui.components.AnvexIconTile
+import com.anvex.app.ui.components.BidiText
 import com.anvex.app.ui.components.ChatTranscriptExporter
 import com.anvex.app.ui.components.ConfirmDialog
 import com.anvex.app.ui.components.MarkdownText
+import com.anvex.app.ui.components.MessageActionSheet
+import com.anvex.app.ui.components.directionalTextStyle
+import com.anvex.app.ui.components.isRtlText
+import com.anvex.app.ui.components.quotedReplyText
 import com.anvex.app.vm.DirectChatViewModel
 import com.anvex.core.model.ChatMessage
 import com.anvex.core.model.MessageRole
@@ -114,6 +125,9 @@ fun DirectChatScreen(nav: NavController) {
 
     var input by remember { mutableStateOf("") }
     val attachments = remember { mutableStateListOf<Uri>() }
+    // v4.6: long-press message actions (reply / copy / share / select text).
+    var actionMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var replyTo by remember { mutableStateOf<ChatMessage?>(null) }
     var attachSheet by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<DirectChatViewModel.Conversation?>(null) }
     val sheetState = rememberModalBottomSheetState()
@@ -122,11 +136,14 @@ fun DirectChatScreen(nav: NavController) {
     val activeTitle = conversations.firstOrNull { it.id == activeId }?.title ?: tr("Chat")
 
     // v4.4.5 (smoothness): follow the tail only when already at the bottom.
+    // v4.6: edge-based pinned check (isPinnedToBottom, shared with the project
+    // chat) and never while the user is scrolling — the index-based check ran
+    // on EVERY stream chunk and cancelled the user's scroll until generation
+    // finished, making a long answer impossible to read while it streamed.
     LaunchedEffect(messages.size, sessionState.streamText.length) {
-        val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
         val total = messages.size + if (sessionState.streamText.isNotEmpty()) 1 else 0
-        if (last == null || last >= total - 3) {
-            if (total > 0) listState.scrollToItem((total - 1).coerceAtLeast(0))
+        if (total > 0 && !listState.isScrollInProgress && listState.isPinnedToBottom()) {
+            listState.scrollToItem((total - 1).coerceAtLeast(0))
         }
     }
 
@@ -152,9 +169,12 @@ fun DirectChatScreen(nav: NavController) {
 
     fun send() {
         val text = input.trim()
-        if (text.isEmpty() && attachments.isEmpty()) return
+        if (text.isEmpty() && attachments.isEmpty() && replyTo == null) return
         if (sessionState.streaming) return
-        vm.send(text, attachments.toList())
+        val quote = replyTo
+        replyTo = null
+        val finalText = if (quote != null) quotedReplyText(quote.content, text) else text
+        vm.send(finalText, attachments.toList())
         input = ""
         attachments.clear()
     }
@@ -289,7 +309,13 @@ fun DirectChatScreen(nav: NavController) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    // v4.6 (keyboard fix): this screen had NO IME handling at
+                    // all — the composer stayed under the keyboard. The root
+                    // dock's imePadding now grows the scaffold padding too;
+                    // this adds whatever inset remains unconsumed (the two
+                    // mechanisms are self-limiting, never double).
+                    .imePadding(),
             ) {
                 if (attachmentError != null) {
                     Surface(
@@ -376,7 +402,7 @@ fun DirectChatScreen(nav: NavController) {
                             }
                         }
                         items(messages, key = { it.id }) { msg ->
-                            DirectMessageBubble(msg)
+                            DirectMessageBubble(msg, onShowActions = { actionMessage = msg })
                         }
                         if (sessionState.streamText.isNotEmpty()) {
                             item(key = "streaming") {
@@ -442,6 +468,32 @@ fun DirectChatScreen(nav: NavController) {
                         }
                     }
 
+                    // v4.6: reply quote bar (set from the long-press sheet).
+                    replyTo?.let { target ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Reply, null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                target.content.replace('\n', ' '),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(onClick = { replyTo = null }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Filled.Close, contentDescription = tr("Cancel"), modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+
                     // Composer.
                     Row(
                         modifier = Modifier
@@ -452,14 +504,26 @@ fun DirectChatScreen(nav: NavController) {
                         IconButton(onClick = { attachSheet = true }) {
                             Icon(Icons.Filled.AttachFile, contentDescription = tr("Attach"))
                         }
-                        OutlinedTextField(
-                            value = input,
-                            onValueChange = { input = it },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text(tr("Message")) },
-                            shape = RoundedCornerShape(24.dp),
-                            maxLines = 5,
-                        )
+                        // v4.6 (RTL fix): the composer follows the typed text's
+                        // direction, like the project chat composer already did.
+                        // (Box carries the Row weight — weight is a RowScope
+                        // member and cannot be used inside the provider lambda.)
+                        val composerRtl = remember(input) { isRtlText(input) }
+                        Box(Modifier.weight(1f)) {
+                            CompositionLocalProvider(
+                                LocalLayoutDirection provides if (composerRtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
+                            ) {
+                                OutlinedTextField(
+                                    value = input,
+                                    onValueChange = { input = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textStyle = directionalTextStyle(MaterialTheme.typography.bodyLarge, input),
+                                    placeholder = { Text(tr("Message")) },
+                                    shape = RoundedCornerShape(24.dp),
+                                    maxLines = 5,
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(8.dp))
                         if (sessionState.streaming) {
                             IconButton(onClick = { vm.cancel() }) {
@@ -468,12 +532,12 @@ fun DirectChatScreen(nav: NavController) {
                         } else {
                             IconButton(
                                 onClick = { send() },
-                                enabled = input.isNotBlank() || attachments.isNotEmpty(),
+                                enabled = input.isNotBlank() || attachments.isNotEmpty() || replyTo != null,
                             ) {
                                 Icon(
                                     Icons.Filled.Send,
                                     contentDescription = tr("Send"),
-                                    tint = if (input.isNotBlank() || attachments.isNotEmpty())
+                                    tint = if (input.isNotBlank() || attachments.isNotEmpty() || replyTo != null)
                                         MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -496,6 +560,14 @@ fun DirectChatScreen(nav: NavController) {
                 deleteTarget = null
             },
             onDismiss = { deleteTarget = null },
+        )
+    }
+
+    actionMessage?.let { target ->
+        MessageActionSheet(
+            content = target.content,
+            onReply = { replyTo = target; actionMessage = null },
+            onDismiss = { actionMessage = null },
         )
     }
 
@@ -543,8 +615,9 @@ fun DirectChatScreen(nav: NavController) {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun DirectMessageBubble(msg: ChatMessage) {
+private fun DirectMessageBubble(msg: ChatMessage, onShowActions: () -> Unit = {}) {
     val isUser = msg.role == MessageRole.USER
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -556,7 +629,10 @@ private fun DirectMessageBubble(msg: ChatMessage) {
                 else MaterialTheme.colorScheme.surfaceContainerHigh,
             contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
                 else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.fillMaxWidth(if (isUser) 0.85f else 1f),
+            // v4.6: long-press opens the message action sheet.
+            modifier = Modifier
+                .fillMaxWidth(if (isUser) 0.85f else 1f)
+                .combinedClickable(onClick = {}, onLongClick = onShowActions),
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 if (msg.attachments.isNotEmpty()) {
@@ -569,7 +645,10 @@ private fun DirectMessageBubble(msg: ChatMessage) {
                     Spacer(Modifier.height(4.dp))
                 }
                 if (isUser) {
-                    Text(msg.content, style = MaterialTheme.typography.bodyMedium)
+                    // v4.6 (RTL fix): user text gets the same direction-aware
+                    // rendering as the project chat (plain Text kept Persian
+                    // paragraphs in the ambient direction/alignment).
+                    BidiText(msg.content, style = MaterialTheme.typography.bodyMedium)
                 } else {
                     MarkdownText(msg.content)
                 }
@@ -604,7 +683,7 @@ private fun StreamingBubble(text: String, reasoning: String) {
                     Spacer(Modifier.height(6.dp))
                 }
                 Row {
-                    Text(
+                    BidiText(
                         text,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f, fill = false),

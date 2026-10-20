@@ -1,5 +1,42 @@
 # Changelog
 
+## 4.6.0 — Chat fixes (scroll, long-press, keyboard, RTL) + real video files + ABI splits
+
+### Fixed
+- **Scrolling during streaming**: the chat's auto-follow compared item indexes,
+  which is almost always "at bottom" while a long streaming bubble fills the
+  screen — every chunk yanked the list back and the user could not scroll
+  until generation ended. Auto-follow now checks the last item's bottom edge
+  and never fires mid-gesture, in both chats.
+- **Keyboard covered the composer**: the Direct Chat composer had no IME
+  handling at all, and in the project chat the inset was swallowed by the
+  nested-scaffold chain. Both docks now carry imePadding so the scaffold
+  content padding grows by the keyboard height (layout measurement, not
+  inset propagation), and Direct Chat's column adds imePadding as well.
+- **Persian text alignment**: paragraph alignment used relative Start/End,
+  which flips under an RTL layout — Persian messages rendered left-aligned.
+  Directional text now uses absolute Right/Left; Direct Chat user messages
+  and its composer are direction-aware like the project chat.
+
+### Added
+- **Long-press message menu** (both chats): Reply (quote bar + blockquote
+  context in the sent message), Copy, Share, and Select text (a dialog with
+  a real selection container for partial selection).
+- **Real video deliverables**: a video / motion-graphics request is now a
+  first-class deliverable type. The agent writes one self-contained render
+  page implementing `window.__anvexSeek(ms)` and finishes with an
+  `format="mp4"` artifact action; a new on-device renderer captures the page
+  frame-by-frame in an off-screen WebView and encodes an H.264 MP4
+  (MediaCodec/MediaMuxer, no audio track). Media intent is detected
+  (EN + FA), the system prompt carries binding media delivery rules and a
+  media contract, and a turn that answers a video request without an MP4 is
+  corrected once automatically — the same pattern as the ZIP export
+  contract. Previously the prompt steered every deliverable to a web page,
+  so a video request produced an index.html describing a video.
+- **ABI splits**: signed releases now publish per-architecture APKs
+  (arm64-v8a, armeabi-v7a, x86_64, ~60MB each) next to the universal APK,
+  instead of only the 164MB universal build from 4.5.0.
+
 ## 4.5.0 — Real bundled Node.js (nodejs-mobile)
 
 ### Added

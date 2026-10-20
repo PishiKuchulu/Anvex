@@ -46,7 +46,12 @@ fun directionalTextStyle(base: TextStyle, text: String): TextStyle {
     val rtl = isRtlText(text)
     return base.copy(
         textDirection = if (rtl) TextDirection.Rtl else TextDirection.Ltr,
-        textAlign = if (rtl) TextAlign.End else TextAlign.Start,
+        // v4.6 (RTL fix): ABSOLUTE alignment. The old Start/End mapping flipped
+        // under the RTL LayoutDirection that BidiText itself installs: in an RTL
+        // layout, End is the LEFT edge — so every Persian paragraph rendered
+        // left-aligned instead of right-aligned (the user's report). Absolute
+        // Right/Left means the same thing in both layout directions.
+        textAlign = if (rtl) TextAlign.Right else TextAlign.Left,
     )
 }
 

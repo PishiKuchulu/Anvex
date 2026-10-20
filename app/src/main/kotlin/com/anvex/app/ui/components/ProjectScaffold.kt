@@ -1,6 +1,8 @@
 package com.anvex.app.ui.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -122,6 +124,13 @@ fun ProjectScaffold(
             )
         },
         bottomBar = {
+            // v4.6 (keyboard fix): imePadding on the bottom bar makes this
+            // Scaffold's content bottom padding grow by the keyboard height,
+            // lifting the chat composer above the keyboard by layout
+            // measurement. (Screen-level imePadding alone was not reaching
+            // the composer on-device — the nested-scaffold inset chain,
+            // with two consumeWindowInsets hops, swallowed it.)
+            Box(Modifier.imePadding()) {
             // v4.4.5 (UX): the floating Command Deck dock replaces the
             // full-width M3 NavigationBar; project Chat is now "Agent".
             AnvexDock(
@@ -159,6 +168,7 @@ fun ProjectScaffold(
                     ),
                 ),
             )
+            }
         },
     ) { padding ->
         content(

@@ -23,6 +23,16 @@ sealed class BoltAction {
         val outputName: String,
         val paths: List<String> = emptyList(),
         val title: String = "",
+        /** v4.6 (media): for format="mp4", the project HTML page the renderer captures frame-by-frame. */
+        val source: String = "",
+        /** v4.6 (media): requested clip length in seconds (0 = runtime default). */
+        val durationSec: Int = 0,
+        /** v4.6 (media): requested frames per second (0 = runtime default). */
+        val fps: Int = 0,
+        /** v4.6 (media): requested frame width in px (0 = runtime default). */
+        val width: Int = 0,
+        /** v4.6 (media): requested frame height in px (0 = runtime default). */
+        val height: Int = 0,
     ) : BoltAction()
 
     /**

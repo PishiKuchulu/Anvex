@@ -44,13 +44,23 @@ jobs:
           -PANVEX_KEY_ALIAS=${{ secrets.KEY_ALIAS }}
           -PANVEX_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
 
-      - name: Rename APK with version + checksum
+      - name: Rename APKs with version + checksum
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cd app/build/outputs/apk/release
-          mv app-release.apk "Anvex-${VERSION}.apk"
-          sha256sum "Anvex-${VERSION}.apk" > "Anvex-${VERSION}.apk.sha256"
-          cat "Anvex-${VERSION}.apk.sha256"
+          # v4.6: ABI splits — app-release.apk is the universal APK; each
+          # app-<abi>-release.apk becomes Anvex-<version>-<abi>.apk.
+          for apk in app-*.apk; do
+            case "$apk" in
+              app-release.apk) name="Anvex-${VERSION}" ;;
+              app-*-release.apk) abi=$(echo "$apk" | sed -E 's/^app-(.+)-release\.apk$/\1/'); name="Anvex-${VERSION}-${abi}" ;;
+              *) continue ;;
+            esac
+            mv "$apk" "${name}.apk"
+            sha256sum "${name}.apk" > "${name}.apk.sha256"
+          done
+          ls -l
+          cat Anvex-*.apk.sha256
 
       - name: Publish signed release
         uses: softprops/action-gh-release@v2

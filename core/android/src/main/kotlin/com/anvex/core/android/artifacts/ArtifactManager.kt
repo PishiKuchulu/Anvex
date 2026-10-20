@@ -173,6 +173,79 @@ class ArtifactManager(private val context: Context) {
         }
     }
 
+    /**
+     * v4.6: renders a REAL MP4 video from a deterministic canvas page in the
+     * project (see [VideoRenderer] and the media delivery rules in the system
+     * prompt). The render page is written by a file action first; this method
+     * only captures and encodes it. Size/duration are clamped to what an
+     * on-device software capture can finish in reasonable time.
+     */
+    suspend fun createVideo(
+        projectId: String,
+        fs: ProjectFileSystem,
+        source: String,
+        outputName: String,
+        durationSec: Int,
+        fps: Int,
+        width: Int,
+        height: Int,
+        onProgress: (String) -> Unit = {},
+    ): GeneratedArtifact {
+        val srcPath = PathSanitizer.sanitize(source)
+        val duration = durationSec.takeIf { it > 0 }?.coerceIn(1, 30) ?: 10
+        val frameRate = fps.takeIf { it > 0 }?.coerceIn(10, 30) ?: 30
+        val frameWidth = (width.takeIf { it > 0 } ?: 1280).coerceIn(320, 1280) / 2 * 2
+        val frameHeight = (height.takeIf { it > 0 } ?: 720).coerceIn(240, 720) / 2 * 2
+
+        // Resolve the render page to a real file the WebView can load. Local
+        // projects render in place (relative assets keep working); SAF
+        // projects get a copy in a scratch dir (the page contract is a single
+        // self-contained file, so nothing else is needed).
+        var scratchDir: File? = null
+        val htmlFile: File = when (fs) {
+            is com.anvex.core.android.fs.RealProjectFileSystem -> File(fs.rootDirectory(), srcPath)
+            else -> {
+                val bytes = fs.readFileBytes(srcPath)
+                    ?: throw IllegalArgumentException("Render page not found in the project: $source")
+                val dir = File(context.cacheDir, "video-render-${UUID.randomUUID()}").apply { mkdirs() }
+                scratchDir = dir
+                File(dir, File(srcPath).name).apply { writeBytes(bytes) }
+            }
+        }
+        require(htmlFile.isFile) { "Render page not found in the project: $source" }
+
+        val id = UUID.randomUUID().toString()
+        val dir = projectDir(projectId)
+        val safeName = outputName.replace(Regex("[^A-Za-z0-9._-]"), "-").ifBlank { "video.mp4" }
+            .let { if (it.endsWith(".mp4", true)) it else "$it.mp4" }
+        val file = File(dir, artifactFileName(id, safeName))
+        require(file.canonicalFile.toPath().startsWith(dir.canonicalFile.toPath()))
+        val renderTarget = File(dir, ".render-${UUID.randomUUID()}.mp4")
+        try {
+            VideoRenderer.render(
+                context = context,
+                htmlFile = htmlFile,
+                output = renderTarget,
+                width = frameWidth,
+                height = frameHeight,
+                fps = frameRate,
+                durationSec = duration,
+                onProgress = onProgress,
+            )
+            require(renderTarget.isFile && renderTarget.length() > 0) { "Video rendering produced no file." }
+            Files.move(renderTarget.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        } catch (t: Throwable) {
+            renderTarget.delete()
+            file.delete()
+            throw t
+        } finally {
+            scratchDir?.deleteRecursively()
+        }
+        enforceQuota(projectId, protectedFile = file)
+        require(file.isFile) { "Artifact was removed during quota enforcement." }
+        return GeneratedArtifact(id, projectId, file, "video/mp4", ArtifactFormat.MP4, System.currentTimeMillis())
+    }
+
     fun list(projectId: String): List<GeneratedArtifact> =
         projectDir(projectId).listFiles { it.isFile }
             ?.mapNotNull { file ->
@@ -180,6 +253,7 @@ class ArtifactManager(private val context: Context) {
                     "zip" -> "application/zip"
                     "pdf" -> "application/pdf"
                     "json" -> "application/json"
+                    "mp4" -> "video/mp4"
                     "md", "txt" -> "text/plain"
                     else -> return@mapNotNull null
                 }
@@ -188,6 +262,7 @@ class ArtifactManager(private val context: Context) {
                     "md" -> ArtifactFormat.MD
                     "pdf" -> ArtifactFormat.PDF
                     "json" -> ArtifactFormat.JSON
+                    "mp4" -> ArtifactFormat.MP4
                     else -> ArtifactFormat.TXT
                 }
                 val id = file.name.takeIf { it.length >= 36 }?.substring(0, 36) ?: return@mapNotNull null
