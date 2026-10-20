@@ -18,3 +18,7 @@ app/src/main/assets/source/
 
 # Generated, machine-specific verification output
 docs/FINAL_RELEASE_AUDIT.json
+
+# nodejs-mobile runtime, downloaded + hash-verified by the downloadNodeLibs
+# Gradle task in core/android (never committed: 57 MB of prebuilt binaries)
+core/android/libnode/

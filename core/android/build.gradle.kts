@@ -5,12 +5,79 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// ---------------------------------------------------------------------------
+// nodejs-mobile runtime (real Node.js 18 on-device). The 57 MB release zip is
+// NOT committed to git; this task downloads it once, verifies its SHA-256,
+// and extracts bin/ + include/ into libnode/ (gitignored). preBuild depends
+// on it, so local and CI builds both fetch it deterministically.
+val nodeLibsDir = layout.projectDirectory.dir("libnode").asFile
+val nodeLibsMarker = File(nodeLibsDir, ".anvex-node-18.20.4.ok")
+val downloadNodeLibs = tasks.register("downloadNodeLibs") {
+    description = "Downloads and hash-verifies the nodejs-mobile runtime."
+    outputs.file(nodeLibsMarker)
+    onlyIf { !nodeLibsMarker.isFile }
+    doLast {
+        val url = "https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip"
+        val expectedSha256 = "bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af"
+        val zipFile = File(layout.buildDirectory.get().asFile, "nodejs-mobile.zip")
+        zipFile.parentFile.mkdirs()
+        java.net.URL(url).openStream().use { input -> zipFile.outputStream().use { input.copyTo(it) } }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        zipFile.inputStream().use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        check(actual == expectedSha256) { "nodejs-mobile zip SHA-256 mismatch: $actual" }
+        java.util.zip.ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (!entry.isDirectory && (entry.name.startsWith("bin/") || entry.name.startsWith("include/"))) {
+                    val out = File(nodeLibsDir, entry.name)
+                    out.parentFile.mkdirs()
+                    out.outputStream().use { zip.copyTo(it) }
+                }
+                zip.closeEntry()
+            }
+        }
+        nodeLibsMarker.writeText("nodejs-mobile v18.20.4 sha256=$expectedSha256\n")
+    }
+}
+tasks.named("preBuild") { dependsOn(downloadNodeLibs) }
+
 android {
     namespace = "com.anvex.core.android"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         minSdk = 26
+        // nodejs-mobile ships arm64-v8a, armeabi-v7a and x86_64 only.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+    sourceSets {
+        getByName("main") {
+            // Package the prebuilt libnode.so per ABI (the CMake build only
+            // produces our small bridge library).
+            jniLibs.srcDirs("libnode/bin")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

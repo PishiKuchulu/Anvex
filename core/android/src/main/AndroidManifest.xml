@@ -1,2 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Real Node.js commands run in a sacrificial process: libnode can start
+         only once per process, and killing this process is the stop mechanism. -->
+    <application>
+        <service
+            android:name="com.anvex.core.android.runtime.node.NodeExecService"
+            android:exported="false"
+            android:process=":node" />
+    </application>
+</manifest>

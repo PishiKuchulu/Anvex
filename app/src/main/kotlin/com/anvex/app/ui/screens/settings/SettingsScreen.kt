@@ -382,7 +382,7 @@ private fun WorkspaceCategory(
         Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
             Text(tr("Node.js runtime"), style = MaterialTheme.typography.titleSmall)
             Text(
-                tr("In-app: a Node-compatible layer on the WebView engine (plain JS + relative require + fs subset, no npm). Termux: forward node/npm through the RUN_COMMAND bridge to a real Node installation."),
+                tr("In-app: the bundled real Node.js 18 runtime with npm (pure-JS packages; native addons can't build on-device). Termux: forward node/npm through the RUN_COMMAND bridge to a real Node installation."),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -390,7 +390,7 @@ private fun WorkspaceCategory(
                 FilterChip(
                     selected = settings?.nodeBackend != NodeBackend.TERMUX,
                     onClick = { onNodeBackend(NodeBackend.IN_APP) },
-                    label = { Text(tr("In-app compat layer")) },
+                    label = { Text(tr("In-app (Node.js 18)")) },
                 )
                 FilterChip(
                     selected = settings?.nodeBackend == NodeBackend.TERMUX,

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — Real bundled Node.js (nodejs-mobile)
+
+### Added
+- **Real Node.js 18 in the in-app backend** (nodejs-mobile, libnode 18.20.4).
+  In the Terminal, `node` / `npm` / `npx` with Settings → Node backend "In-app
+  (Node.js 18)" now run on a genuine Node runtime with the bundled npm 10.8.2
+  CLI — pure-JS packages install for real; native addons cannot build
+  on-device (no toolchain). Each command runs in a sacrificial `:node`
+  process (libnode can start only once per process) with output streamed live
+  to the terminal over a localhost socket. ABIs: arm64-v8a, armeabi-v7a,
+  x86_64; other ABIs fall back to the WebView compat layer as before.
+  libnode.so is fetched at build time by the hash-pinned `downloadNodeLibs`
+  Gradle task (SHA-256 verified) and is never committed to git.
+
 ## 4.4.6 (unreleased) — Command Deck dock, direct Chat tab, back-navigation fix, Preview overlap fix
 
 ### Added

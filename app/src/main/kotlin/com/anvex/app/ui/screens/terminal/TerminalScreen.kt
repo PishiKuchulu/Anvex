@@ -35,9 +35,11 @@ import kotlinx.coroutines.launch
  * Real on-device terminal for app-private project workspaces.
  *
  * v4.4: `node` / `npm` commands are dispatched by the Node.js backend setting —
- * IN_APP runs them on the bundled Node-compatibility layer (output captured here),
  * TERMUX forwards them through the RUN_COMMAND bridge (output appears in Termux).
- * Everything else runs in the interactive `/system/bin/sh` session as before.
+ * IN_APP runs them on the bundled real Node.js 18 runtime (nodejs-mobile) with
+ * live-streamed output; on ABIs without a libnode it falls back to the older
+ * WebView Node-compat layer (plain JS only). Everything else runs in the
+ * interactive `/system/bin/sh` session as before.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -112,7 +114,7 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
 
         if (settings.nodeBackend == NodeBackend.TERMUX) {
             if (!settings.termuxBridgeEnabled) {
-                output.add("[anvex] The Termux bridge is disabled. Enable it in Settings → Workspace & build, or switch back to the in-app compat layer.")
+                output.add("[anvex] The Termux bridge is disabled. Enable it in Settings → Workspace & build, or switch back to the in-app runtime.")
                 return true
             }
             val bridge = graph.androidRuntime.termux() ?: run {
@@ -135,7 +137,23 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
             return true
         }
 
-        // IN_APP backend.
+        // IN_APP backend: the bundled real Node.js 18 runtime when this
+        // device's ABI has a libnode; the WebView compat layer otherwise.
+        val mobile = graph.androidRuntime.nodeMobile(projectId)
+        if (mobile != null && mobile.isAvailable()) {
+            val t0 = System.currentTimeMillis()
+            output.add("[anvex] Node.js 18 (bundled runtime) · working directory: project workspace")
+            val result = mobile.runCommand(tool, parts.drop(1), timeoutMs = 10 * 60_000L) { line ->
+                if (output.size < 4_000) output.add(line.text)
+            }
+            output.add(
+                if (result.success) "[node] exit 0 · ${result.lines.size} line(s) in ${(System.currentTimeMillis() - t0) / 1000.0}s"
+                else "[node] ${result.error ?: "failed"} (exit ${result.exitCode})"
+            )
+            return true
+        }
+
+        // Compat-layer fallback (ABIs without libnode): plain JS files only.
         if (tool != "node") {
             output.add("[anvex] $tool is not available in the in-app compat layer (plain JS only). For real $tool, switch the Node backend to Termux in Settings → Workspace & build.")
             return true

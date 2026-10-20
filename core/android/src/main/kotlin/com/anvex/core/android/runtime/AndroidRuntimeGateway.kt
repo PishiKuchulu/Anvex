@@ -57,6 +57,17 @@ class AndroidRuntimeGateway(
         return NodeCompatRuntime(ctx, root)
     }
 
+    /**
+     * Real bundled Node.js (nodejs-mobile) for the terminal's in-app backend.
+     * Check [NodeMobileRuntime.isAvailable] before use — libnode exists only
+     * for arm64-v8a / armeabi-v7a / x86_64. Returns null for SAF workspaces.
+     */
+    suspend fun nodeMobile(projectId: String): com.anvex.core.android.runtime.node.NodeMobileRuntime? {
+        val root = realRoot(projectId) ?: return null
+        val ctx = context ?: return null
+        return com.anvex.core.android.runtime.node.NodeMobileRuntime(ctx, root)
+    }
+
     /** v4.4: Termux RUN_COMMAND bridge (needs the app context to resolve packages). */
     fun termux(): TermuxBridge? = context?.let { TermuxBridge(it) }
 
