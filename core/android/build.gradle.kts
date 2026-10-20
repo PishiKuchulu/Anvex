@@ -1,3 +1,7 @@
+import java.net.URL
+import java.security.MessageDigest
+import java.util.zip.ZipInputStream
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
@@ -21,8 +25,8 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
         val expectedSha256 = "bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af"
         val zipFile = File(layout.buildDirectory.get().asFile, "nodejs-mobile.zip")
         zipFile.parentFile.mkdirs()
-        java.net.URL(url).openStream().use { input -> zipFile.outputStream().use { input.copyTo(it) } }
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        URL(url).openStream().use { input -> zipFile.outputStream().use { input.copyTo(it) } }
+        val digest = MessageDigest.getInstance("SHA-256")
         zipFile.inputStream().use { input ->
             val buf = ByteArray(1 shl 16)
             while (true) {
@@ -33,7 +37,7 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
         }
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
         check(actual == expectedSha256) { "nodejs-mobile zip SHA-256 mismatch: $actual" }
-        java.util.zip.ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
+        ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory && (entry.name.startsWith("bin/") || entry.name.startsWith("include/"))) {
