@@ -1,6 +1,7 @@
 package com.anvex.core.android.signing
 
 import android.util.Base64
+import org.bouncycastle.crypto.digests.Blake2bDigest
 import org.bouncycastle.crypto.engines.XSalsa20Engine
 import org.bouncycastle.crypto.macs.Poly1305
 import org.bouncycastle.crypto.params.KeyParameter
@@ -104,6 +105,22 @@ object SigningKeyManager {
     // the JNA-based first version crashed on device).
 
     private const val SEAL_BYTES = 48 // crypto_box_SEALBYTES: 32 (epk) + 16 (MAC)
+    private const val SEAL_NONCE_BYTES = 24 // crypto_box_seal nonce length (Blake2b output)
+
+    /**
+     * libsodium crypto_box_seal nonce derivation: unkeyed Blake2b with a
+     * 24-byte digest over (ephemeral public key || recipient public key).
+     * Internal rather than private so the JVM unit test can pin it against
+     * the reference (libsodium / hashlib.blake2b) test vector.
+     */
+    internal fun sealedBoxNonce(ephemeralPublicKey: ByteArray, recipientPublicKey: ByteArray): ByteArray {
+        val digest = Blake2bDigest(SEAL_NONCE_BYTES * 8)
+        digest.update(ephemeralPublicKey, 0, ephemeralPublicKey.size)
+        digest.update(recipientPublicKey, 0, recipientPublicKey.size)
+        val nonce = ByteArray(SEAL_NONCE_BYTES)
+        digest.doFinal(nonce, 0)
+        return nonce
+    }
 
     private fun sealedBox(message: ByteArray, recipientPublicKey: ByteArray): ByteArray {
         require(recipientPublicKey.size == 32) { "Invalid GitHub repository public key." }
@@ -122,9 +139,14 @@ object SigningKeyManager {
         }
         val beforenm = hsalsa20(shared, ByteArray(16))
 
-        // XSalsa20-Poly1305 with a zero nonce (crypto_box_seal construction).
+        // crypto_box_seal nonce: Blake2b-24(epk || recipient pk), exactly as
+        // libsodium derives it. (A zero nonce is NOT the sealed-box
+        // construction: GitHub derives the Blake2b nonce when opening the
+        // box, so a zero nonce fails its Poly1305 check — that is why every
+        // secret push was rejected with HTTP 422.)
+        val nonce = sealedBoxNonce(epk, recipientPublicKey)
         val xsalsa = XSalsa20Engine()
-        xsalsa.init(true, ParametersWithIV(KeyParameter(beforenm), ByteArray(24)))
+        xsalsa.init(true, ParametersWithIV(KeyParameter(beforenm), nonce))
 
         // First 32 keystream bytes are the Poly1305 one-time key; the message
         // keystream continues from byte 32.
@@ -150,15 +172,33 @@ object SigningKeyManager {
      * HSalsa20: the Salsa20 core (20 rounds) without feed-forward, outputting
      * words (0, 5, 10, 15, 6, 7, 8, 9) as 32 bytes.
      */
-    private fun hsalsa20(key: ByteArray, input16: ByteArray): ByteArray {
+    // Internal rather than private so the JVM unit test can pin it against
+    // libsodium's crypto_box_beforenm test vector.
+    internal fun hsalsa20(key: ByteArray, input16: ByteArray): ByteArray {
         require(key.size == 32 && input16.size == 16)
         val x = IntArray(16)
+        // Canonical Salsa20 state layout: the sigma constants sit on the
+        // diagonal (words 0, 5, 10, 15), the key occupies words 1,2,3,4 and
+        // 11,12,13,14, and the 16-byte input occupies words 6,7,8,9.
+        // (Filling constants/key/input into words 0-3 / 4-11 / 12-15 — a
+        // ChaCha-style fill — produces a different permutation and was the
+        // second reason GitHub rejected every sealed secret with HTTP 422.)
         x[0] = 0x61707865
-        x[1] = 0x3320646e
-        x[2] = 0x79622d32
-        x[3] = 0x6b206574
-        for (i in 0 until 8) x[4 + i] = leDecode(key, i * 4)
-        for (i in 0 until 4) x[12 + i] = leDecode(input16, i * 4)
+        x[5] = 0x3320646e
+        x[10] = 0x79622d32
+        x[15] = 0x6b206574
+        x[1] = leDecode(key, 0)
+        x[2] = leDecode(key, 4)
+        x[3] = leDecode(key, 8)
+        x[4] = leDecode(key, 12)
+        x[11] = leDecode(key, 16)
+        x[12] = leDecode(key, 20)
+        x[13] = leDecode(key, 24)
+        x[14] = leDecode(key, 28)
+        x[6] = leDecode(input16, 0)
+        x[7] = leDecode(input16, 4)
+        x[8] = leDecode(input16, 8)
+        x[9] = leDecode(input16, 12)
 
         repeat(10) {
             qr(x, 0, 4, 8, 12)
@@ -168,7 +208,7 @@ object SigningKeyManager {
             qr(x, 0, 1, 2, 3)
             qr(x, 5, 6, 7, 4)
             qr(x, 10, 11, 8, 9)
-            qr(x, 15, 14, 13, 12)
+            qr(x, 15, 12, 13, 14)
         }
 
         val out = ByteArray(32)
