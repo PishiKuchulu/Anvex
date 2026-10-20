@@ -44,16 +44,18 @@ jobs:
           -PANVEX_KEY_ALIAS=${{ secrets.KEY_ALIAS }}
           -PANVEX_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
 
-      - name: Checksum
+      - name: Rename APK with version + checksum
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           cd app/build/outputs/apk/release
-          sha256sum app-release.apk > app-release.apk.sha256
-          cat app-release.apk.sha256
+          mv app-release.apk "Anvex-${VERSION}.apk"
+          sha256sum "Anvex-${VERSION}.apk" > "Anvex-${VERSION}.apk.sha256"
+          cat "Anvex-${VERSION}.apk.sha256"
 
       - name: Publish signed release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/apk/release/app-release.apk.sha256
+            app/build/outputs/apk/release/Anvex-*.apk
+            app/build/outputs/apk/release/Anvex-*.apk.sha256
           name: Anvex ${{ github.ref_name }} (signed)
