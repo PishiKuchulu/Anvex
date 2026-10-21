@@ -1,0 +1,161 @@
+name: Build libnode 24 release (Termux nodejs-lts, all ABIs)
+
+# Phase 1a of the harness-engine roadmap: produce Anvex's own hash-pinnable
+# libnode 24.18.0 package for Android — bin/<abi>/libnode.so plus its exact
+# DT_NEEDED dependency closure, and include/node headers from the official
+# Node.js v24.18.0 source tarball — published as the GitHub Release
+# "libnode-v24.18.0" (asset anvex-libnode-24.18.0.zip). The app build pins
+# this zip by SHA-256 in core/android/build.gradle.kts (downloadNodeLibs).
+# Manual dispatch only.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24.18.0"
+
+jobs:
+  build:
+    name: Build ${{ matrix.termux_arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - termux_arch: x86_64
+            android_abi: x86_64
+          - termux_arch: aarch64
+            android_abi: arm64-v8a
+          - termux_arch: arm
+            android_abi: armeabi-v7a
+    steps:
+      - name: Clone termux-packages (shallow)
+        run: git clone --depth 1 https://github.com/termux/termux-packages.git tp
+
+      - name: Build nodejs-lts (Node ${{ env.NODE_VERSION }}) for ${{ matrix.termux_arch }}
+        working-directory: tp
+        run: ./scripts/run-docker.sh ./build-package.sh -a ${{ matrix.termux_arch }} -I nodejs-lts
+
+      - name: Extract packages and compute libnode dependency closure
+        run: |
+          set -euo pipefail
+          mkdir -p extract
+          for d in tp/output/*.deb; do
+            dest="extract/$(basename "$d" .deb)"
+            mkdir -p "$dest" && cd "$dest" && ar x "$OLDPWD/$d" && tar -xf data.tar.xz && cd "$OLDPWD"
+          done
+          LIBROOT=$(dirname "$(find extract -name libnode.so -type f | head -1)")
+          echo "lib dir: $LIBROOT"
+          mkdir -p "stage/${{ matrix.android_abi }}"
+          # Transitive DT_NEEDED closure of libnode.so, restricted to libs
+          # that ship in the extracted packages. System libs (libc, libm,
+          # libdl, liblog, libandroid) are provided by Android itself.
+          python3 - "$LIBROOT" "stage/${{ matrix.android_abi }}" <<'PYEOF'
+          import os, re, subprocess, sys
+          libroot, outdir = sys.argv[1], sys.argv[2]
+          by_soname = {}
+          for name in os.listdir(libroot):
+              path = os.path.join(libroot, name)
+              if os.path.isfile(path) and '.so' in name:
+                  by_soname[name] = path
+          def soname(path):
+              out = subprocess.run(['readelf', '-d', path], capture_output=True, text=True).stdout
+              m = re.search(r'SONAME.*\[(.+?)\]', out)
+              return m.group(1) if m else os.path.basename(path)
+          def needed(path):
+              out = subprocess.run(['readelf', '-d', path], capture_output=True, text=True).stdout
+              return re.findall(r'NEEDED.*\[(.+?)\]', out)
+          index = {}
+          for name, path in by_soname.items():
+              index.setdefault(soname(path), path)
+              index.setdefault(name, path)
+          seen, queue = set(), ['libnode.so']
+          while queue:
+              cur = queue.pop()
+              path = index.get(cur)
+              if path is None or path in seen:
+                  continue
+              seen.add(path)
+              queue.extend(needed(path))
+          total = 0
+          for path in sorted(seen):
+              dest = os.path.join(outdir, os.path.basename(path))
+              with open(path, 'rb') as f, open(dest, 'wb') as g:
+                  g.write(f.read())
+              total += os.path.getsize(path)
+              print(f"{os.path.getsize(path):>12}  {os.path.basename(path)}")
+          print(f"closure: {len(seen)} files, {total} bytes")
+          PYEOF
+          ls -la "stage/${{ matrix.android_abi }}"
+
+      - name: Upload per-ABI libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: libnode-libs-${{ matrix.android_abi }}
+          path: stage/${{ matrix.android_abi }}/
+          if-no-files-found: error
+          retention-days: 30
+
+  assemble:
+    name: Assemble and publish libnode release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Download per-ABI libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: libnode-libs-*
+          path: libs
+
+      - name: Fetch official Node.js source tarball (headers + npm version)
+        run: |
+          set -euo pipefail
+          base="https://nodejs.org/dist/v${NODE_VERSION}"
+          curl -fsSLO "$base/node-v${NODE_VERSION}.tar.gz"
+          curl -fsSLO "$base/SHASUMS256.txt"
+          grep " node-v${NODE_VERSION}.tar.gz\$" SHASUMS256.txt | sha256sum -c -
+          tar -xzf "node-v${NODE_VERSION}.tar.gz" "node-v${NODE_VERSION}/include" "node-v${NODE_VERSION}/deps/npm/package.json"
+          NPM_VERSION=$(python3 -c "import json; print(json.load(open('node-v${NODE_VERSION}/deps/npm/package.json'))['version'])")
+          echo "NPM_VERSION=$NPM_VERSION" >> "$GITHUB_ENV"
+          echo "npm bundled with Node ${NODE_VERSION}: $NPM_VERSION"
+
+      - name: Assemble package and manifest
+        run: |
+          set -euo pipefail
+          mkdir -p pkg/bin pkg/include
+          for abi in x86_64 arm64-v8a armeabi-v7a; do
+            if [ -d "libs/libnode-libs-$abi" ]; then
+              mkdir -p "pkg/bin/$abi"
+              cp libs/libnode-libs-$abi/*.so* "pkg/bin/$abi/"
+            fi
+          done
+          cp -r "node-v${NODE_VERSION}/include/node" pkg/include/node
+          {
+            echo "anvex-libnode ${NODE_VERSION}"
+            echo "node: ${NODE_VERSION} (LTS), built via Termux nodejs-lts for bionic"
+            echo "npm: ${NPM_VERSION} (version shipped in the official source tarball)"
+            echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure), include/node/"
+            echo
+            find pkg -type f -printf "%s\t%p\n" | sort -k2
+          } > pkg/manifest.txt
+          cat pkg/manifest.txt
+          (cd pkg && zip -r "../anvex-libnode-${NODE_VERSION}.zip" .)
+          sha256sum "anvex-libnode-${NODE_VERSION}.zip" | tee "anvex-libnode-${NODE_VERSION}.zip.sha256"
+
+      - name: Publish GitHub Release libnode-v${{ env.NODE_VERSION }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="libnode-v${NODE_VERSION}"
+          notes="Anvex libnode ${NODE_VERSION} package. SHA-256: $(cut -d' ' -f1 "anvex-libnode-${NODE_VERSION}.zip.sha256"). See manifest.txt inside the zip for the per-ABI file list. Built by libnode-release.yml from Termux nodejs-lts + official Node.js source headers."
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "anvex-libnode-${NODE_VERSION}.zip" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "anvex-libnode-${NODE_VERSION}.zip" --repo "$GITHUB_REPOSITORY" --title "libnode ${NODE_VERSION} (Anvex runtime package)" --notes "$notes"
+          fi
