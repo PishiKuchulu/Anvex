@@ -103,20 +103,26 @@ jobs:
       - name: Clean and build fresh debug APK
         run: ./gradlew --no-daemon clean :app:assembleDebug
 
+      # v4.6: ABI splits renamed the outputs — the universal APK is now
+      # app-universal-debug.apk (app-debug.apk no longer exists), next to
+      # app-<abi>-debug.apk per architecture.
+      - name: List built APKs
+        run: ls -l app/build/outputs/apk/debug/
+
       - name: Verify launcher icon inside generated APK
-        run: python3 tools/verify_launcher_icon.py --apk app/build/outputs/apk/debug/app-debug.apk
+        run: python3 tools/verify_launcher_icon.py --apk app/build/outputs/apk/debug/app-universal-debug.apk
 
       - name: Write build provenance and checksums
-        run: python3 tools/write_apk_build_info.py app/build/outputs/apk/debug/app-debug.apk
+        run: python3 tools/write_apk_build_info.py app/build/outputs/apk/debug/app-universal-debug.apk
 
       - name: Upload verified APK and provenance
         uses: actions/upload-artifact@v4
         with:
           name: anvex-debug-apk-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
-            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-universal-debug.apk
             app/build/outputs/apk/debug/BUILD-INFO.txt
-            app/build/outputs/apk/debug/app-debug.apk.sha256
+            app/build/outputs/apk/debug/app-universal-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -143,4 +149,4 @@ jobs:
             Install at your own risk — this is a debug build for testing, not a signed release.
 
             بیلد دیباگِ آخرین کامیتِ main — برای تست است، نه انتشار نهایی.
-          files: dist/app-debug.apk
+          files: dist/app-universal-debug.apk

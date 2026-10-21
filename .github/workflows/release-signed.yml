@@ -48,11 +48,11 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cd app/build/outputs/apk/release
-          # v4.6: ABI splits — app-release.apk is the universal APK; each
-          # app-<abi>-release.apk becomes Anvex-<version>-<abi>.apk.
+          # v4.6: ABI splits — app-universal-release.apk is the universal
+          # APK; each app-<abi>-release.apk becomes Anvex-<version>-<abi>.apk.
           for apk in app-*.apk; do
             case "$apk" in
-              app-release.apk) name="Anvex-${VERSION}" ;;
+              app-universal-release.apk) name="Anvex-${VERSION}" ;;
               app-*-release.apk) abi=$(echo "$apk" | sed -E 's/^app-(.+)-release\.apk$/\1/'); name="Anvex-${VERSION}-${abi}" ;;
               *) continue ;;
             esac
