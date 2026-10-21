@@ -54,8 +54,7 @@ class NodeMobileRuntime(
     @Volatile private var activeServer: ServerSocket? = null
 
     /** libnode exists only for these ABIs (what nodejs-mobile ships). */
-    fun isAvailable(): Boolean =
-        NodeBridge.loaded && Build.SUPPORTED_ABIS.firstOrNull() in SUPPORTED_ABIS
+    fun isAvailable(): Boolean = isBundledAvailable()
 
     /** Kills the currently running command, if any. */
     fun stopCurrent() {
@@ -261,5 +260,15 @@ class NodeMobileRuntime(
         private val SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
         private const val MAX_LINES = 5_000
         private const val RUNTIME_VERSION = "18.20.4-npm10.8.2"
+
+        /**
+         * v4.6.1: device-level availability of the bundled runtime — the one
+         * source of truth for capability displays. (The Agent Center matrix
+         * previously read the engine's static PREVIEW table, which predates
+         * the bundled runtime: it showed Node.js "Unavailable" while npm —
+         * which cannot exist without Node — showed "Available".)
+         */
+        fun isBundledAvailable(): Boolean =
+            NodeBridge.loaded && Build.SUPPORTED_ABIS.firstOrNull() in SUPPORTED_ABIS
     }
 }

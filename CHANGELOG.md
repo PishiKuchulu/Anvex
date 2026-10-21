@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.6.1 — Capability matrix truth fix
+
+### Fixed
+- **Agent Center capability matrix lied about Node.js**: it read the
+  engine's static Preview-runtime table (`RuntimeCapabilities.CURRENT`),
+  which predates the bundled Node runtime — so Node.js showed
+  "Unavailable" while npm (which cannot exist without Node) showed
+  "Available". The Node.js and npm rows now use the real device check,
+  `NodeMobileRuntime.isBundledAvailable()` (the same signal the terminal
+  uses), and can never disagree again.
+- **System-prompt capability report** now states the two-tier truth: no
+  Node inside the Preview runtime, but the bundled Node.js 18 + npm 10
+  runtime is available to Terminal/Agent on supported ABIs.
+
 ## 4.6.0 — Chat fixes (scroll, long-press, keyboard, RTL) + real video files + ABI splits
 
 ### Fixed

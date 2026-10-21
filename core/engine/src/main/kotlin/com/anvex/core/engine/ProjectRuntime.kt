@@ -42,7 +42,15 @@ data class RuntimeCapabilities(
     val typescript: CommandCapability,
 ) {
     companion object {
-        /** The real capabilities of the v1.1 WebView-based runtime. */
+        /**
+         * The real capabilities of the v1.1 WebView-based PREVIEW runtime —
+         * this table describes Preview/Chat command translation ONLY. It is
+         * NOT the device capability matrix: the bundled Node.js runtime
+         * (Terminal/Agent) is reported by
+         * `NodeMobileRuntime.isBundledAvailable()` in core:android. (v4.6.1:
+         * the Agent Center matrix once read this table directly and showed
+         * Node.js "Unavailable" on devices where the bundled runtime works.)
+         */
         val CURRENT = RuntimeCapabilities(
             filesystem = CommandCapability.SUPPORTED,
             fileEditing = CommandCapability.SUPPORTED,
@@ -162,8 +170,8 @@ object RuntimeCapabilityReport {
         appendLine("JavaScript:        SUPPORTED (executes in the preview browser)")
         appendLine("JSX/TSX transpile: SUPPORTED (bundled Babel, offline)")
         appendLine("React preview:     SUPPORTED (React/ReactDOM bundled offline; other bare imports resolve from CDN)")
-        appendLine("Node.js:           NOT AVAILABLE")
-        appendLine("npm:               PARTIAL (dependencies recorded; no node_modules is ever created)")
+        appendLine("Node.js:           NOT AVAILABLE in the Preview runtime. A bundled Node.js 18 runtime IS available to the Terminal/Agent on supported ABIs (arm64-v8a, armeabi-v7a, x86_64); it is never available to Preview.")
+        appendLine("npm:               PARTIAL in Preview (dependencies recorded; no node_modules is ever created). Real npm 10 runs in the Terminal/Agent via the bundled Node.js runtime.")
         appendLine("Vite:              NOT AVAILABLE (no bundler or dev server)")
         appendLine("TypeScript:        PARTIAL (type stripping only, no type checking)")
         appendLine("Shell:             SANDBOXED / LIMITED (whitelisted file commands translated, no processes)")

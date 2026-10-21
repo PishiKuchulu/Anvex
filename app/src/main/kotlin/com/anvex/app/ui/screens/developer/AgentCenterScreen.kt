@@ -172,10 +172,18 @@ fun AgentCenterScreen(nav: NavController? = null) {
                 AnvexCard(Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         val runtime = com.anvex.core.engine.RuntimeCapabilities.CURRENT
+                        // v4.6.1: Node.js/npm describe the DEVICE runtime, not
+                        // the Preview table — RuntimeCapabilities.CURRENT is the
+                        // WebView preview's static table (it predates the
+                        // bundled Node runtime and reported Node "Unavailable"
+                        // while npm, which needs Node, showed "Available").
+                        // The bundled npm ships with the runtime, so the two
+                        // rows can never disagree again.
+                        val nodeAvailable = com.anvex.core.android.runtime.node.NodeMobileRuntime.isBundledAvailable()
                         CapabilityLine("File editing", runtime.fileEditing == com.anvex.core.engine.CommandCapability.SUPPORTED)
                         CapabilityLine("React offline preview", runtime.offlineReactPreview == com.anvex.core.engine.CommandCapability.SUPPORTED)
-                        CapabilityLine("Node.js", runtime.nodeJs == com.anvex.core.engine.CommandCapability.SUPPORTED)
-                        CapabilityLine("npm", runtime.npm != com.anvex.core.engine.CommandCapability.UNSUPPORTED)
+                        CapabilityLine("Node.js", nodeAvailable)
+                        CapabilityLine("npm", nodeAvailable)
                         CapabilityLine("Vite", runtime.vite == com.anvex.core.engine.CommandCapability.SUPPORTED)
                         CapabilityLine("Shell", runtime.shell != com.anvex.core.engine.CommandCapability.UNSUPPORTED)
                     }
