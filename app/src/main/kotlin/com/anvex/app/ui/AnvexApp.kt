@@ -108,6 +108,25 @@ fun AnvexApp() {
     val tasks by graph.reliability.observeTaskItems(20).collectAsState(initial = emptyList())
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
+    // v4.7: in-app updates — one controller for the on-launch check, the
+    // launch popup and Settings → "Check for update" (shared state machine).
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val updateController = androidx.compose.runtime.remember {
+        com.anvex.app.ui.components.AppUpdateController(appContext)
+    }
+    var showUpdatePopup by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { updateController.check() }
+    androidx.compose.runtime.LaunchedEffect(updateController.state) {
+        if (updateController.state is com.anvex.app.ui.components.AppUpdateController.State.Available &&
+            settings?.onboardingSeen != false
+        ) {
+            showUpdatePopup = true
+        }
+    }
+    if (showUpdatePopup) {
+        com.anvex.app.ui.components.AppUpdateDialog(updateController) { showUpdatePopup = false }
+    }
+
     if (settings?.onboardingSeen == false) {
         AlertDialog(
             onDismissRequest = { },
@@ -189,7 +208,7 @@ fun AnvexApp() {
             // each screen has its own Scaffold, which applied the status/navigation-bar insets a
             // second time on top of this padding. Consuming them here makes inner Scaffolds
             // (TopAppBar, NavigationBar, imePadding) see them as already handled.
-            AnvexNavHost(navController, Modifier.padding(padding).consumeWindowInsets(padding))
+            AnvexNavHost(navController, Modifier.padding(padding).consumeWindowInsets(padding), updateController)
             FloatingAgentStatus(tasks)
         }
     }
@@ -197,14 +216,18 @@ fun AnvexApp() {
 }
 
 @Composable
-private fun AnvexNavHost(navController: NavHostController, modifier: Modifier) {
+private fun AnvexNavHost(
+    navController: NavHostController,
+    modifier: Modifier,
+    updateController: com.anvex.app.ui.components.AppUpdateController,
+) {
     NavHost(
         navController = navController,
         startDestination = Routes.HOME,
         modifier = modifier,
     ) {
         composable(Routes.HOME) { HomeScreen(navController) }
-        composable(Routes.SETTINGS) { SettingsScreen(navController) }
+        composable(Routes.SETTINGS) { SettingsScreen(navController, updateController) }
         composable(Routes.MEMORY) { MemoryScreen(navController) }
         composable(Routes.USAGE) { UsageScreen(navController) }
         composable(Routes.BACKUP) { BackupScreen(navController) }

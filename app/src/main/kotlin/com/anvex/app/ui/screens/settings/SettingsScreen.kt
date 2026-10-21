@@ -85,7 +85,10 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(nav: NavController) {
+fun SettingsScreen(
+    nav: NavController,
+    updateController: com.anvex.app.ui.components.AppUpdateController,
+) {
     val vm: SettingsViewModel = viewModel { SettingsViewModel() }
     val graph = AppGraph.get()
     val settings by vm.settings.collectAsState()
@@ -99,6 +102,7 @@ fun SettingsScreen(nav: NavController) {
     // v4.0 audit fix: destructive actions require an explicit confirmation dialog.
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var showDeleteHistoryDialog by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     var instructions by remember(settings?.customInstructions) { mutableStateOf(settings?.customInstructions.orEmpty()) }
 
     LaunchedEffect(Unit) { vm.refreshCacheSize() }
@@ -110,7 +114,7 @@ fun SettingsScreen(nav: NavController) {
         Category("workspace", tr("Workspace & build"), Icons.Filled.Terminal, Color(0xFF34D399), 4),
         Category("appearance", tr("Appearance"), Icons.Filled.Language, Color(0xFF7DD3FC), 5),
         Category("data", tr("Data & security"), Icons.Filled.Security, Color(0xFFFBBF24), 3),
-        Category("developer", tr("Developer & about"), Icons.Filled.DeveloperMode, Color(0xFF94A3B8), 4),
+        Category("developer", tr("Developer & about"), Icons.Filled.DeveloperMode, Color(0xFF94A3B8), 5),
     )
 
     Scaffold(
@@ -178,13 +182,21 @@ fun SettingsScreen(nav: NavController) {
                     onClearCache = { showClearCacheDialog = true },
                     onDeleteHistory = { showDeleteHistoryDialog = true },
                 )
-                "developer" -> DeveloperCategory(nav = nav)
+                "developer" -> DeveloperCategory(
+                    nav = nav,
+                    updateController = updateController,
+                    onShowUpdateDialog = { showUpdateDialog = true },
+                )
             }
             androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
         }
     }
 
     // ---- dialogs ---------------------------------------------------------------
+
+    if (showUpdateDialog) {
+        com.anvex.app.ui.components.AppUpdateDialog(updateController) { showUpdateDialog = false }
+    }
 
     if (showTerminalPicker) {
         AlertDialog(
@@ -570,16 +582,56 @@ private fun DataCategory(
 }
 
 @Composable
-private fun DeveloperCategory(nav: NavController) {
+private fun DeveloperCategory(
+    nav: NavController,
+    updateController: com.anvex.app.ui.components.AppUpdateController,
+    onShowUpdateDialog: () -> Unit,
+) {
     AnvexSectionHeader(tr("Developer & about"), tr("Diagnostics, recovery and credits"))
     SettingsRow(Icons.Filled.BugReport, tr("Debug panel"), tr("Runtime status, memory, logs and provider tests"), nav = nav, route = Routes.DEBUG)
     SettingsRow(Icons.Filled.DeveloperMode, tr("Developer Center"), tr("Health, recovery, tasks, snapshots, skills and LAN access"), nav = nav, route = Routes.DEVELOPER)
     SettingsRow(Icons.Filled.SettingsSuggest, tr("Agent Center"), tr("Launch and monitor real durable agent tasks"), nav = nav, route = Routes.AGENT_CENTER)
     SettingsRow(Icons.Filled.Key, tr("Signing key"), tr("Generate an APK signing key on-device and push secrets to GitHub"), nav = nav, route = Routes.SIGNING_KEY)
+    // v4.7: in-app update check (GitHub Releases = the distribution channel).
+    AnvexSectionHeader(tr("App update"), tr("New versions are published on GitHub Releases"))
+    AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        val updateState = updateController.state
+        ListItem(
+            headlineContent = { Text("Anvex ${updateController.currentVersion}") },
+            supportingContent = {
+                Text(
+                    when (updateState) {
+                        is com.anvex.app.ui.components.AppUpdateController.State.Checking -> tr("Checking for updates…")
+                        is com.anvex.app.ui.components.AppUpdateController.State.UpToDate -> tr("You're up to date")
+                        is com.anvex.app.ui.components.AppUpdateController.State.Available ->
+                            tr("Update available") + ": v${updateState.info.version} (${formatSize(updateState.info.sizeBytes)})"
+                        is com.anvex.app.ui.components.AppUpdateController.State.Downloading -> tr("Downloading…")
+                        is com.anvex.app.ui.components.AppUpdateController.State.Downloaded -> tr("Download complete — tap Install")
+                        is com.anvex.app.ui.components.AppUpdateController.State.Failed -> updateState.message
+                        else -> tr("Check whether a newer version has been released")
+                    }
+                )
+            },
+            trailingContent = {
+                when (updateState) {
+                    is com.anvex.app.ui.components.AppUpdateController.State.Checking ->
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    is com.anvex.app.ui.components.AppUpdateController.State.Available ->
+                        Button(onClick = onShowUpdateDialog) { Text(tr("Download update")) }
+                    is com.anvex.app.ui.components.AppUpdateController.State.Downloading ->
+                        Button(onClick = onShowUpdateDialog) { Text(tr("Downloading…")) }
+                    is com.anvex.app.ui.components.AppUpdateController.State.Downloaded ->
+                        Button(onClick = onShowUpdateDialog) { Text(tr("Install")) }
+                    else ->
+                        Button(onClick = { updateController.check() }) { Text(tr("Check for update")) }
+                }
+            },
+        )
+    }
     AnvexSectionHeader(tr("About"))
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         ListItem(
-            headlineContent = { Text("Anvex 4.4.1") },
+            headlineContent = { Text("Anvex ${updateController.currentVersion}") },
             supportingContent = {
                 Text(
                     tr("Android-native AI development workspace based on bolt.diy (MIT). Durable agent harness: chat, editor, preview, terminal, git, artifacts, skills, MCP and in-app APK builds.")

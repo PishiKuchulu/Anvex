@@ -472,4 +472,21 @@ private val FA: Map<String, String> = mapOf(
     // ---------------- v4.4.4: retired provider kinds ----------------
     "This provider kind was removed in Anvex 4.4.4 and can no longer be edited. Create a new provider instead." to "این نوع ارائه‌دهنده در Anvex 4.4.4 حذف شد و دیگر قابل ویرایش نیست. یک ارائه‌دهنده جدید بسازید.",
 
+    // ---------------- v4.7: in-app updates ----------------
+    "App update" to "به‌روزرسانی برنامه",
+    "New versions are published on GitHub Releases" to "نسخه‌های جدید در ریلیزهای گیت‌هاب منتشر می‌شوند",
+    "Check for update" to "بررسی به‌روزرسانی",
+    "Checking for updates…" to "در حال بررسی به‌روزرسانی…",
+    "You're up to date" to "برنامه به‌روز است",
+    "Update available" to "به‌روزرسانی موجود است",
+    "A new version is ready" to "نسخه‌ی جدیدی آماده است",
+    "Current" to "فعلی",
+    "New" to "جدید",
+    "Download update" to "دانلود به‌روزرسانی",
+    "Downloading…" to "در حال دانلود…",
+    "Download complete — tap Install" to "دانلود کامل شد — برای نصب بزنید",
+    "Install" to "نصب",
+    "Later" to "بعداً",
+    "Check whether a newer version has been released" to "بررسی کنید نسخه‌ی جدیدتری منتشر شده است یا نه",
+
 )

@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.7.0 — In-app updates
+
+### Added
+- **Check for update in Settings** (Developer & about → App update): shows
+  the real installed version, checks GitHub Releases, and offers the update
+  when one exists.
+- **Update popup on app launch**: when a newer versioned release exists, a
+  dialog shows current → new version, the exact APK for this device's ABI
+  (universal as fallback) with its size, a Download button with live
+  progress (bytes / total / percent, cancellable), and Install — handed to
+  the system installer via FileProvider (with the unknown-apps consent
+  route when needed). `REQUEST_INSTALL_PACKAGES` added for this.
+- The checker scans the release list for strict `vX.Y.Z` tags (never the
+  rolling `latest` debug release) and compares with pure, unit-tested
+  version logic (`VersionNumbers`, core:engine).
+
+### Fixed
+- Settings → About showed a hardcoded "Anvex 4.4.1" — now the real
+  installed version name.
+
 ## 4.6.1 — Capability matrix truth fix
 
 ### Fixed
