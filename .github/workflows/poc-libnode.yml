@@ -1,0 +1,57 @@
+name: POC libnode 24 (Termux nodejs-lts build)
+
+# Phase 0 of the harness-engine roadmap: prove that a Node 24 libnode.so for
+# Android (bionic) can be produced in CI from the Termux package build, and
+# measure its dependency closure — the prerequisite for running Pi (>=22.19)
+# or DeepSeek Harness (^22.19 || 24+) inside Anvex's bundled Node process.
+# Manual dispatch only; lives on the poc/libnode24 branch, never on main.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-libnode-x86_64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - name: Clone termux-packages (shallow)
+        run: git clone --depth 1 https://github.com/termux/termux-packages.git tp
+
+      - name: Build nodejs-lts (Node 24 LTS) for x86_64
+        working-directory: tp
+        run: ./scripts/run-docker.sh ./build-package.sh -a x86_64 -I nodejs-lts
+
+      - name: Inspect produced packages
+        working-directory: tp
+        run: |
+          ls -la output/
+          for d in output/*.deb; do echo "== $d $(stat -c%s "$d") bytes"; done
+
+      - name: Extract libnode and report its dependency closure
+        run: |
+          mkdir -p extract && cd extract
+          for d in ../tp/output/*.deb; do
+            mkdir -p "pkg-$(basename "$d" .deb)" && cd "pkg-$(basename "$d" .deb)"
+            ar x "$d" && tar -xf data.tar.xz && cd ..
+          done
+          {
+            echo "=== all .so files (path, bytes) ==="
+            find . -name "*.so*" -type f -printf "%s\t%p\n" | sort -k2
+            echo
+            echo "=== libnode.so candidates ==="
+            find . -name "libnode.so*" -printf "%s\t%p\n"
+            echo
+            echo "=== DT_NEEDED of libnode.so ==="
+            LIBNODE=$(find . -name "libnode.so" -type f | head -1)
+            if [ -n "$LIBNODE" ]; then readelf -d "$LIBNODE" | grep -E "NEEDED|SONAME"; fi
+          } | tee report.txt
+
+      - name: Upload libnode + dependency libraries + report
+        uses: actions/upload-artifact@v4
+        with:
+          name: libnode24-x86_64-poc
+          path: |
+            extract/report.txt
+            extract/**/files/usr/lib/*.so*
+          if-no-files-found: warn
+          retention-days: 14
