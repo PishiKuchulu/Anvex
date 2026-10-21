@@ -6,6 +6,11 @@ name: Build libnode 24 release (Termux nodejs-lts, all ABIs)
 # Node.js v24.18.0 source tarball — published as the GitHub Release
 # "libnode-v24.18.0" (asset anvex-libnode-24.18.0.zip). The app build pins
 # this zip by SHA-256 in core/android/build.gradle.kts (downloadNodeLibs).
+#
+# LESSON (run 39676591153, failed): Termux's published nodejs-lts deb ships
+# NO libnode.so — it builds Node monolithically (bin/node only, 10 MB deb).
+# Fix: patch build.sh locally to add Node's --shared flag before building,
+# so make install also ships lib/libnode.so* in the deb.
 # Manual dispatch only.
 
 on:
@@ -36,9 +41,23 @@ jobs:
       - name: Clone termux-packages (shallow)
         run: git clone --depth 1 https://github.com/termux/termux-packages.git tp
 
+      - name: Patch nodejs-lts build to produce a shared libnode
+        run: |
+          grep -n -- '--ninja' tp/packages/nodejs-lts/build.sh
+          sed -i 's|--ninja \\|--ninja \\\n\t\t--shared \\|' tp/packages/nodejs-lts/build.sh
+          grep -n -- '--shared' tp/packages/nodejs-lts/build.sh | head -5
+
       - name: Build nodejs-lts (Node ${{ env.NODE_VERSION }}) for ${{ matrix.termux_arch }}
         working-directory: tp
         run: ./scripts/run-docker.sh ./build-package.sh -a ${{ matrix.termux_arch }} -I nodejs-lts
+
+      - name: Diagnose package contents
+        run: |
+          for d in tp/output/*.deb; do
+            echo "== $(basename "$d") $(stat -c%s "$d") bytes"
+            ar t "$d"
+            ar p "$d" data.tar.xz | tar -tJf - | grep -E "libnode|\.so" | head -30 || true
+          done
 
       - name: Extract packages and compute libnode dependency closure
         run: |
@@ -48,32 +67,39 @@ jobs:
             dest="extract/$(basename "$d" .deb)"
             mkdir -p "$dest" && cd "$dest" && ar x "$OLDPWD/$d" && tar -xf data.tar.xz && cd "$OLDPWD"
           done
-          LIBROOT=$(dirname "$(find extract -name libnode.so -type f | head -1)")
-          echo "lib dir: $LIBROOT"
+          echo "=== libnode candidates anywhere in extracted packages ==="
+          find extract -name "libnode.so*" | head
           mkdir -p "stage/${{ matrix.android_abi }}"
           # Transitive DT_NEEDED closure of libnode.so, restricted to libs
           # that ship in the extracted packages. System libs (libc, libm,
           # libdl, liblog, libandroid) are provided by Android itself.
-          python3 - "$LIBROOT" "stage/${{ matrix.android_abi }}" <<'PYEOF'
+          # Symlink-aware: real files copied once, links recreated as links.
+          python3 - "stage/${{ matrix.android_abi }}" <<'PYEOF'
           import os, re, subprocess, sys
-          libroot, outdir = sys.argv[1], sys.argv[2]
-          by_soname = {}
-          for name in os.listdir(libroot):
-              path = os.path.join(libroot, name)
-              if os.path.isfile(path) and '.so' in name:
-                  by_soname[name] = path
+          outdir = sys.argv[1]
+          libs = subprocess.run(['find', 'extract', '-name', '*.so*'],
+                                capture_output=True, text=True).stdout.split()
+          libs = [p for p in libs if os.path.isfile(p) or os.path.islink(p)]
+          if not any(os.path.basename(p).startswith('libnode.so') for p in libs):
+              print("FATAL: no libnode.so* found in extracted packages")
+              sys.exit(2)
           def soname(path):
-              out = subprocess.run(['readelf', '-d', path], capture_output=True, text=True).stdout
+              out = subprocess.run(['readelf', '-d', os.path.realpath(path)],
+                                   capture_output=True, text=True).stdout
               m = re.search(r'SONAME.*\[(.+?)\]', out)
               return m.group(1) if m else os.path.basename(path)
           def needed(path):
-              out = subprocess.run(['readelf', '-d', path], capture_output=True, text=True).stdout
+              out = subprocess.run(['readelf', '-d', os.path.realpath(path)],
+                                   capture_output=True, text=True).stdout
               return re.findall(r'NEEDED.*\[(.+?)\]', out)
           index = {}
-          for name, path in by_soname.items():
-              index.setdefault(soname(path), path)
-              index.setdefault(name, path)
-          seen, queue = set(), ['libnode.so']
+          for p in libs:
+              index.setdefault(soname(p), p)
+              index.setdefault(os.path.basename(p), p)
+          seen, queue = set(), []
+          for p in libs:
+              if os.path.basename(p).startswith('libnode.so'):
+                  queue.append(os.path.basename(p))
           while queue:
               cur = queue.pop()
               path = index.get(cur)
@@ -81,14 +107,21 @@ jobs:
                   continue
               seen.add(path)
               queue.extend(needed(path))
-          total = 0
+          by_real, total = {}, 0
           for path in sorted(seen):
-              dest = os.path.join(outdir, os.path.basename(path))
-              with open(path, 'rb') as f, open(dest, 'wb') as g:
+              real = os.path.realpath(path)
+              by_real.setdefault(real, []).append(os.path.basename(path))
+          for real, names in sorted(by_real.items(), key=lambda kv: kv[1][0]):
+              dest = os.path.join(outdir, names[0])
+              with open(real, 'rb') as f, open(dest, 'wb') as g:
                   g.write(f.read())
-              total += os.path.getsize(path)
-              print(f"{os.path.getsize(path):>12}  {os.path.basename(path)}")
-          print(f"closure: {len(seen)} files, {total} bytes")
+              total += os.path.getsize(real)
+              for link in names[1:]:
+                  lp = os.path.join(outdir, link)
+                  if not os.path.lexists(lp):
+                      os.symlink(names[0], lp)
+              print(f"{os.path.getsize(real):>12}  {' '.join(sorted(names))}")
+          print(f"closure: {len(by_real)} real files (+links), {total} bytes")
           PYEOF
           ls -la "stage/${{ matrix.android_abi }}"
 
@@ -131,20 +164,21 @@ jobs:
           for abi in x86_64 arm64-v8a armeabi-v7a; do
             if [ -d "libs/libnode-libs-$abi" ]; then
               mkdir -p "pkg/bin/$abi"
-              cp libs/libnode-libs-$abi/*.so* "pkg/bin/$abi/"
+              cp -a libs/libnode-libs-$abi/. "pkg/bin/$abi/"
             fi
           done
           cp -r "node-v${NODE_VERSION}/include/node" pkg/include/node
           {
             echo "anvex-libnode ${NODE_VERSION}"
-            echo "node: ${NODE_VERSION} (LTS), built via Termux nodejs-lts for bionic"
+            echo "node: ${NODE_VERSION} (LTS), built via Termux nodejs-lts for bionic with --shared"
             echo "npm: ${NPM_VERSION} (version shipped in the official source tarball)"
-            echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure), include/node/"
+            echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure; symlinks preserved), include/node/"
             echo
             find pkg -type f -printf "%s\t%p\n" | sort -k2
+            find pkg -type l -printf "link\t%p -> %l\n" | sort -k2
           } > pkg/manifest.txt
           cat pkg/manifest.txt
-          (cd pkg && zip -r "../anvex-libnode-${NODE_VERSION}.zip" .)
+          (cd pkg && zip -ry "../anvex-libnode-${NODE_VERSION}.zip" .)
           sha256sum "anvex-libnode-${NODE_VERSION}.zip" | tee "anvex-libnode-${NODE_VERSION}.zip.sha256"
 
       - name: Publish GitHub Release libnode-v${{ env.NODE_VERSION }}
@@ -153,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="libnode-v${NODE_VERSION}"
-          notes="Anvex libnode ${NODE_VERSION} package. SHA-256: $(cut -d' ' -f1 "anvex-libnode-${NODE_VERSION}.zip.sha256"). See manifest.txt inside the zip for the per-ABI file list. Built by libnode-release.yml from Termux nodejs-lts + official Node.js source headers."
+          notes="Anvex libnode ${NODE_VERSION} package. SHA-256: $(cut -d' ' -f1 "anvex-libnode-${NODE_VERSION}.zip.sha256"). See manifest.txt inside the zip for the per-ABI file list. Built by libnode-release.yml from Termux nodejs-lts (+--shared) with official Node.js source headers."
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" "anvex-libnode-${NODE_VERSION}.zip" --repo "$GITHUB_REPOSITORY" --clobber
           else
