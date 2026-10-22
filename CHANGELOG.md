@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.10.0 — Pi engine in chat
+
+### Added
+- **The Pi engine now drives the project chat** when selected in
+  Settings → Developer & about → Agent engine: sends, streaming,
+  cancel, retry and regenerate all route to Pi, with the same chat
+  storage and streaming UI as the native engine. Each conversation
+  keeps a continuous Pi session (full transcript) across turns and
+  app restarts; switching engines mid-conversation is safe — history
+  stays in one thread.
+- **Approvals in chat**: Pi tool calls that need a decision appear as
+  an Allow/Deny dialog in the chat screen (dismissing denies), decided
+  by the same CommandApprovalService as everywhere else.
+- Attachments on a Pi turn are saved into the workspace and named in
+  the prompt so the agent can read them with its tools.
+
+### Notes
+- Regenerating a reply under Pi starts a fresh Pi session (the stored
+  chat history is unaffected); direct (non-project) chats still use
+  the native engine in this release.
+
 ## 4.9.0 — Pi agent engine (experimental Engine #2)
 
 ### Added
