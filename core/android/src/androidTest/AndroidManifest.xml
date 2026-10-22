@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The instrumented tests drive NodeMobileRuntime, which coordinates with
+  the :node process over a localhost socket. The app itself declares
+  INTERNET; the test package needs it too or ServerSocket.bind fails
+  with EPERM on the emulator.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
