@@ -10,8 +10,11 @@ name: Reassemble libnode 24 release (dependency closure fix)
 # This workflow reuses that run's artifacts (no 2h rebuild), fetches the
 # dependency debs from the Termux apt repo (Packages index, SHA-256
 # verified), computes the full DT_NEEDED closure, and republishes the
-# release. libc++_shared.so is intentionally NOT bundled: the app ships the
-# NDK's copy under the same SONAME (as with nodejs-mobile's libnode).
+# release. A second defect: AGP only packages *.so files from jniLibs, so
+# the versioned names (libcrypto.so.3, libicui18n.so.78, ...) never reached
+# the APK at all — this workflow also renames every lib to its *.so form
+# with patchelf (SONAME + DT_NEEDED rewritten), and bundles Termux's own
+# libc++_shared.so, which the APK otherwise lacks entirely.
 # Manual dispatch only.
 
 on:
@@ -54,7 +57,7 @@ jobs:
           python3 - <<'PYEOF'
           import gzip, hashlib, os, subprocess, urllib.request
           REPO = "https://packages.termux.dev/apt/termux-main"
-          WANT = {"zlib", "c-ares", "openssl", "libicu", "libsqlite"}
+          WANT = {"zlib", "c-ares", "openssl", "libicu", "libsqlite", "libc++"}
           ARCHES = {"x86_64": "x86_64", "aarch64": "arm64-v8a", "arm": "armeabi-v7a"}
           def fetch(url):
               with urllib.request.urlopen(url) as r:
@@ -142,7 +145,7 @@ jobs:
               name_for_real.setdefault(os.path.realpath(path), cur)
               queue.extend(needed(path))
           SYSTEM = {"libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so"}
-          PROVIDED = {"libc++_shared.so"}  # shipped by the app (NDK), same SONAME
+          PROVIDED = set()  # everything non-system is bundled, incl. Termux libc++_shared.so
           unresolved = set()
           for p in seen:
               for n in needed(p):
@@ -173,6 +176,48 @@ jobs:
           cp -r artifacts/libnode-headers pkg/include/node
           ls -la pkg/bin/*/ | head -50
 
+      - name: Normalize library names for Android packaging (patchelf)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq patchelf > /dev/null
+          python3 - <<'PYEOF'
+          import os, re, subprocess
+          SYSTEM = {"libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so"}
+          def soname(p):
+              out = subprocess.run(['readelf', '-d', p], capture_output=True, text=True).stdout
+              m = re.search(r'SONAME.*\[(.+?)\]', out)
+              return m.group(1) if m else None
+          def needed(p):
+              out = subprocess.run(['readelf', '-d', p], capture_output=True, text=True).stdout
+              return re.findall(r'NEEDED.*\[(.+?)\]', out)
+          for abi in ("x86_64", "arm64-v8a", "armeabi-v7a"):
+              d = f"pkg/bin/{abi}"
+              renames = {}
+              for f in sorted(os.listdir(d)):
+                  new = re.sub(r"\.so\..*$", ".so", f)
+                  if new != f:
+                      renames[f] = new
+              for old, new in renames.items():
+                  src = os.path.join(d, old)
+                  if soname(src):
+                      subprocess.run(['patchelf', '--set-soname', new, src], check=True)
+                  os.rename(src, os.path.join(d, new))
+                  print(f"{abi}: {old} -> {new}")
+              for f in sorted(os.listdir(d)):
+                  p = os.path.join(d, f)
+                  for n in needed(p):
+                      if n in renames:
+                          subprocess.run(['patchelf', '--replace-needed', n, renames[n], p], check=True)
+              names = set(os.listdir(d))
+              bad = set()
+              for f in names:
+                  for n in needed(os.path.join(d, f)):
+                      if n not in names and n not in SYSTEM:
+                          bad.add(n)
+              assert not bad, f"{abi}: still unresolved after rename: {bad}"
+              print(f"{abi}: names normalized, closure self-contained ({len(names)} libs)")
+          PYEOF
+
       - name: Fetch official Node.js source tarball (npm version only)
         run: |
           set -euo pipefail
@@ -194,7 +239,7 @@ jobs:
             echo "anvex-libnode ${NODE_VERSION}"
             echo "node: ${NODE_VERSION} (LTS), built via Termux nodejs-lts for bionic with --shared"
             echo "npm: ${NPM_VERSION} (version shipped in the official source tarball)"
-            echo "deps: DT_NEEDED closure from Termux apt packages (zlib, c-ares, openssl, libicu, libsqlite), index SHA-256 verified; libc++_shared.so provided by the app (NDK)"
+            echo "deps: DT_NEEDED closure from Termux apt packages (zlib, c-ares, openssl, libicu, libsqlite, libc++), index SHA-256 verified; all libs renamed to *.so with patchelf (Android packaging drops versioned names)"
             echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure, one regular file per SONAME), include/node/ (generated headers from the same build)"
             echo
             find pkg -type f -printf "%s\t%p\n" | sort -k2
