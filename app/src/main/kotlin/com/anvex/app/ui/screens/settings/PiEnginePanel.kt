@@ -56,6 +56,9 @@ fun PiEnginePanel() {
     }
     var output by remember { mutableStateOf("") }
     var pendingAsk by remember { mutableStateOf<Pair<PiToolMapping.ApprovalAsk, CompletableDeferred<Boolean>>?>(null) }
+    // tr() is @Composable — resolve click-handler strings here, not in the coroutine.
+    val noProviderText = tr("No default provider is configured.")
+    val unsupportedText = tr("This provider is not supported by the Pi engine yet.")
 
     AnvexSectionHeader(tr("Agent engine"), tr("Choose which engine runs agent tasks"))
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -112,13 +115,13 @@ fun PiEnginePanel() {
                             try {
                                 val default = graph.providers.getDefault()
                                 if (default == null) {
-                                    line(tr("No default provider is configured."))
+                                    line(noProviderText)
                                     return@launch
                                 }
                                 val runtime = graph.providers.runtimeConfig(default.id)
                                 val mapped = runtime?.let { PiProviderMapping.forRuntime(it) }
                                 if (runtime == null || mapped == null) {
-                                    line(tr("This provider is not supported by the Pi engine yet."))
+                                    line(unsupportedText)
                                     return@launch
                                 }
                                 line("▶ Pi ${PiRuntime.RUNTIME_VERSION} · ${mapped.providerName}/${mapped.modelId}")
