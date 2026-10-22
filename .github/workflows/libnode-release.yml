@@ -51,6 +51,41 @@ jobs:
         working-directory: tp
         run: ./scripts/run-docker.sh ./build-package.sh -a ${{ matrix.termux_arch }} -I nodejs-lts
 
+      - name: Fetch dependency debs for the closure (index-verified)
+        # build-package.sh -I installs dependency debs inside the docker
+        # container only; output/ holds just the nodejs-lts deb. Fetch the
+        # same packages from the Termux apt repo so the closure step sees
+        # libz.so.1, libcares.so, libsqlite3.so, libssl/libcrypto.so.3 and
+        # libicu*.so.78 next to libnode.so.
+        env:
+          TERMUX_ARCH: ${{ matrix.termux_arch }}
+        run: |
+          python3 - <<'PYEOF'
+          import hashlib, os, urllib.request
+          REPO = "https://packages.termux.dev/apt/termux-main"
+          WANT = {"zlib", "c-ares", "openssl", "libicu", "libsqlite"}
+          def fetch(url):
+              with urllib.request.urlopen(url) as r: return r.read()
+          raw = fetch(f"{REPO}/dists/stable/main/binary-{os.environ['TERMUX_ARCH']}/Packages")
+          entries, cur = [], {}
+          for line in raw.decode().splitlines():
+              if not line.strip():
+                  if cur: entries.append(cur)
+                  cur = {}
+              elif ": " in line:
+                  k, v = line.split(": ", 1); cur[k] = v
+          if cur: entries.append(cur)
+          got = set()
+          for e in entries:
+              if e.get("Package") not in WANT: continue
+              data = fetch(f"{REPO}/{e['Filename']}")
+              assert hashlib.sha256(data).hexdigest() == e["SHA256"], e["Package"]
+              open(f"tp/output/{os.path.basename(e['Filename'])}", "wb").write(data)
+              got.add(e["Package"])
+              print("fetched", e["Package"], e["Version"])
+          assert got == WANT, f"missing: {WANT - got}"
+          PYEOF
+
       - name: Diagnose package contents
         run: |
           for d in tp/output/*.deb; do
@@ -107,21 +142,19 @@ jobs:
                   continue
               seen.add(path)
               queue.extend(needed(path))
+          # One regular file per real file, named by its SONAME (the exact
+          # name DT_NEEDED asks for); no symlinks (Gradle zip extraction
+          # would turn a symlink entry into a text file).
           by_real, total = {}, 0
           for path in sorted(seen):
-              real = os.path.realpath(path)
-              by_real.setdefault(real, []).append(os.path.basename(path))
-          for real, names in sorted(by_real.items(), key=lambda kv: kv[1][0]):
-              dest = os.path.join(outdir, names[0])
+              by_real.setdefault(os.path.realpath(path), path)
+          for real in sorted(by_real):
+              dest = os.path.join(outdir, soname(real))
               with open(real, 'rb') as f, open(dest, 'wb') as g:
                   g.write(f.read())
               total += os.path.getsize(real)
-              for link in names[1:]:
-                  lp = os.path.join(outdir, link)
-                  if not os.path.lexists(lp):
-                      os.symlink(names[0], lp)
-              print(f"{os.path.getsize(real):>12}  {' '.join(sorted(names))}")
-          print(f"closure: {len(by_real)} real files (+links), {total} bytes")
+              print(f"{os.path.getsize(real):>12}  {soname(real)}")
+          print(f"closure: {len(by_real)} real files, {total} bytes")
           PYEOF
           ls -la "stage/${{ matrix.android_abi }}"
 
@@ -199,10 +232,9 @@ jobs:
             echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure; symlinks preserved), include/node/ (generated headers from the same Termux build — guaranteed API match)"
             echo
             find pkg -type f -printf "%s\t%p\n" | sort -k2
-            find pkg -type l -printf "link\t%p -> %l\n" | sort -k2
           } > pkg/manifest.txt
           cat pkg/manifest.txt
-          (cd pkg && zip -ry "../anvex-libnode-${NODE_VERSION}.zip" .)
+          (cd pkg && zip -r "../anvex-libnode-${NODE_VERSION}.zip" .)
           sha256sum "anvex-libnode-${NODE_VERSION}.zip" | tee "anvex-libnode-${NODE_VERSION}.zip.sha256"
 
       - name: Publish GitHub Release libnode-v${{ env.NODE_VERSION }}
