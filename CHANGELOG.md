@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.8.0 — Node.js 24 runtime (harness engine groundwork)
+
+### Changed
+- **Bundled Node.js upgraded 18.20.4 → 24.18.0 (LTS), npm 10.8.2 → 11.16.0.**
+  nodejs-mobile (the old libnode source) is frozen at Node 18, so the
+  runtime is now Anvex's own package: Node 24.18.0 built for Android
+  (bionic) via Termux `nodejs-lts` with `--shared`, plus its full DT_NEEDED
+  dependency closure (zlib, c-ares, OpenSSL 3, ICU 78, SQLite — Termux's
+  libsqlite3 ships without a SONAME and is bundled under its requested
+  name), published as the hash-pinned repo release `libnode-v24.18.0` and
+  fetched by `downloadNodeLibs` exactly like before. This is the
+  prerequisite for running modern agent engines (Pi ≥ 22.19, DeepSeek
+  Harness ^22.19/24+) inside the bundled runtime; modern npm packages that
+  refused Node 18 engines now install.
+- Capability text (system prompt report, Settings, Terminal banner) now
+  states Node.js 24 / npm 11.
+
 ## 4.7.0 — In-app updates
 
 ### Added

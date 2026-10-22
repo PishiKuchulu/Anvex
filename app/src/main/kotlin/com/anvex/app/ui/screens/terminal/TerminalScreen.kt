@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
  *
  * v4.4: `node` / `npm` commands are dispatched by the Node.js backend setting —
  * TERMUX forwards them through the RUN_COMMAND bridge (output appears in Termux).
- * IN_APP runs them on the bundled real Node.js 18 runtime (nodejs-mobile) with
+ * IN_APP runs them on the bundled real Node.js 24 runtime (Anvex libnode package) with
  * live-streamed output; on ABIs without a libnode it falls back to the older
  * WebView Node-compat layer (plain JS only). Everything else runs in the
  * interactive `/system/bin/sh` session as before.
@@ -137,12 +137,12 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
             return true
         }
 
-        // IN_APP backend: the bundled real Node.js 18 runtime when this
+        // IN_APP backend: the bundled real Node.js 24 runtime when this
         // device's ABI has a libnode; the WebView compat layer otherwise.
         val mobile = graph.androidRuntime.nodeMobile(projectId)
         if (mobile != null && mobile.isAvailable()) {
             val t0 = System.currentTimeMillis()
-            output.add("[anvex] Node.js 18 (bundled runtime) · working directory: project workspace")
+            output.add("[anvex] Node.js 24 (bundled runtime) · working directory: project workspace")
             val result = mobile.runCommand(tool, parts.drop(1), timeoutMs = 10 * 60_000L) { line ->
                 if (output.size < 4_000) output.add(line.text)
             }
