@@ -139,4 +139,6 @@ dependencies {
     // test-only (never packaged into the APK).
     testImplementation(libs.sqlite.jdbc)
     testImplementation(libs.room.runtime)
+    // Real org.json for JVM unit tests (android.jar's is a stub); test-only.
+    testImplementation(libs.org.json)
 }

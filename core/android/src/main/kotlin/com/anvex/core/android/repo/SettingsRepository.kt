@@ -45,6 +45,16 @@ enum class AppLanguage { SYSTEM, ENGLISH, PERSIAN }
 @Serializable
 enum class NodeBackend { IN_APP, TERMUX }
 
+/**
+ * v4.9: which agent engine drives agent runs.
+ * NATIVE — Anvex's own harness (DurableTaskEngine + ChatSession).
+ * PI — the Pi coding agent (bundled, runs in the :node process) as
+ *   experimental Engine #2; its tool calls still pass through
+ *   CommandApprovalService, and the native engine stays the default.
+ */
+@Serializable
+enum class AgentEngine { NATIVE, PI }
+
 @Serializable
 data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.DARK,
@@ -72,6 +82,8 @@ data class AppSettings(
     val nodeBackend: NodeBackend = NodeBackend.IN_APP,
     /** v4.4: allow forwarding commands to Termux through RUN_COMMAND (opt-in). */
     val termuxBridgeEnabled: Boolean = false,
+    /** v4.9: agent engine selection (native harness vs Pi, experimental). */
+    val agentEngine: AgentEngine = AgentEngine.NATIVE,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -95,6 +107,7 @@ class SettingsRepository(private val context: Context) {
         val WEB_TOOLS = booleanPreferencesKey("web_tools_enabled")
         val NODE_BACKEND = stringPreferencesKey("node_backend")
         val TERMUX_BRIDGE = booleanPreferencesKey("termux_bridge_enabled")
+        val AGENT_ENGINE = stringPreferencesKey("agent_engine")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -117,6 +130,7 @@ class SettingsRepository(private val context: Context) {
             webToolsEnabled = p[Keys.WEB_TOOLS] ?: true,
             nodeBackend = p[Keys.NODE_BACKEND]?.let { runCatching { NodeBackend.valueOf(it) }.getOrNull() } ?: NodeBackend.IN_APP,
             termuxBridgeEnabled = p[Keys.TERMUX_BRIDGE] ?: false,
+            agentEngine = p[Keys.AGENT_ENGINE]?.let { runCatching { AgentEngine.valueOf(it) }.getOrNull() } ?: AgentEngine.NATIVE,
         )
     }
 
@@ -136,6 +150,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setCustomInstructions(v: String) = context.dataStore.edit { it[Keys.CUSTOM_INSTRUCTIONS] = v.take(4_000) }
     suspend fun setWebToolsEnabled(v: Boolean) = context.dataStore.edit { it[Keys.WEB_TOOLS] = v }
     suspend fun setNodeBackend(v: NodeBackend) = context.dataStore.edit { it[Keys.NODE_BACKEND] = v.name }
+    suspend fun setAgentEngine(v: AgentEngine) = context.dataStore.edit { it[Keys.AGENT_ENGINE] = v.name }
     suspend fun setTermuxBridgeEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TERMUX_BRIDGE] = v }
 
     suspend fun restoreFromBackup(encoded: String) {
@@ -147,6 +162,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.LAN_ENABLED] = s.lanEnabled; p[Keys.WEB_PORT] = s.webPort.coerceIn(1024, 65535)
             p[Keys.MEMORY_ENABLED] = s.memoryEnabled; p[Keys.CUSTOM_INSTRUCTIONS] = s.customInstructions.take(4_000); p[Keys.WEB_TOOLS] = s.webToolsEnabled
             p[Keys.NODE_BACKEND] = s.nodeBackend.name; p[Keys.TERMUX_BRIDGE] = s.termuxBridgeEnabled
+            p[Keys.AGENT_ENGINE] = s.agentEngine.name
         }
     }
 }

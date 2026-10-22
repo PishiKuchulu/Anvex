@@ -592,6 +592,8 @@ private fun DeveloperCategory(
     SettingsRow(Icons.Filled.DeveloperMode, tr("Developer Center"), tr("Health, recovery, tasks, snapshots, skills and LAN access"), nav = nav, route = Routes.DEVELOPER)
     SettingsRow(Icons.Filled.SettingsSuggest, tr("Agent Center"), tr("Launch and monitor real durable agent tasks"), nav = nav, route = Routes.AGENT_CENTER)
     SettingsRow(Icons.Filled.Key, tr("Signing key"), tr("Generate an APK signing key on-device and push secrets to GitHub"), nav = nav, route = Routes.SIGNING_KEY)
+    // v4.9: agent engine selection (native vs Pi) + live Pi test bench.
+    PiEnginePanel()
     // v4.7: in-app update check (GitHub Releases = the distribution channel).
     AnvexSectionHeader(tr("App update"), tr("New versions are published on GitHub Releases"))
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {

@@ -474,6 +474,21 @@ private val FA: Map<String, String> = mapOf(
 
     // ---------------- v4.7: in-app updates ----------------
     "App update" to "به‌روزرسانی برنامه",
+    // v4.9: Pi engine panel (Developer settings).
+    "Agent engine" to "موتور ایجنت",
+    "Choose which engine runs agent tasks" to "انتخاب کنید کدام موتور تسک‌های ایجنت را اجرا کند",
+    "Native harness" to "هارنس نیتیو",
+    "Pi (experimental)" to "پی (آزمایشی)",
+    "Pi engine test" to "تست موتور پی",
+    "Run a real task with the default provider in a sandbox folder. Tool calls pass through the approval gateway." to "اجرای یک تسک واقعی با ارائه‌دهنده‌ی پیش‌فرض در پوشه‌ای آزمایشی؛ فراخوانی‌های ابزار از دروازه‌ی تأیید عبور می‌کنند.",
+    "Task prompt" to "پرامپت تسک",
+    "Run test" to "اجرای تست",
+    "Running…" to "در حال اجرا…",
+    "Approval required" to "تأیید لازم است",
+    "Allow" to "اجازه بده",
+    "Deny" to "رد کن",
+    "No default provider is configured." to "ارائه‌دهنده‌ی پیش‌فرضی تنظیم نشده است.",
+    "This provider is not supported by the Pi engine yet." to "این ارائه‌دهنده هنوز توسط موتور پی پشتیبانی نمی‌شود.",
     "New versions are published on GitHub Releases" to "نسخه‌های جدید در ریلیزهای گیت‌هاب منتشر می‌شوند",
     "Check for update" to "بررسی به‌روزرسانی",
     "Checking for updates…" to "در حال بررسی به‌روزرسانی…",

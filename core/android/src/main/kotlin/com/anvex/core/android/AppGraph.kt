@@ -119,6 +119,13 @@ class AppGraph private constructor(private val app: Application) {
             artifactManager = artifactManager,
         )
 
+    /** v4.9: Pi coding agent as experimental Engine #2 (see runtime/pi). */
+    val piEngine: com.anvex.core.android.runtime.pi.PiEngine =
+        com.anvex.core.android.runtime.pi.PiEngine(app, commandApproval)
+    /** v4.9: durable `pi-agent` task type (checkpoints carry the Pi session file). */
+    val piTaskBridge: com.anvex.core.android.runtime.pi.PiTaskBridge =
+        com.anvex.core.android.runtime.pi.PiTaskBridge(taskEngine, piEngine, providers, projects)
+
     private val reliabilityScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
