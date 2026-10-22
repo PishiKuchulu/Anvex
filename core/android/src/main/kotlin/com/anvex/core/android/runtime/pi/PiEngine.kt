@@ -85,9 +85,12 @@ class PiEngine(
             return@coroutineScope RunResult(false, error = "Bundled Node.js runtime is not available on this device.")
         }
 
-        val portDeferred = CompletableDeferred<Int>()
         val fatalDeferred = CompletableDeferred<String>()
         val counts = ConcurrentHashMap<String, Int>()
+        // The control socket is owned by THIS side (Kotlin listen, driver
+        // connects out) — the direction this stack already proves with
+        // NodeMobileRuntime's own manager socket and preload.js.
+        val controlServer = java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
         val runJob = async(Dispatchers.IO) {
             nodeRuntime.runCommand(
                 tool = "node",
@@ -95,35 +98,32 @@ class PiEngine(
                     PiRuntime.driverFile(context).absolutePath,
                     projectRoot.absolutePath,
                     runtimeDir.absolutePath,
+                    controlServer.localPort.toString(),
                 ),
                 timeoutMs = config.settleTimeoutMs + 120_000L,
             ) { line ->
                 val text = line.text
-                when {
-                    text.startsWith("ANVEX_PI_PORT ") ->
-                        text.removePrefix("ANVEX_PI_PORT ").trim().toIntOrNull()
-                            ?.let { if (!portDeferred.isCompleted) portDeferred.complete(it) }
-                    text.startsWith("ANVEX_PI_FATAL ") ->
-                        if (!fatalDeferred.isCompleted) fatalDeferred.complete(text.removePrefix("ANVEX_PI_FATAL "))
+                if (text.startsWith("ANVEX_PI_FATAL ")) {
+                    if (!fatalDeferred.isCompleted) fatalDeferred.complete(text.removePrefix("ANVEX_PI_FATAL "))
                 }
             }
         }
 
         var socket: Socket? = null
         try {
-            val port = withTimeoutOrNull(BOOT_TIMEOUT_MS) {
-                kotlinx.coroutines.selects.select<Int?> {
-                    portDeferred.onAwait { it }
+            val accepted = async(Dispatchers.IO) { runCatching { controlServer.accept() }.getOrNull() }
+            val connected = withTimeoutOrNull(BOOT_TIMEOUT_MS) {
+                kotlinx.coroutines.selects.select<Socket?> {
+                    accepted.onAwait { it }
                     fatalDeferred.onAwait { null }
-                    // If the :node run ends before announcing a port, the
-                    // driver died during boot — fail fast with its result
-                    // instead of waiting out the boot timeout.
+                    // If the :node run ends before the driver connects,
+                    // it died during boot — fail fast instead of waiting
+                    // out the boot timeout.
                     runJob.onAwait { null }
                 }
-            } ?: return@coroutineScope fail(runJob, "Pi driver did not announce its control port.")
+            } ?: return@coroutineScope fail(runJob, "Pi driver did not connect to the control socket.")
 
-            socket = connectWithRetry(port)
-                ?: return@coroutineScope fail(runJob, "Could not connect to the Pi control socket.")
+            socket = connected
             val activeSocket = socket
             val writer = OutputStreamWriter(activeSocket.getOutputStream(), Charsets.UTF_8)
             val writeMutex = Mutex()
@@ -207,6 +207,7 @@ class PiEngine(
             )
         } finally {
             runCatching { socket?.close() }
+            runCatching { controlServer.close() }
             nodeRuntime.stopCurrent()
             runJob.cancel()
         }
@@ -215,19 +216,6 @@ class PiEngine(
     private suspend fun fail(runJob: kotlinx.coroutines.Deferred<*>, message: String): RunResult {
         runJob.cancel()
         return RunResult(false, error = message)
-    }
-
-    private suspend fun connectWithRetry(port: Int): Socket? {
-        repeat(50) {
-            val candidate = Socket()
-            val ok = runCatching {
-                candidate.connect(InetSocketAddress("127.0.0.1", port), 1_000)
-                candidate
-            }.getOrNull()
-            if (ok != null) return ok
-            delay(100)
-        }
-        return null
     }
 
     /**
