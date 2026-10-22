@@ -125,11 +125,29 @@ jobs:
           PYEOF
           ls -la "stage/${{ matrix.android_abi }}"
 
+      - name: Stage generated headers (arch-independent, from the same build)
+        run: |
+          set -euo pipefail
+          hdr=$(find extract -type d -path "*usr/include/node" | head -1)
+          echo "headers dir: $hdr"
+          test -f "$hdr/node.h" && test -f "$hdr/v8.h"
+          mkdir -p stage-headers && cp -r "$hdr" stage-headers/node
+          find stage-headers -type f | wc -l
+
       - name: Upload per-ABI libraries
         uses: actions/upload-artifact@v4
         with:
           name: libnode-libs-${{ matrix.android_abi }}
           path: stage/${{ matrix.android_abi }}/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload generated headers
+        if: matrix.android_abi == 'x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: libnode-headers
+          path: stage-headers/node/
           if-no-files-found: error
           retention-days: 30
 
@@ -139,20 +157,26 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Download per-ABI libraries
+      - name: Download per-ABI libraries and headers
         uses: actions/download-artifact@v4
         with:
           pattern: libnode-libs-*
           path: libs
 
-      - name: Fetch official Node.js source tarball (headers + npm version)
+      - name: Download generated headers
+        uses: actions/download-artifact@v4
+        with:
+          name: libnode-headers
+          path: headers
+
+      - name: Fetch official Node.js source tarball (npm version only)
         run: |
           set -euo pipefail
           base="https://nodejs.org/dist/v${NODE_VERSION}"
           curl -fsSLO "$base/node-v${NODE_VERSION}.tar.gz"
           curl -fsSLO "$base/SHASUMS256.txt"
           grep " node-v${NODE_VERSION}.tar.gz\$" SHASUMS256.txt | sha256sum -c -
-          tar -xzf "node-v${NODE_VERSION}.tar.gz" "node-v${NODE_VERSION}/include" "node-v${NODE_VERSION}/deps/npm/package.json"
+          tar -xzf "node-v${NODE_VERSION}.tar.gz" "node-v${NODE_VERSION}/deps/npm/package.json"
           NPM_VERSION=$(python3 -c "import json; print(json.load(open('node-v${NODE_VERSION}/deps/npm/package.json'))['version'])")
           echo "NPM_VERSION=$NPM_VERSION" >> "$GITHUB_ENV"
           echo "npm bundled with Node ${NODE_VERSION}: $NPM_VERSION"
@@ -167,12 +191,12 @@ jobs:
               cp -a libs/libnode-libs-$abi/. "pkg/bin/$abi/"
             fi
           done
-          cp -r "node-v${NODE_VERSION}/include/node" pkg/include/node
+          cp -r headers pkg/include/node
           {
             echo "anvex-libnode ${NODE_VERSION}"
             echo "node: ${NODE_VERSION} (LTS), built via Termux nodejs-lts for bionic with --shared"
             echo "npm: ${NPM_VERSION} (version shipped in the official source tarball)"
-            echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure; symlinks preserved), include/node/"
+            echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure; symlinks preserved), include/node/ (generated headers from the same Termux build — guaranteed API match)"
             echo
             find pkg -type f -printf "%s\t%p\n" | sort -k2
             find pkg -type l -printf "link\t%p -> %l\n" | sort -k2
@@ -187,7 +211,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="libnode-v${NODE_VERSION}"
-          notes="Anvex libnode ${NODE_VERSION} package. SHA-256: $(cut -d' ' -f1 "anvex-libnode-${NODE_VERSION}.zip.sha256"). See manifest.txt inside the zip for the per-ABI file list. Built by libnode-release.yml from Termux nodejs-lts (+--shared) with official Node.js source headers."
+          notes="Anvex libnode ${NODE_VERSION} package. SHA-256: $(cut -d' ' -f1 "anvex-libnode-${NODE_VERSION}.zip.sha256"). See manifest.txt inside the zip for the per-ABI file list. Built by libnode-release.yml from Termux nodejs-lts (+--shared); headers are the generated ones from the same build (API-guaranteed match)."
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" "anvex-libnode-${NODE_VERSION}.zip" --repo "$GITHUB_REPOSITORY" --clobber
           else
