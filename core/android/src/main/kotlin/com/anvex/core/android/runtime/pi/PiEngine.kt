@@ -112,6 +112,7 @@ class PiEngine(
         var socket: Socket? = null
         try {
             val accepted = async(Dispatchers.IO) { runCatching { controlServer.accept() }.getOrNull() }
+            var bootRaceLostToRunEnd = false
             val connected = withTimeoutOrNull(BOOT_TIMEOUT_MS) {
                 kotlinx.coroutines.selects.select<Socket?> {
                     accepted.onAwait { it }
@@ -119,9 +120,22 @@ class PiEngine(
                     // If the :node run ends before the driver connects,
                     // it died during boot — fail fast instead of waiting
                     // out the boot timeout.
-                    runJob.onAwait { null }
+                    runJob.onAwait { bootRaceLostToRunEnd = true; null }
                 }
-            } ?: return@coroutineScope fail(runJob, "Pi driver did not connect to the control socket.")
+            } ?: run {
+                // Boot failed: say WHY from the evidence at hand (the
+                // finished node run's result, or the driver's fatal line).
+                val detail = when {
+                    bootRaceLostToRunEnd -> {
+                        val res = runCatching { runJob.await() }.getOrNull()
+                        " node run ended early: error=${res?.error} exit=${res?.exitCode} " +
+                            "lines=${res?.lines?.take(5)?.map { it.text }}"
+                    }
+                    fatalDeferred.isCompleted -> " fatal=" + runCatching { fatalDeferred.await() }.getOrNull()
+                    else -> ""
+                }
+                return@coroutineScope fail(runJob, "Pi driver did not connect to the control socket.$detail")
+            }
 
             socket = connected
             val activeSocket = socket
