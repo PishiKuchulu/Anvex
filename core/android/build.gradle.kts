@@ -90,6 +90,13 @@ android {
             jniLibs.srcDirs("libnode/bin")
         }
     }
+    packaging {
+        resources {
+            // androidx.test runner/ext jars carry identical multi-release
+            // OSGi manifests; the androidTest merge rejects the duplicate.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
