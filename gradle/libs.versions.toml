@@ -16,6 +16,7 @@ junit = "4.13.2"
 androidxTestRunner = "1.6.2"
 androidxTestExtJunit = "1.2.1"
 sqliteJdbc = "3.46.1.3"
+orgJson = "20240303"
 materialComponents = "1.12.0"
 bouncyCastle = "1.78.1"
 
@@ -50,6 +51,7 @@ androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version
 material-components = { group = "com.google.android.material", name = "material", version.ref = "materialComponents" }
 bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncyCastle" }
 sqlite-jdbc = { group = "org.xerial", name = "sqlite-jdbc", version.ref = "sqliteJdbc" }
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -51,6 +51,17 @@ class ProjectRepository(
             ?: RealProjectFileSystem(File(projectsRoot, projectId))
     }
 
+    /**
+     * The real on-disk root for local projects; null for SAF-backed
+     * workspaces, which have no plain File root (callers that need one —
+     * e.g. the Pi engine's Node process cwd — must fail closed there).
+     */
+    suspend fun localRootOrNull(projectId: String): File? {
+        val entity = dao.get(projectId) ?: return null
+        if (entity.workspaceUri != null) return null
+        return File(projectsRoot, projectId).apply { mkdirs() }
+    }
+
     suspend fun fileSystemForAsync(projectId: String): ProjectFileSystem {
         val entity = dao.get(projectId) ?: throw IllegalArgumentException("Project not found: $projectId")
         workspaceUris[projectId] = entity.workspaceUri
