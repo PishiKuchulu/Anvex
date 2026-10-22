@@ -115,6 +115,10 @@ class PiEngine(
                 kotlinx.coroutines.selects.select<Int?> {
                     portDeferred.onAwait { it }
                     fatalDeferred.onAwait { null }
+                    // If the :node run ends before announcing a port, the
+                    // driver died during boot — fail fast with its result
+                    // instead of waiting out the boot timeout.
+                    runJob.onAwait { null }
                 }
             } ?: return@coroutineScope fail(runJob, "Pi driver did not announce its control port.")
 
