@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
 
 /**
- * Real Node.js 18 on-device (nodejs-mobile), the in-app backend behind
+ * Real Node.js 24 on-device (Anvex libnode package, Termux-built), the in-app backend behind
  * Settings' NodeBackend.IN_APP.
  *
  * Model: one command at a time. Each command runs in the sacrificial ":node"
@@ -259,7 +259,7 @@ class NodeMobileRuntime(
         private val SHARED_BUSY = AtomicBoolean(false)
         private val SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
         private const val MAX_LINES = 5_000
-        private const val RUNTIME_VERSION = "18.20.4-npm10.8.2"
+        private const val RUNTIME_VERSION = "24.18.0-npm11.16.0"
 
         /**
          * v4.6.1: device-level availability of the bundled runtime — the one

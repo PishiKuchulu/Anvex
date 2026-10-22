@@ -291,9 +291,10 @@ class RuntimeCapabilityTest {
     fun `capability report tells the model the truth`() {
         val report = RuntimeCapabilityReport.describe()
         // v4.6.1: the report now tells the two-tier truth — no Node inside
-        // Preview, but the bundled Node.js 18 runtime exists for Terminal/Agent.
+        // Preview, but the bundled Node.js runtime exists for Terminal/Agent.
+        // v4.8.0: the bundled runtime is Node.js 24 (was 18).
         assertTrue(report.contains("Node.js:           NOT AVAILABLE in the Preview"))
-        assertTrue(report.contains("bundled Node.js 18 runtime IS available"))
+        assertTrue(report.contains("bundled Node.js 24 runtime IS available"))
         assertTrue(report.contains("Vite:              NOT AVAILABLE"))
         assertTrue(report.contains("Filesystem:        SUPPORTED"))
         // The matrix must be embedded in the actual system prompt.

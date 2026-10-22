@@ -1,5 +1,5 @@
-# Anvex Node.js bridge (nodejs-mobile). Mirrors the official nodejs-mobile
-# native-gradle sample: build our small JNI library, import the prebuilt
+# Anvex Node.js bridge. Mirrors the official nodejs-mobile
+# native-gradle sample pattern: build our small JNI library, import the prebuilt
 # libnode.so for the target ABI, link them.
 #
 # The libnode/ tree (bin/<abi>/libnode.so + include/node/) is NOT in git; the

@@ -10,19 +10,23 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------
-// nodejs-mobile runtime (real Node.js 18 on-device). The 57 MB release zip is
-// NOT committed to git; this task downloads it once, verifies its SHA-256,
-// and extracts bin/ + include/ into libnode/ (gitignored). preBuild depends
-// on it, so local and CI builds both fetch it deterministically.
+// Bundled Node.js 24 runtime (real Node.js on-device). Since 4.8.0 the
+// libnode package is Anvex's own: Node 24.18.0 (LTS) built for bionic via
+// Termux nodejs-lts with --shared, plus its DT_NEEDED dependency closure,
+// published as the repo release "libnode-v24.18.0" by the libnode-release /
+// libnode-reassemble workflows. The ~105 MB zip is NOT committed to git;
+// this task downloads it once, verifies its SHA-256, and extracts bin/ +
+// include/ into libnode/ (gitignored). preBuild depends on it, so local
+// and CI builds both fetch it deterministically.
 val nodeLibsDir = layout.projectDirectory.dir("libnode").asFile
-val nodeLibsMarker = File(nodeLibsDir, ".anvex-node-18.20.4.ok")
+val nodeLibsMarker = File(nodeLibsDir, ".anvex-node-24.18.0.ok")
 val downloadNodeLibs = tasks.register("downloadNodeLibs") {
-    description = "Downloads and hash-verifies the nodejs-mobile runtime."
+    description = "Downloads and hash-verifies the bundled libnode 24 runtime."
     outputs.file(nodeLibsMarker)
     onlyIf { !nodeLibsMarker.isFile }
     doLast {
-        val url = "https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip"
-        val expectedSha256 = "bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af"
+        val url = "https://github.com/PishiKuchulu/Anvex/releases/download/libnode-v24.18.0/anvex-libnode-24.18.0.zip"
+        val expectedSha256 = "b4bdb7cae617cfd67b42567599e4cee046b2d086470b7c064f6dd20d6961fbd5"
         val zipFile = File(layout.buildDirectory.get().asFile, "nodejs-mobile.zip")
         zipFile.parentFile.mkdirs()
         URL(url).openStream().use { input -> zipFile.outputStream().use { input.copyTo(it) } }
@@ -36,7 +40,7 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
             }
         }
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
-        check(actual == expectedSha256) { "nodejs-mobile zip SHA-256 mismatch: $actual" }
+        check(actual == expectedSha256) { "libnode zip SHA-256 mismatch: $actual" }
         ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
@@ -48,7 +52,7 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
                 zip.closeEntry()
             }
         }
-        nodeLibsMarker.writeText("nodejs-mobile v18.20.4 sha256=$expectedSha256\n")
+        nodeLibsMarker.writeText("anvex-libnode v24.18.0 sha256=$expectedSha256\n")
     }
 }
 tasks.named("preBuild") { dependsOn(downloadNodeLibs) }
@@ -60,7 +64,7 @@ android {
 
     defaultConfig {
         minSdk = 26
-        // nodejs-mobile ships arm64-v8a, armeabi-v7a and x86_64 only.
+        // The bundled libnode package ships arm64-v8a, armeabi-v7a and x86_64 only.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
