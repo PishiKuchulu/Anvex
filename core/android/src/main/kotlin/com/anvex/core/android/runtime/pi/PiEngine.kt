@@ -166,7 +166,10 @@ class PiEngine(
             val readerJob = launch(Dispatchers.IO) {
                 val reader = BufferedReader(InputStreamReader(activeSocket.getInputStream(), Charsets.UTF_8))
                 while (true) {
-                    val line = reader.readLine() ?: break
+                    // Blocking socket read: teardown closes the socket
+                    // under us, which surfaces as SocketException — that
+                    // is normal termination, not a run failure.
+                    val line = runCatching { reader.readLine() }.getOrNull() ?: break
                     if (line.isBlank()) continue
                     val record = runCatching { JSONObject(line) }.getOrNull() ?: continue
                     when (record.optString("type")) {
@@ -179,7 +182,9 @@ class PiEngine(
                             }
                         }
                         "extension_ui_request" -> launch {
-                            handleUiRequest(record, config, approvalPrompt) { response -> send(response) }
+                            // A response racing teardown may hit a closed
+                            // socket; the run is already ending either way.
+                            runCatching { handleUiRequest(record, config, approvalPrompt) { response -> send(response) } }
                         }
                         else -> {
                             val type = record.optString("type")
