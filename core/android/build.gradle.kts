@@ -64,13 +64,16 @@ android {
 
     defaultConfig {
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The bundled libnode package ships arm64-v8a, armeabi-v7a and x86_64 only.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
         externalNativeBuild {
             cmake {
-                cppFlags += "-std=c++17"
+                // Node 24's bundled V8 headers require C++20 (v8config.h
+                // hard-errors below it); Node 18 accepted C++17.
+                cppFlags += "-std=c++20"
             }
         }
     }
@@ -122,6 +125,9 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
     // Real-SQLite JVM migration tests (P0-3): xerial sqlite-jdbc, Apache-2.0,
     // test-only (never packaged into the APK).
     testImplementation(libs.sqlite.jdbc)
