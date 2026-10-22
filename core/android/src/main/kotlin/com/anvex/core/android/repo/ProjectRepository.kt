@@ -62,6 +62,20 @@ class ProjectRepository(
         return File(projectsRoot, projectId).apply { mkdirs() }
     }
 
+    /**
+     * Chat workspace root for the Pi engine: local projects resolve via
+     * [localRootOrNull]; direct chats (`direct/<uuid>`) live in the
+     * app-private direct-chat area (same root DirectChat uses).
+     */
+    suspend fun chatRootOrNull(projectId: String): File? {
+        if (projectId.startsWith("direct/")) {
+            val name = projectId.removePrefix("direct/")
+            if (name.isBlank() || name.contains('/') || name.contains("..")) return null
+            return File(context.filesDir, "direct-chat/$name").apply { mkdirs() }
+        }
+        return localRootOrNull(projectId)
+    }
+
     suspend fun fileSystemForAsync(projectId: String): ProjectFileSystem {
         val entity = dao.get(projectId) ?: throw IllegalArgumentException("Project not found: $projectId")
         workspaceUris[projectId] = entity.workspaceUri
