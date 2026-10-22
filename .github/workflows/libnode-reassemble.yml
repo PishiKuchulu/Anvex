@@ -176,17 +176,19 @@ jobs:
           cp -r artifacts/libnode-headers pkg/include/node
           ls -la pkg/bin/*/ | head -50
 
-      - name: Normalize library names for Android packaging (patchelf)
+      - name: Normalize library names for Android packaging (string surgery)
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq patchelf > /dev/null
           python3 - <<'PYEOF'
           import os, re, subprocess
+          # patchelf --replace-needed was tried first and REJECTED: it moves
+          # .dynsym/.dynstr into an appended LOAD segment (+10 MB) and the
+          # result failed bionic symbol resolution on the emulator smoke
+          # ("cannot locate symbol node::Start") despite readelf looking
+          # fine. In-place string surgery moves NOTHING: versioned names in
+          # .dynstr (DT_NEEDED + SONAME slots) are shortened and NUL-padded
+          # to the same byte length; files are renamed to match.
           SYSTEM = {"libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so"}
-          def soname(p):
-              out = subprocess.run(['readelf', '-d', p], capture_output=True, text=True).stdout
-              m = re.search(r'SONAME.*\[(.+?)\]', out)
-              return m.group(1) if m else None
           def needed(p):
               out = subprocess.run(['readelf', '-d', p], capture_output=True, text=True).stdout
               return re.findall(r'NEEDED.*\[(.+?)\]', out)
@@ -194,27 +196,34 @@ jobs:
               d = f"pkg/bin/{abi}"
               renames = {}
               for f in sorted(os.listdir(d)):
-                  new = re.sub(r"\.so\..*$", ".so", f)
-                  if new != f:
-                      renames[f] = new
-              for old, new in renames.items():
-                  src = os.path.join(d, old)
-                  if soname(src):
-                      subprocess.run(['patchelf', '--set-soname', new, src], check=True)
-                  os.rename(src, os.path.join(d, new))
-                  print(f"{abi}: {old} -> {new}")
+                  m = re.match(r"^(.+\.so)\..+$", f)
+                  if m:
+                      renames[f] = m.group(1)
               for f in sorted(os.listdir(d)):
                   p = os.path.join(d, f)
-                  for n in needed(p):
-                      if n in renames:
-                          subprocess.run(['patchelf', '--replace-needed', n, renames[n], p], check=True)
+                  data = open(p, 'rb').read()
+                  total = 0
+                  for old, new in renames.items():
+                      old_b, new_b = old.encode(), new.encode()
+                      pat = old_b + b"\x00"
+                      rep = new_b + b"\x00" * (len(old_b) - len(new_b) + 1)
+                      cnt = data.count(pat)
+                      if cnt:
+                          data = data.replace(pat, rep)
+                          total += cnt
+                  if total:
+                      open(p, 'wb').write(data)
+                      print(f"{abi}/{f}: {total} string replacements")
+              for old, new in renames.items():
+                  os.rename(os.path.join(d, old), os.path.join(d, new))
+                  print(f"{abi}: {old} -> {new}")
               names = set(os.listdir(d))
               bad = set()
               for f in names:
                   for n in needed(os.path.join(d, f)):
                       if n not in names and n not in SYSTEM:
                           bad.add(n)
-              assert not bad, f"{abi}: still unresolved after rename: {bad}"
+              assert not bad, f"{abi}: still unresolved after surgery: {bad}"
               print(f"{abi}: names normalized, closure self-contained ({len(names)} libs)")
           PYEOF
 
@@ -239,7 +248,7 @@ jobs:
             echo "anvex-libnode ${NODE_VERSION}"
             echo "node: ${NODE_VERSION} (LTS), built via Termux nodejs-lts for bionic with --shared"
             echo "npm: ${NPM_VERSION} (version shipped in the official source tarball)"
-            echo "deps: DT_NEEDED closure from Termux apt packages (zlib, c-ares, openssl, libicu, libsqlite, libc++), index SHA-256 verified; all libs renamed to *.so with patchelf (Android packaging drops versioned names)"
+            echo "deps: DT_NEEDED closure from Termux apt packages (zlib, c-ares, openssl, libicu, libsqlite, libc++), index SHA-256 verified; all libs renamed to *.so via in-place .dynstr surgery (Android packaging drops versioned names; patchelf output failed bionic symbol resolution)"
             echo "layout: bin/<android-abi>/*.so (libnode.so + DT_NEEDED closure, one regular file per SONAME), include/node/ (generated headers from the same build)"
             echo
             find pkg -type f -printf "%s\t%p\n" | sort -k2
