@@ -9,6 +9,12 @@ package com.anvex.core.android.runtime.node
  */
 object NodeBridge {
 
+    /** libnode.so's bundled DT_NEEDED closure, leaves first. */
+    private val CLOSURE = listOf(
+        "z", "cares", "sqlite3", "crypto", "ssl",
+        "icudata", "icuuc", "icui18n", "node",
+    )
+
     /** The link error when [loaded] is false (diagnostics; null on success). */
     val loadError: String?
 
