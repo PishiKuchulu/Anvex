@@ -9,14 +9,24 @@ package com.anvex.core.android.runtime.node
  */
 object NodeBridge {
 
+    /** The link error when [loaded] is false (diagnostics; null on success). */
+    val loadError: String?
+
     /** True when libnode.so exists for this device's ABI and both libraries loaded. */
-    val loaded: Boolean = try {
-        System.loadLibrary("anvex-node")
-        System.loadLibrary("node")
-        true
-    } catch (t: Throwable) {
-        // UnsatisfiedLinkError is an Error, not an Exception — catch Throwable.
-        false
+    val loaded: Boolean
+
+    init {
+        var err: String? = null
+        loaded = try {
+            System.loadLibrary("anvex-node")
+            System.loadLibrary("node")
+            true
+        } catch (t: Throwable) {
+            // UnsatisfiedLinkError is an Error, not an Exception — catch Throwable.
+            err = t.toString()
+            false
+        }
+        loadError = err
     }
 
     /**

@@ -21,7 +21,7 @@ class NodeRuntimeSmokeTest {
     @Test
     fun bundledLibnodeLoadsWithFullClosure() {
         assertTrue(
-            "libnode.so or one of its DT_NEEDED dependencies failed to load",
+            "libnode.so or one of its DT_NEEDED dependencies failed to load: ${NodeBridge.loadError}",
             NodeBridge.loaded,
         )
         assertTrue(
