@@ -132,6 +132,7 @@ jobs:
               index.setdefault(soname(p), p)
               index.setdefault(os.path.basename(p), p)
           seen, queue = set(), []
+          name_for_real = {}
           for p in libs:
               if os.path.basename(p).startswith('libnode.so'):
                   queue.append(os.path.basename(p))
@@ -141,20 +142,20 @@ jobs:
               if path is None or path in seen:
                   continue
               seen.add(path)
+              # Ship each lib under the exact DT_NEEDED name that requested
+              # it (SONAME-less libs, e.g. Termux libsqlite3, depend on
+              # this); no symlinks (Gradle zip extraction would turn a
+              # symlink entry into a text file).
+              name_for_real.setdefault(os.path.realpath(path), cur)
               queue.extend(needed(path))
-          # One regular file per real file, named by its SONAME (the exact
-          # name DT_NEEDED asks for); no symlinks (Gradle zip extraction
-          # would turn a symlink entry into a text file).
-          by_real, total = {}, 0
-          for path in sorted(seen):
-              by_real.setdefault(os.path.realpath(path), path)
-          for real in sorted(by_real):
-              dest = os.path.join(outdir, soname(real))
+          total = 0
+          for real, req_name in sorted(name_for_real.items(), key=lambda kv: kv[1]):
+              dest = os.path.join(outdir, req_name)
               with open(real, 'rb') as f, open(dest, 'wb') as g:
                   g.write(f.read())
               total += os.path.getsize(real)
-              print(f"{os.path.getsize(real):>12}  {soname(real)}")
-          print(f"closure: {len(by_real)} real files, {total} bytes")
+              print(f"{os.path.getsize(real):>12}  {req_name}")
+          print(f"closure: {len(name_for_real)} real files, {total} bytes")
           PYEOF
           ls -la "stage/${{ matrix.android_abi }}"
 
