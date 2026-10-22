@@ -26,7 +26,7 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
     onlyIf { !nodeLibsMarker.isFile }
     doLast {
         val url = "https://github.com/PishiKuchulu/Anvex/releases/download/libnode-v24.18.0/anvex-libnode-24.18.0.zip"
-        val expectedSha256 = "97da87fb3e67db748eff8d65a5da696cedec7d3327b3b01e9494e0ff23a8567d"
+        val expectedSha256 = "f4ddc0f428ca55b8e75c8f9349efa3ea6d66523e73e9d7c122e079599bc8115f"
         val zipFile = File(layout.buildDirectory.get().asFile, "nodejs-mobile.zip")
         zipFile.parentFile.mkdirs()
         URL(url).openStream().use { input -> zipFile.outputStream().use { input.copyTo(it) } }
