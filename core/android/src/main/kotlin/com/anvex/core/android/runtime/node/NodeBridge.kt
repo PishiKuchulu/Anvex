@@ -44,12 +44,6 @@ object NodeBridge {
         loadError = err
     }
 
-    /** libnode.so's bundled DT_NEEDED closure, leaves first. */
-    private val CLOSURE = listOf(
-        "z", "cares", "sqlite3", "crypto", "ssl",
-        "icudata", "icuuc", "icui18n", "node",
-    )
-
     /**
      * Starts Node with the given argv (argv[0] must be "node"). Blocks the
      * calling thread until Node exits; returns the Node exit code.
