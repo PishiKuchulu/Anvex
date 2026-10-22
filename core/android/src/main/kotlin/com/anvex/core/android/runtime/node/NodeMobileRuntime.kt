@@ -200,7 +200,11 @@ class NodeMobileRuntime(
                 when {
                     first.startsWith("-") -> base + args
                     else -> {
-                        val script = File(projectRoot, first)
+                        // Absolute script paths must be honored as-is:
+                        // File(parent, child) does not reliably discard
+                        // the parent for absolute children on Android.
+                        val asFile = File(first)
+                        val script = if (asFile.isAbsolute) asFile else File(projectRoot, first)
                         if (!script.isFile) return null
                         base + script.absolutePath + args.drop(1)
                     }
