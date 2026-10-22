@@ -33,7 +33,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PiPocTest {
 
-    @Test(timeout = 420_000)
+    @Test(timeout = 300_000)
     fun piEngineRunsFileTaskAndGatewayBlocksShell() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val root = File(context.filesDir, "pi-poc-test")
@@ -57,7 +57,7 @@ class PiPocTest {
                 work.absolutePath,
                 ext.absolutePath,
             ),
-            timeoutMs = 300_000,
+            timeoutMs = 180_000,
         ) { line -> lines += line.text }
 
         val resultsFile = File(work, "results-inproc.json")
@@ -67,6 +67,7 @@ class PiPocTest {
             resultsFile.isFile,
         )
         val r = JSONObject(resultsFile.readText())
+        android.util.Log.i("PI_POC", "PI-POC-RESULTS: $r")
         println("PI-POC-RESULTS: $r")
 
         assertTrue("pi RPC get_state failed: $r", r.getBoolean("stateOk"))
