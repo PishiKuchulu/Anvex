@@ -10,8 +10,13 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.anvex.core.ai.AiError
 import com.anvex.core.ai.ProviderClientFactory
 import com.anvex.core.android.AppGraph
+import com.anvex.core.android.repo.AgentEngine
+import com.anvex.core.android.runtime.pi.PiEngine
+import com.anvex.core.android.runtime.pi.PiProviderMapping
+import com.anvex.core.android.runtime.pi.PiToolMapping
 import com.anvex.core.android.session.ChatSession
 import com.anvex.core.engine.ArtifactRunner
 import com.anvex.core.model.ChatMessage
@@ -23,8 +28,11 @@ import com.anvex.core.model.MutationOp
 import com.anvex.core.model.Project
 import com.anvex.core.model.ProviderConfig
 import com.anvex.core.model.ThinkingLevel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -64,9 +72,40 @@ class ChatViewModel(
     private val _session = MutableStateFlow<ChatSession?>(null)
     val session: StateFlow<ChatSession?> = _session
 
-    val sessionState: StateFlow<ChatSession.UiState> = _session
+    private val nativeSessionState: StateFlow<ChatSession.UiState> = _session
         .flatMapLatest { s -> s?.state ?: flowOf(ChatSession.UiState()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatSession.UiState())
+
+    // v4.10: Pi engine chat path. When the Pi engine is selected, sends
+    // route to PiChatBridge and the streaming UI is driven by _piUi
+    // (same UiState shape, so the screen needs no engine awareness).
+    private val _piUi = MutableStateFlow(ChatSession.UiState())
+    val engineIsPi: StateFlow<Boolean> = graph.settings.settings
+        .map { it.agentEngine == AgentEngine.PI }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val sessionState: StateFlow<ChatSession.UiState> =
+        combine(nativeSessionState, _piUi, engineIsPi) { native, pi, isPi -> if (isPi) pi else native }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatSession.UiState())
+
+    @Volatile
+    private var piActive = false
+
+    init {
+        viewModelScope.launch { engineIsPi.collect { piActive = it } }
+    }
+
+    private var piJob: Job? = null
+    private var pendingPiDeferred: CompletableDeferred<Boolean>? = null
+    private val _pendingPiApproval = MutableStateFlow<PiToolMapping.ApprovalAsk?>(null)
+    /** A Pi tool call waiting for the user's decision (rendered by ChatScreen). */
+    val pendingPiApproval: StateFlow<PiToolMapping.ApprovalAsk?> = _pendingPiApproval.asStateFlow()
+
+    fun answerPiApproval(approved: Boolean) {
+        pendingPiDeferred?.complete(approved)
+        pendingPiDeferred = null
+        _pendingPiApproval.value = null
+    }
 
     /**
      * v4.4.4 (smoothness): lightweight stream snapshot for the chat list chrome.
@@ -198,6 +237,11 @@ class ChatViewModel(
         val command = text.trim()
         if (command == "/image" || command.startsWith("/image ")) {
             generateImage(command.removePrefix("/image").trim())
+            return
+        }
+        // v4.10: the Pi engine takes the turn when selected.
+        if (piActive) {
+            piSend(text, selected)
             return
         }
         val session = _session.value ?: return
@@ -494,11 +538,122 @@ class ChatViewModel(
     }
 
     fun cancel() {
+        if (piJob?.isActive == true) piJob?.cancel()
         _session.value?.cancel()
+    }
+
+    /**
+     * v4.10: one Pi chat turn. Persists the user message, streams Pi
+     * events into the shared UiState, routes gateway approvals to
+     * [pendingPiApproval], and persists the final assistant message —
+     * mirroring the native path's storage contract.
+     */
+    private fun piSend(text: String, selected: List<Uri>) {
+        piJob?.cancel()
+        piJob = viewModelScope.launch {
+            val prepared = prepareAttachments(selected)
+            if (prepared.error != null) {
+                _attachmentError.value = prepared.error
+                return@launch
+            }
+            val provider = graph.providers.getDefault()
+                ?: graph.providers.observeAll().first().firstOrNull()
+            if (provider == null) {
+                _piUi.value = ChatSession.UiState(error = AiError(AiError.Kind.UNKNOWN, "No provider configured."))
+                return@launch
+            }
+            val runtime = graph.providers.runtimeConfig(provider.id)
+            val mapped = runtime?.let { PiProviderMapping.forRuntime(it) }
+            if (runtime == null || mapped == null) {
+                _piUi.value = ChatSession.UiState(
+                    error = AiError(AiError.Kind.UNKNOWN, "This provider is not supported by the Pi engine yet."),
+                )
+                return@launch
+            }
+            val root = graph.projects.chatRootOrNull(projectId)
+            if (root == null) {
+                _piUi.value = ChatSession.UiState(
+                    error = AiError(AiError.Kind.UNKNOWN, "The Pi engine needs a local workspace (this project is in cloud storage)."),
+                )
+                return@launch
+            }
+            graph.chat.upsert(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    projectId = projectId,
+                    role = MessageRole.USER,
+                    content = text,
+                    attachments = prepared.metadata,
+                ),
+            )
+            val attachNote = if (prepared.metadata.isEmpty()) {
+                ""
+            } else {
+                "\n\n[Files attached to this message were saved in the workspace: " +
+                    prepared.metadata.joinToString(", ") { it.name } + "]"
+            }
+            _piUi.value = ChatSession.UiState(streaming = true, statusLine = "Pi is starting…")
+            try {
+                val outcome = graph.piChatBridge.runTurn(
+                    chatKey = projectId,
+                    projectRoot = root,
+                    prompt = text + attachNote,
+                    providerName = mapped.providerName,
+                    modelId = mapped.modelId,
+                    apiKey = runtime.apiKey,
+                    modelsJson = mapped.modelsJson,
+                    approvalPrompt = PiEngine.ApprovalPrompt { ask ->
+                        val deferred = CompletableDeferred<Boolean>()
+                        pendingPiDeferred = deferred
+                        _pendingPiApproval.value = ask
+                        deferred.await()
+                    },
+                    onSnapshot = { snap ->
+                        _piUi.value = ChatSession.UiState(
+                            streaming = true,
+                            streamText = snap.streamText,
+                            statusLine = snap.statusLine,
+                        )
+                    },
+                )
+                if (outcome.success) {
+                    if (outcome.finalText.isNotBlank()) {
+                        graph.chat.upsert(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                projectId = projectId,
+                                role = MessageRole.ASSISTANT,
+                                content = outcome.finalText,
+                                model = mapped.modelId,
+                                providerId = provider.id,
+                            ),
+                        )
+                    }
+                    _piUi.value = ChatSession.UiState()
+                } else {
+                    _piUi.value = ChatSession.UiState(
+                        error = AiError(AiError.Kind.UNKNOWN, outcome.error ?: "Pi run failed."),
+                        engineError = outcome.error,
+                    )
+                }
+            } finally {
+                pendingPiDeferred?.complete(false)
+                pendingPiDeferred = null
+                _pendingPiApproval.value = null
+                if (_piUi.value.streaming) {
+                    _piUi.value = _piUi.value.copy(streaming = false, streamText = "", statusLine = null)
+                }
+            }
+        }
     }
 
     fun retryLast() {
         val lastUser = messages.value.lastOrNull { it.role == MessageRole.USER } ?: return
+        if (piActive) {
+            val uris = lastUser.attachments.mapNotNull { runCatching { Uri.parse(it.uri) }.getOrNull() }
+            piSend(lastUser.content, uris)
+            return
+        }
         viewModelScope.launch {
             val uris = lastUser.attachments.mapNotNull { runCatching { Uri.parse(it.uri) }.getOrNull() }
             val prepared = prepareAttachments(uris)
@@ -519,7 +674,8 @@ class ChatViewModel(
      * stays at one user + one assistant turn instead of growing a duplicate.
      */
     fun regenerateLast() {
-        val session = _session.value ?: return
+        val session = _session.value
+        if (session == null && !piActive) return
         if (sessionState.value.streaming) return
         val all = messages.value
         val lastUserIdx = all.indexOfLast { it.role == MessageRole.USER }
@@ -534,6 +690,14 @@ class ChatViewModel(
                 return@launch
             }
             stale.forEach { graph.chat.delete(it.id) }
+            if (piActive) {
+                // Pi keeps its own transcript; drop the stored Pi session
+                // too so regenerate does not answer inside the old context.
+                graph.piChatBridge.forget(projectId)
+                piSend(lastUser.content, uris)
+                return@launch
+            }
+            session ?: return@launch
             session.openFilePath = graph.activeFile(projectId)
             session.send(lastUser.content, prepared.payloads, lastUser.attachments)
         }

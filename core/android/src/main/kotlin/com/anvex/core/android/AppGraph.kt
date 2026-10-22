@@ -125,6 +125,9 @@ class AppGraph private constructor(private val app: Application) {
     /** v4.9: durable `pi-agent` task type (checkpoints carry the Pi session file). */
     val piTaskBridge: com.anvex.core.android.runtime.pi.PiTaskBridge =
         com.anvex.core.android.runtime.pi.PiTaskBridge(taskEngine, piEngine, providers, projects)
+    /** v4.10: chat-surface Pi turns with per-chat session continuity. */
+    val piChatBridge: com.anvex.core.android.runtime.pi.PiChatBridge =
+        com.anvex.core.android.runtime.pi.PiChatBridge(app, piEngine)
 
     private val reliabilityScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

@@ -195,6 +195,22 @@ fun ChatScreen(nav: NavController, projectId: String) {
     LaunchedEffect(showKnowledge) { if (showKnowledge) vm.refreshKnowledge() }
     val webOn by vm.webSearchOn.collectAsState()
     val providerChoices by vm.providerChoices.collectAsState()
+    // v4.10: Pi gateway approvals surface here as a dialog (the engine is
+    // blocked on this decision; dismissing denies — fail-closed).
+    val pendingPiApproval by vm.pendingPiApproval.collectAsState()
+    pendingPiApproval?.let { ask ->
+        AlertDialog(
+            onDismissRequest = { vm.answerPiApproval(false) },
+            title = { Text(tr("Approval required")) },
+            text = { Text(ask.summary) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { vm.answerPiApproval(true) }) { Text(tr("Allow")) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { vm.answerPiApproval(false) }) { Text(tr("Deny")) }
+            },
+        )
+    }
 
     var input by remember { mutableStateOf(NewProjectHandoff.takePendingPrompt()) }
     val attachments = remember { mutableStateListOf<Uri>() }
