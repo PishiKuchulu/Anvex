@@ -1,5 +1,35 @@
 # Changelog
 
+## 4.9.0 — Pi agent engine (experimental Engine #2)
+
+### Added
+- **Pi coding agent as an optional second engine.** The Pi runtime
+  (pi-coding-agent 1.4.0, hash-verified npm tarball; self-contained
+  bundle + jiti loader, 2.7 MB asset) ships with the app and runs inside
+  the bundled Node 24 process. Pick the engine in Settings → Developer &
+  about → Agent engine; the native harness remains the default.
+- **Every Pi tool call passes through the Anvex approval gateway.**
+  Calls are mapped to native BoltActions and decided by
+  CommandApprovalService with the same ActionSafetyPolicy semantics
+  (safe actions and durable grants pass instantly; anything else asks
+  the user; unknown tools fail closed). Approvals granted to Pi are
+  recorded as durable scoped grants, shared with the native engine.
+- **Durable `pi-agent` tasks**: Pi runs can be enqueued on
+  DurableTaskEngine; checkpoints carry the Pi session file so an
+  interrupted run can resume. Provider API keys reach the engine
+  in-memory only (models.json references an env var; the key is never
+  written to disk). Supported provider families: OpenAI-compatible
+  (OpenAI, Custom, OpenRouter, DeepSeek, Mistral, Groq), Anthropic, and
+  Gemini.
+- **Pi engine test bench** in the same settings section: run a real
+  task with the default provider in a sandbox folder and watch events
+  stream in; approval requests appear as dialogs.
+
+### Fixed
+- NodeMobileRuntime now honors absolute script paths (File(parent,
+  absoluteChild) resolution is unreliable on Android, which silently
+  rejected scripts outside the project folder).
+
 ## 4.8.0 — Node.js 24 runtime (harness engine groundwork)
 
 ### Changed
