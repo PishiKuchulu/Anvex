@@ -46,3 +46,10 @@ jobs:
           arch: x86_64
           profile: pixel_6
           script: ./gradlew :core:android:connectedDebugAndroidTest --stacktrace
+
+      - name: Dump instrumented test reports (POC metrics)
+        if: always()
+        run: |
+          for f in core/android/build/outputs/androidTest-results/connected/debug/*.xml core/android/build/outputs/androidTest-results/connected/*.xml; do
+            [ -f "$f" ] && { echo "=== $f ==="; cat "$f"; }
+          done
