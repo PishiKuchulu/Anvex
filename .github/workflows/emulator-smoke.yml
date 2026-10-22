@@ -53,3 +53,4 @@ jobs:
           for f in core/android/build/outputs/androidTest-results/connected/debug/*.xml core/android/build/outputs/androidTest-results/connected/*.xml; do
             [ -f "$f" ] && { echo "=== $f ==="; cat "$f"; }
           done
+          grep -rh "PI-POC-RESULTS" core/android/build/outputs/androidTest-results/ 2>/dev/null | head -3 || true
