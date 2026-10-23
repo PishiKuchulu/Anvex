@@ -456,10 +456,10 @@ class MutationLog(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
                     fs.exists(target) && !fs.exists(m.path) -> fs.move(target, m.path)
                     // The renamed file is gone; only a text snapshot can be
                     // restored from the journal (binary snapshots are lossy).
-                    !fs.exists(target) && m.before != null -> {
-                        fs.writeFile(m.path, m.before)
+                    !fs.exists(target) && m.before != null -> m.before?.let {
+                        fs.writeFile(m.path, it)
                         true
-                    }
+                    } ?: false
                     else -> false
                 }
             }

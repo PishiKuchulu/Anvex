@@ -32,8 +32,8 @@ object SensitivePaths {
 
     /**
      * Secret files only (no directory rule). The harness download route
-     * uses this variant: downloading `.anvex/attachments/*` is its
-     * documented purpose, but `.env`, keys and `.git` stay refused.
+     * uses this variant: downloading files under `.anvex/attachments` is
+     * its documented purpose, but `.env`, keys and `.git` stay refused.
      */
     fun isSecretFile(path: String): Boolean {
         val normalized = path.replace('\\', '/').trim()
