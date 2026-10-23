@@ -119,66 +119,150 @@ class GitHubRepository(private val context: android.content.Context) {
      */
     fun savedToken(): String? = token().takeIf { it.isNotBlank() }
 
-    suspend fun push(fs: ProjectFileSystem, owner: String, repo: String, branch: String = "main", message: String = "Sync from Anvex"): Result<Int> = withContext(Dispatchers.IO) {
+    /** v4.10.1 (BUG-10): sync results report what was SKIPPED, not just what moved. */
+    data class SyncOutcome(val count: Int, val skipped: List<String> = emptyList())
+
+    /**
+     * v4.10.1 (SEC-14): a stored token that no longer decrypts (device key
+     * changed) must not masquerade as "no token" — callers fail with the
+     * real reason instead of the misleading "Add a GitHub token".
+     */
+    private fun authToken(): String {
+        val raw = prefs.getString(tokenKey, null)
+        val decrypted = token()
+        if (decrypted.isBlank() && !raw.isNullOrBlank()) {
+            error("The stored GitHub token could not be decrypted on this device. Re-enter your token in GitHub settings.")
+        }
+        return decrypted.ifBlank { error("Add a GitHub token before syncing.") }
+    }
+
+    suspend fun push(fs: ProjectFileSystem, owner: String, repo: String, branch: String = "main", message: String = "Sync from Anvex"): Result<SyncOutcome> = withContext(Dispatchers.IO) {
         runCatching {
             validateRepo(owner, repo, branch, message)
-            val auth = token().ifBlank { error("Add a GitHub token before syncing.") }
-            val files = fs.walk()
-                .filter { ArtifactHygienePolicy.include(it) }
-                .filter { !it.startsWith(".anvex/") }
-                .take(MAX_FILES + 1)
-            if (files.size > MAX_FILES) error("Project exceeds the GitHub sync file limit.")
-            var pushed = 0
-            for (path in files) {
-                val bytes = fs.readFileBytes(path) ?: continue
+            val auth = authToken()
+            val api = "https://api.github.com/repos/$owner/$repo"
+            val allLocal = fs.walk().filter { !it.startsWith(".anvex/") }
+            if (allLocal.size > MAX_FILES) error("Project exceeds the GitHub sync file limit.")
+            val included = allLocal.filter { ArtifactHygienePolicy.include(it) }
+            val skipped = allLocal.filter { !ArtifactHygienePolicy.include(it) }
+
+            // Content-scan everything BEFORE uploading anything (unchanged rule):
+            // a likely secret stops the whole sync, nothing is half-pushed.
+            val payloads = included.map { path ->
+                val bytes = fs.readFileBytes(path) ?: error("Could not read '$path'.")
                 require(bytes.size <= MAX_FILE_BYTES) { "File '$path' exceeds the GitHub sync limit." }
                 require(!ArtifactHygienePolicy.containsLikelySecret(path, bytes)) {
                     error("GitHub sync stopped: a likely secret was detected in $path. Remove the secret and retry.")
                 }
-                val url = contentsUrl(owner, repo, path)
-                // A brand-new file has no blob yet: GitHub answers 404, which must mean "create", not "fail".
-                val sha = existingSha(url, auth)
-                val body = JSONObject().put("message", message.take(200)).put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("branch", branch)
-                if (sha != null) body.put("sha", sha)
-                requestJson(url, auth, "PUT", body)
+                path to bytes
+            }
+
+            // v4.10.1 (BUG-10): Git Data API — blobs + ONE tree + ONE commit +
+            // one ref move, instead of a commit per file (2 requests each).
+            // A failure before the ref move leaves the branch untouched.
+            val refUrl = "$api/git/ref/heads/$branch"
+            val baseCommit = runCatching { requestJson(refUrl, auth, "GET").optJSONObject("object")?.optString("sha") }.getOrNull()?.takeIf { it.isNotBlank() }
+            val baseTreeSha = baseCommit?.let { requestJson("$api/git/commits/$it", auth, "GET").optJSONObject("tree")?.optString("sha") }
+            val baseEntries = if (baseTreeSha != null) {
+                val tree = requestJson("$api/git/trees/$baseTreeSha?recursive=1", auth, "GET")
+                require(!tree.optBoolean("truncated", false)) { "Remote tree is too large to sync safely." }
+                val arr = tree.optJSONArray("tree")
+                buildList {
+                    if (arr != null) for (i in 0 until arr.length()) {
+                        val e = arr.optJSONObject(i) ?: continue
+                        if (e.optString("type") == "blob") add(Triple(e.optString("path"), e.optString("mode").ifBlank { "100644" }, e.optString("sha")))
+                    }
+                }
+            } else emptyList()
+
+            val treeEntries = org.json.JSONArray()
+            var pushed = 0
+            for ((path, bytes) in payloads) {
+                val blob = requestJson(
+                    "$api/git/blobs", auth, "POST",
+                    JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"),
+                )
+                treeEntries.put(JSONObject().put("path", path).put("mode", "100644").put("type", "blob").put("sha", blob.optString("sha")))
                 pushed++
             }
-            pushed
+            // Carry over remote files the sync does not manage (excluded by the
+            // hygiene policy): they are never deleted by a push. Managed files
+            // missing locally ARE dropped from the tree — deletions propagate.
+            val localPaths = allLocal.toSet()
+            for ((path, mode, sha) in baseEntries) {
+                if (path in localPaths) continue // included above, or excluded locally (kept below via the same branch)
+                if (ArtifactHygienePolicy.include(path)) continue // managed but deleted locally
+                treeEntries.put(JSONObject().put("path", path).put("mode", mode).put("type", "blob").put("sha", sha))
+            }
+            // Excluded local files that also exist remotely stay untouched.
+            for ((path, mode, sha) in baseEntries) {
+                if (path in skipped && path !in included) {
+                    treeEntries.put(JSONObject().put("path", path).put("mode", mode).put("type", "blob").put("sha", sha))
+                }
+            }
+
+            val treeBody = JSONObject().put("tree", treeEntries)
+            if (baseTreeSha != null) treeBody.put("base_tree", baseTreeSha)
+            val newTree = requestJson("$api/git/trees", auth, "POST", treeBody).optString("sha")
+            val commitBody = JSONObject().put("message", message.take(200)).put("tree", newTree)
+            if (baseCommit != null) commitBody.put("parents", org.json.JSONArray().put(baseCommit))
+            val newCommit = requestJson("$api/git/commits", auth, "POST", commitBody).optString("sha")
+            if (baseCommit != null) {
+                requestJson("$api/git/refs/heads/$branch", auth, "PATCH", JSONObject().put("sha", newCommit).put("force", false))
+            } else {
+                requestJson("$api/git/refs", auth, "POST", JSONObject().put("ref", "refs/heads/$branch").put("sha", newCommit))
+            }
+            SyncOutcome(pushed, skipped)
         }
     }
 
     /** Pulls a repository tree into the selected workspace with strict path/size limits. */
-    suspend fun pull(fs: ProjectFileSystem, owner: String, repo: String, branch: String = "main"): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun pull(fs: ProjectFileSystem, owner: String, repo: String, branch: String = "main"): Result<SyncOutcome> = withContext(Dispatchers.IO) {
         runCatching {
             validateRepo(owner, repo, branch, "pull")
-            val auth = token().ifBlank { error("Add a GitHub token before syncing.") }
+            val auth = authToken()
             val root = "https://api.github.com/repos/$owner/$repo/git/trees/${java.net.URLEncoder.encode(branch, Charsets.UTF_8.name())}?recursive=1"
             val tree = requestJson(root, auth, "GET")
             require(!tree.optBoolean("truncated", false)) { "GitHub tree is too large; refusing partial pull." }
             val items = tree.optJSONArray("tree") ?: JSONArray()
             require(items.length() <= MAX_FILES) { "Repository exceeds the file limit." }
-            var written = 0
+
+            // v4.10.1 (BUG-10): phase 1 validates EVERY path before a single
+            // byte is written — the old loop discovered an excluded path
+            // mid-pull and aborted with earlier files already overwritten.
+            data class Pending(val path: String, val blobUrl: String)
+            val pending = ArrayList<Pending>()
+            val skipped = ArrayList<String>()
             for (i in 0 until items.length()) {
                 val item = items.optJSONObject(i) ?: continue
                 if (item.optString("type") != "blob") continue
                 val path = PathSanitizer.sanitizeOrNull(item.optString("path")) ?: error("Unsafe repository path rejected.")
                 val size = item.optLong("size", 0L)
                 require(size in 0..MAX_FILE_BYTES) { "Remote file '$path' exceeds the sync limit." }
+                if (!ArtifactHygienePolicy.include(path) || path.startsWith(".anvex/")) {
+                    skipped += path
+                    continue
+                }
                 val blobUrl = item.optString("url")
                 require(blobUrl.startsWith("https://api.github.com/repos/")) { "Unexpected GitHub blob URL." }
-                val blob = requestJson(blobUrl, auth, "GET")
+                pending += Pending(path, blobUrl)
+            }
+            // Phase 2: download + write.
+            var written = 0
+            for (entry in pending) {
+                val blob = requestJson(entry.blobUrl, auth, "GET")
                 val content = blob.optString("content").replace("\n", "")
                 val bytes = Base64.decode(content, Base64.DEFAULT)
-                require(bytes.size <= MAX_FILE_BYTES) { "Remote file '$path' exceeds the sync limit." }
-                require(ArtifactHygienePolicy.include(path) && !path.startsWith(".anvex/")) { "Remote path '$path' is excluded from workspace sync for security." }
-                require(!ArtifactHygienePolicy.containsLikelySecret(path, bytes)) {
-                    error("GitHub pull stopped: a likely secret was detected in $path.")
+                require(bytes.size <= MAX_FILE_BYTES) { "Remote file '${entry.path}' exceeds the sync limit." }
+                if (ArtifactHygienePolicy.containsLikelySecret(entry.path, bytes)) {
+                    skipped += entry.path
+                    continue
                 }
-                PathSanitizer.parent(path)?.let { if (it.isNotBlank()) fs.mkdirs(it) }
-                fs.writeFileBytes(path, bytes)
+                PathSanitizer.parent(entry.path)?.let { if (it.isNotBlank()) fs.mkdirs(it) }
+                fs.writeFileBytes(entry.path, bytes)
                 written++
             }
-            written
+            SyncOutcome(written, skipped)
         }
     }
 
@@ -187,6 +271,8 @@ class GitHubRepository(private val context: android.content.Context) {
         when (method) {
             "GET" -> builder.get()
             "PUT" -> builder.put((body ?: JSONObject()).toString().toRequestBody(jsonType))
+            "POST" -> builder.post((body ?: JSONObject()).toString().toRequestBody(jsonType))
+            "PATCH" -> builder.patch((body ?: JSONObject()).toString().toRequestBody(jsonType))
             else -> error("Unsupported GitHub method")
         }
         return http.newCall(builder.build()).execute().use { response ->

@@ -38,6 +38,7 @@ import com.anvex.app.i18n.tr
 fun PythonRunnerDialog(code: String, onDismiss: () -> Unit) {
     var output by remember { mutableStateOf("Loading Python (Pyodide)…") }
     var web by remember { mutableStateOf<WebView?>(null) }
+    val finished = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     DisposableEffect(Unit) {
         onDispose {
             web?.destroy()
@@ -58,11 +59,23 @@ fun PythonRunnerDialog(code: String, onDismiss: () -> Unit) {
                             settings.allowContentAccess = false
                             settings.domStorageEnabled = false
                             addJavascriptInterface(PythonBridge { text ->
+                                finished.set(true)
                                 Handler(Looper.getMainLooper()).post { output = text }
                             }, "AnvexPython")
                             webViewClient = object : WebViewClient() {
                                 override fun onPageFinished(view: WebView?, url: String?) {
                                     view?.evaluateJavascript("runCode(${JSONObject.quote(code)});", null)
+                                    // v4.10.1 (SEC-04): a runaway script used to
+                                    // spin the sandbox until the user gave up and
+                                    // closed the dialog. Bound every run to 120s.
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        if (!finished.get()) {
+                                            output = "Python timed out after 120 seconds and was stopped."
+                                            web?.stopLoading()
+                                            web?.destroy()
+                                            web = null
+                                        }
+                                    }, 120_000)
                                 }
                             }
                             loadUrl("file:///android_asset/python/index.html")

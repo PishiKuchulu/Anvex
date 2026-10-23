@@ -91,6 +91,16 @@ fun BuildScreen(nav: NavController, projectId: String) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(tr("On-device toolchain"), style = MaterialTheme.typography.titleMedium)
+                    // v4.10.1 (ARCH-01): say it BEFORE the user imports a
+                    // toolchain and taps Build — Android 10+ (W^X) forbids
+                    // executing binaries from app storage, so on-device
+                    // Gradle cannot run on modern devices.
+                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        Text(
+                            tr("On Android 10 and newer, on-device Gradle builds are blocked by the system (W^X policy). The cloud build below is the working path."),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     val status = toolchain
                     if (status.valid) {
                         Text(

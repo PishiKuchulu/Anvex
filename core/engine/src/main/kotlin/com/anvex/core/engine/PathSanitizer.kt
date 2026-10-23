@@ -25,6 +25,12 @@ object PathSanitizer {
                 else -> {
                     require(seg.length <= 255) { "Path segment too long" }
                     require(!seg.contains('\u0000')) { "Bad segment" }
+                    // v4.10.1 (SEC-11): control characters and bidi overrides
+                    // in file names can forge how names render in the UI
+                    // (e.g. U+202E making "exe.txt" display as text) — reject.
+                    require(seg.none { it.code < 0x20 || it.code == 0x7F || it.code in 0x202A..0x202E || it.code in 0x2066..0x2069 }) {
+                        "Control or bidi characters are not allowed in path segments"
+                    }
                     parts.add(seg)
                 }
             }

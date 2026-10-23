@@ -19,7 +19,20 @@ import java.util.zip.GZIPInputStream
  */
 object SkillGitInstaller {
 
-    data class Installed(val id: String, val version: String, val name: String)
+    /**
+     * v4.10.1 (SEC-05): installations record their provenance — the exact
+     * commit the tarball was built from (GitHub names the tarball's root
+     * directory `<repo>-<commit>`) and the archive's SHA-256 — so what was
+     * installed is auditable after the fact, even though the source ref
+     * itself is a moving HEAD.
+     */
+    data class Installed(
+        val id: String,
+        val version: String,
+        val name: String,
+        val commit: String? = null,
+        val archiveSha256: String? = null,
+    )
 
     private const val MAX_TAR_BYTES: Long = 20L * 1024 * 1024
     private const val MAX_ENTRIES = 256
@@ -34,15 +47,19 @@ object SkillGitInstaller {
     suspend fun installFromGit(installer: PluginPackageInstaller, gitUrl: String): Installed {
         val ownerRepo = parseOwnerRepo(gitUrl) ?: error("Unsupported repository URL: $gitUrl")
         val tarGz = downloadTarball(ownerRepo)
+        val archiveSha256 = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(tarGz).joinToString("") { "%02x".format(it) }
         val staging = File(installerRoot(installer), ".git-skill-${System.nanoTime()}")
         staging.mkdirs()
         try {
             extractTarGz(tarGz, staging)
             // GitHub tarballs wrap everything in a single top-level <repo>-<sha>/ dir.
-            val packageRoot = staging.listFiles()?.singleOrNull()?.takeIf { it.isDirectory } ?: staging
+            val rootDir = staging.listFiles()?.singleOrNull()?.takeIf { it.isDirectory }
+            val packageRoot = rootDir ?: staging
+            val commit = rootDir?.name?.substringAfterLast('-')?.takeIf { it.matches(Regex("[0-9a-f]{7,40}")) }
             val zip = repackageAsZip(packageRoot, File(staging, "package.zip"))
             val result = installer.installArchive(zip, expectedGitUrl = gitUrl)
-            return Installed(result.id, result.version, result.id)
+            return Installed(result.id, result.version, result.id, commit = commit, archiveSha256 = archiveSha256)
         } finally {
             staging.deleteRecursively()
         }

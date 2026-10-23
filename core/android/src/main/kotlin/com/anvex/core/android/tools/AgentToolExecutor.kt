@@ -62,6 +62,13 @@ class AgentToolExecutor(
 
     private fun read(rawPath: String, fs: ProjectFileSystem): ToolResult {
         val path = PathSanitizer.sanitizeOrNull(rawPath.trim()) ?: return ToolResult(false, "Invalid path.")
+        // v4.10.1 (SEC-02): the shell runtime already refused to surface
+        // secret files, but this tool did not — a prompt-injected page could
+        // have the model read .env and exfiltrate it via fetch. One shared
+        // list (SensitivePaths) now guards every read surface.
+        if (com.anvex.core.engine.SensitivePaths.isSensitive(path)) {
+            return ToolResult(false, "Refused: '$path' is a protected file (secrets/app metadata are never exposed to tools).")
+        }
         val text = fs.readFile(path) ?: return ToolResult(false, "File not found: $path")
         val clipped = if (text.length > MAX_READ_CHARS) text.take(MAX_READ_CHARS) + "\n…[truncated at $MAX_READ_CHARS chars]" else text
         return ToolResult(true, clipped)
@@ -189,7 +196,7 @@ class AgentToolExecutor(
         const val MAX_READ_CHARS = 60_000
         const val MAX_LIST_ENTRIES = 300
         const val MAX_SEARCH_RESULTS = 8
-        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) Anvex/4.2"
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) Anvex"
     }
 }
 
@@ -198,7 +205,20 @@ internal fun isPublicAddress(a: InetAddress): Boolean {
     val bytes = a.address
     val uniqueLocalV6 = bytes.size == 16 && (bytes[0].toInt() and 0xFE) == 0xFC
     val cgnat = bytes.size == 4 && (bytes[0].toInt() and 0xFF) == 100 && (bytes[1].toInt() and 0xC0) == 0x40
+    // v4.10.1 (BUG-16): ranges the JDK predicates miss — 0.0.0.0/8 (only the
+    // exact 0.0.0.0 was covered), 192.0.0.0/24, 198.18.0.0/15 (benchmarking),
+    // 240.0.0.0/4 (reserved, incl. the limited broadcast), NAT64 64:ff9b::/96
+    // and 6to4 2002::/16 (both embed an IPv4 target that bypasses v4 checks).
+    val v4Special = bytes.size == 4 && (
+        (bytes[0].toInt() and 0xFF) == 0 ||
+            ((bytes[0].toInt() and 0xFF) == 192 && (bytes[1].toInt() and 0xFF) == 0 && (bytes[2].toInt() and 0xFF) == 0) ||
+            ((bytes[0].toInt() and 0xFF) == 198 && (bytes[1].toInt() and 0xFE) == 18) ||
+            ((bytes[0].toInt() and 0xF0) == 240)
+        )
+    val nat64 = bytes.size == 16 && bytes[0].toInt() == 0 && bytes[1].toInt() == 0x64 &&
+        bytes[2].toInt() == 0xFF && bytes[3].toInt() == 0x9B
+    val sixToFour = bytes.size == 16 && bytes[0].toInt() == 0x20 && bytes[1].toInt() == 0x02
     // IPv4-mapped IPv6 (::ffff:a.b.c.d) is already unwrapped by InetAddress into Inet4Address.
     return !(a.isAnyLocalAddress || a.isLoopbackAddress || a.isLinkLocalAddress ||
-        a.isSiteLocalAddress || a.isMulticastAddress || uniqueLocalV6 || cgnat)
+        a.isSiteLocalAddress || a.isMulticastAddress || uniqueLocalV6 || cgnat || v4Special || nat64 || sixToFour)
 }

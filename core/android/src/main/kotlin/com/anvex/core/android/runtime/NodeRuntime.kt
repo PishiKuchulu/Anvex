@@ -47,7 +47,7 @@ class NodeRuntime(
             return@withContext NodeResult(false, "", "Approval required: ${assessment.reason}", approvalRequired = true)
         }
         val timeout = timeoutMs.coerceIn(1_000L, 10 * 60_000L)
-        val outputFile = File(projectRoot, ".anvex-node-${System.nanoTime()}.log")
+        val outputFile = File(projectRoot, ".anvex/logs").apply { mkdirs() }.let { File(it, "node-${System.nanoTime()}.log") }
         return@withContext try {
             val process = ProcessBuilder(listOf(nodePath) + arguments)
                 .directory(projectRoot)

@@ -18,7 +18,7 @@ import javax.crypto.spec.SecretKeySpec
 class PortableBackup(private val providers: ProviderRepository, private val settings: SettingsRepository) {
     @Serializable data class BackupProvider(val config: ProviderConfig, val apiKey: String = "")
     @Serializable data class Payload(val version: Int = 2, val settings: String, val providers: List<BackupProvider>)
-    @Serializable data class Envelope(val version: Int = 1, val salt: String, val iv: String, val ciphertext: String, val iterations: Int = 210_000)
+    @Serializable data class Envelope(val version: Int = 1, val salt: String, val iv: String, val ciphertext: String, val iterations: Int = 600_000)
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
     suspend fun export(password: CharArray): String {
@@ -35,7 +35,7 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
     }
     fun encrypt(plain: String, password: CharArray): String {
         val random = SecureRandom(); val salt = ByteArray(16); val iv = ByteArray(12); random.nextBytes(salt); random.nextBytes(iv)
-        val key = derive(password, salt, 210_000); val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        val key = derive(password, salt, 600_000); val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, iv))
         return json.encodeToString(Envelope(salt = b64(salt), iv = b64(iv), ciphertext = b64(cipher.doFinal(plain.toByteArray(Charsets.UTF_8)))))
     }
@@ -76,7 +76,7 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
             require(password.size >= 8) { "Backup password must be at least 8 characters." }
             val random = SecureRandom(); val salt = ByteArray(16); val iv = ByteArray(12)
             random.nextBytes(salt); random.nextBytes(iv)
-            val key = deriveStatic(password, salt, 210_000)
+            val key = deriveStatic(password, salt, 600_000)
             val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, iv))
             val ct = cipher.doFinal(bytes)

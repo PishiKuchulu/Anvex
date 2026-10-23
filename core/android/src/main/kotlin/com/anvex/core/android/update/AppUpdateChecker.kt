@@ -19,6 +19,8 @@ data class AppUpdateInfo(
     val apkName: String,
     val downloadUrl: String,
     val sizeBytes: Long,
+    /** v4.10.1 (SEC-06): the release's published `<apk>.sha256` asset, when present. */
+    val sha256Url: String? = null,
 )
 
 /**
@@ -52,16 +54,27 @@ object AppUpdateChecker {
                 val current = best
                 if (current != null && !VersionNumbers.isNewer(version, current.version)) continue
                 val asset = pickAsset(rel.optJSONArray("assets"), version, abi) ?: continue
+                val shaAsset = pickShaAsset(rel.optJSONArray("assets"), asset.optString("name"))
                 best = AppUpdateInfo(
                     version = version,
                     tag = tag,
                     apkName = asset.optString("name"),
                     downloadUrl = asset.optString("browser_download_url"),
                     sizeBytes = asset.optLong("size"),
+                    sha256Url = shaAsset?.optString("browser_download_url")?.takeIf { it.isNotBlank() },
                 )
             }
             best
         }
+
+    private fun pickShaAsset(assets: JSONArray?, apkName: String): JSONObject? {
+        if (assets == null || apkName.isBlank()) return null
+        for (j in 0 until assets.length()) {
+            val asset = assets.optJSONObject(j) ?: continue
+            if (asset.optString("name") == "$apkName.sha256") return asset
+        }
+        return null
+    }
 
     private fun pickAsset(assets: JSONArray?, version: String, abi: String): JSONObject? {
         if (assets == null) return null
@@ -85,6 +98,7 @@ object AppUpdateChecker {
     suspend fun download(
         url: String,
         dest: File,
+        sha256Url: String? = null,
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ) {
         withContext(Dispatchers.IO) {
@@ -114,6 +128,39 @@ object AppUpdateChecker {
                             onProgress(downloaded, if (total > 0) total else downloaded)
                         }
                     }
+                }
+                // v4.10.1 (SEC-06): a truncated download used to be renamed
+                // into place and handed to the installer. Verify completeness
+                // against Content-Length, and the SHA-256 against the
+                // release's published .sha256 asset when one exists
+                // (Android's signature check remains the root of trust;
+                // this is defense in depth + corruption detection).
+                if (total > 0) {
+                    var downloadedTotal = 0L
+                    part.inputStream().use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            downloadedTotal += n
+                        }
+                    }
+                    check(downloadedTotal == total) { "Download incomplete ($downloadedTotal of $total bytes)." }
+                }
+                if (sha256Url != null) {
+                    val expected = httpGet(sha256Url).trim().split(Regex("\\s+")).firstOrNull()?.lowercase()
+                    check(!expected.isNullOrBlank()) { "Could not read the update checksum." }
+                    val digest = java.security.MessageDigest.getInstance("SHA-256")
+                    part.inputStream().use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            digest.update(buf, 0, n)
+                        }
+                    }
+                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                    check(actual == expected) { "Update checksum mismatch — refusing to install a corrupted or tampered file." }
                 }
                 if (dest.exists()) dest.delete()
                 check(part.renameTo(dest)) { "Could not finalize the downloaded update" }

@@ -62,8 +62,17 @@ class FakeFs : ProjectFileSystem {
     }
 
     override fun move(from: String, to: String): Boolean {
-        val content = files.remove(from) ?: return false
-        files[to] = content
+        // Files and directories both move (mirrors renameTo on the real fs).
+        files.remove(from)?.let { content ->
+            files[to] = content
+            return true
+        }
+        if (!dirs.contains(from)) return false
+        val prefix = "$from/"
+        val keys = files.keys.filter { it.startsWith(prefix) }
+        keys.forEach { key -> files[to + "/" + key.removePrefix(prefix)] = files.remove(key)!! }
+        dirs.remove(from)
+        dirs.add(to)
         return true
     }
 

@@ -92,7 +92,7 @@ class AppUpdateController(private val context: Context) {
         state = State.Downloading(info, 0L, info.sizeBytes)
         downloadJob = scope.launch {
             try {
-                AppUpdateChecker.download(info.downloadUrl, dest) { downloaded, total ->
+                AppUpdateChecker.download(info.downloadUrl, dest, info.sha256Url) { downloaded, total ->
                     state = State.Downloading(info, downloaded, total)
                 }
                 state = State.Downloaded(info, dest)

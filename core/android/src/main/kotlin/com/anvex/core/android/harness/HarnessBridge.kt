@@ -264,7 +264,10 @@ class HarnessBridge(
     interface JsSurface
     val jsInterface: JsSurface = object : JsSurface {
         @JavascriptInterface
-        fun version(): String = ok { put("version", "4.4.1") }
+        fun version(): String = ok {
+            // v4.10.1 (BUG-14): was a hardcoded "4.4.1" long after it went stale.
+            put("version", runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "unknown")
+        }
 
         @JavascriptInterface
         fun state(): String = runCatching {
@@ -556,6 +559,8 @@ class HarnessBridge(
                             put("id", installed.id)
                             put("version", installed.version)
                             put("name", installed.name)
+                            installed.commit?.let { put("commit", it) }
+                            installed.archiveSha256?.let { put("archiveSha256", it) }
                         }
                     },
                     onFailure = { emitEvent("skill_install_error") { put("message", it.message ?: "install failed") } },

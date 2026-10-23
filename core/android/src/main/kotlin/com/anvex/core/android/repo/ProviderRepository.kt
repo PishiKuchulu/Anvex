@@ -88,9 +88,27 @@ class ProviderRepository(private val dao: ProviderDao) {
         if (uri.userInfo != null) return "Credentials must not be embedded in the provider URL."
         if (scheme == "https") return null
         if (scheme != "http") return "Only HTTP and HTTPS base URLs are supported."
-        val local = host == "localhost" || host.endsWith(".local") || isPrivateAddressLiteral(host)
-        return if (local) null else "Cleartext HTTP is allowed only for loopback/private local provider endpoints. Use HTTPS for remote providers."
+        // v4.10.1 (ARCH-02): validation used to accept cleartext for ANY
+        // private/LAN address, but the platform network-security config only
+        // permits cleartext to loopback — a LAN Ollama URL passed validation
+        // and then died at request time with "CLEARTEXT not permitted".
+        // Validation now matches the platform exactly and says why.
+        val loopback = host == "localhost" || isLoopbackLiteral(host)
+        if (loopback) return null
+        val lan = host.endsWith(".local") || isPrivateAddressLiteral(host)
+        return if (lan) {
+            "Android blocks cleartext HTTP to LAN addresses for this app, so a LAN endpoint cannot be used over http://. " +
+                "Serve it over HTTPS, or reach it through a tunnel (e.g. Tailscale) with an https:// URL."
+        } else {
+            "Cleartext HTTP is allowed only for loopback provider endpoints. Use HTTPS for remote providers."
+        }
     }
+
+    /** Literal loopback check (127.0.0.0/8 or ::1) without DNS resolution. */
+    private fun isLoopbackLiteral(host: String): Boolean = runCatching {
+        val address = java.net.InetAddress.getByName(host)
+        (host.matches(Regex("\\d{1,3}(?:\\.\\d{1,3}){3}")) || host.contains(':')) && address.isLoopbackAddress
+    }.getOrDefault(false)
 
     /** Check only literal IP addresses; never DNS-resolve arbitrary hostnames during validation. */
     private fun isPrivateAddressLiteral(host: String): Boolean {

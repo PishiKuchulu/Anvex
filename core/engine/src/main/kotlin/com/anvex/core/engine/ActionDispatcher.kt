@@ -114,7 +114,13 @@ class ActionDispatcher(
                 error = part.note
             } else {
                 try {
-                    applyEffect(part.effect, source, messageId, output, changed)
+                    // v4.10.1 (BUG-02/03): the part-level decision must
+                    // reach the effects. Reaching this branch means the
+                    // part was approved (pre-granted, or the callback just
+                    // approved it above) whenever approval was required —
+                    // so effects inherit that decision instead of asking
+                    // again (or silently no-oping when no callback exists).
+                    applyEffect(part.effect, source, messageId, output, changed, approvalGranted = approvalGranted || assessment.requiresApproval)
                 } catch (e: Exception) {
                     error = e.message ?: e.javaClass.simpleName
                 }
@@ -143,6 +149,18 @@ class ActionDispatcher(
 
     // ------------------------------------------------------- primitive operations
 
+    /**
+     * v4.10.1 (SEC-11): agent mutations must never touch VCS metadata or the
+     * app's own per-project state directory. Reads stay allowed (the agent
+     * legitimately reads `.anvex/attachments/...`); writes/deletes/renames
+     * through this dispatcher are refused.
+     */
+    private fun isProtectedPath(path: String): Boolean =
+        path.split('/').any { it == ".git" || it == ".anvex" }
+
+    private fun protectedFailure(path: String, t0: Long): ActionResult =
+        ActionResult(false, null, "Protected path (app/VCS metadata): '$path'", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+
     fun writeFile(
         path: String,
         content: String,
@@ -152,6 +170,7 @@ class ActionDispatcher(
         val t0 = System.nanoTime()
         val safe = PathSanitizer.sanitizeOrNull(path)
             ?: return ActionResult(false, null, "Invalid path: '$path'", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+        if (isProtectedPath(safe)) return protectedFailure(safe, t0)
         return mutate(safe, MutationOp.MODIFY, content, source, messageId).copy(durationMs = elapsed(t0))
     }
 
@@ -171,6 +190,7 @@ class ActionDispatcher(
         }
         val safe = PathSanitizer.sanitizeOrNull(path)
             ?: return ActionResult(false, null, "Invalid path: '$path'", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+        if (isProtectedPath(safe)) return protectedFailure(safe, t0)
         val before = if (fs.isDirectory(safe)) null else fs.readFile(safe)
         val existed = fs.exists(safe)
         val ok = fs.delete(safe, recursive)
@@ -191,6 +211,7 @@ class ActionDispatcher(
         if (safeFrom == null || safeTo == null) {
             return ActionResult(false, null, "Invalid rename path", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
         }
+        if (isProtectedPath(safeFrom) || isProtectedPath(safeTo)) return protectedFailure(safeTo, t0)
         val before = fs.readFile(safeFrom)
         val existed = fs.exists(safeFrom)
         val ok = fs.move(safeFrom, safeTo)
@@ -215,6 +236,7 @@ class ActionDispatcher(
         if (safeFrom == null || safeTo == null) {
             return ActionResult(false, null, "Invalid copy path", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
         }
+        if (isProtectedPath(safeTo)) return protectedFailure(safeTo, t0)
         val before = fs.readFile(safeTo) // destination's previous content
         val ok = fs.copy(safeFrom, safeTo)
         return if (ok) {
@@ -287,6 +309,7 @@ class ActionDispatcher(
         messageId: String?,
         output: StringBuilder,
         changed: ArrayList<String>,
+        approvalGranted: Boolean = false,
     ) {
         when (effect) {
             is CommandTranslator.Effect.Mkdir -> {
@@ -295,14 +318,17 @@ class ActionDispatcher(
                 output.append("Created $made directory/directories")
             }
             is CommandTranslator.Effect.Touch -> {
+                var failed = 0
                 effect.paths.forEach { p ->
-                    touch(p, source, messageId).let { if (it.success) changed.addAll(it.changedFiles) }
+                    touch(p, source, messageId).let { if (it.success) changed.addAll(it.changedFiles) else failed++ }
                 }
+                if (failed > 0) throw IllegalStateException("Failed to touch $failed path(s)")
                 output.append("Touched ${effect.paths.size} file(s)")
             }
             is CommandTranslator.Effect.Write -> {
                 val safe = PathSanitizer.sanitizeOrNull(effect.path)
                     ?: throw IllegalArgumentException("Invalid write path: ${effect.path}")
+                if (isProtectedPath(safe)) throw IllegalStateException("Protected path (app/VCS metadata): '$safe'")
                 val before = fs.readFile(safe) // BEFORE — P0-2 fix (was read after write)
                 PathSanitizer.parent(safe)?.let(fs::mkdirs)
                 if (effect.append) fs.appendFile(safe, effect.content + "\n") else fs.writeFile(safe, effect.content + "\n")
@@ -318,22 +344,34 @@ class ActionDispatcher(
             }
             is CommandTranslator.Effect.Delete -> {
                 var deleted = 0
+                var firstError: String? = null
                 effect.paths.forEach { p ->
-                    if (deleteFile(p, effect.recursive, source, messageId).success) { deleted++; changed.add(p) }
+                    val r = deleteFile(p, effect.recursive, source, messageId, approvalGranted = approvalGranted)
+                    if (r.success) { deleted++; changed.add(p) } else if (firstError == null) firstError = r.error
                 }
                 output.append("Deleted $deleted path(s)")
+                // v4.10.1 (BUG-02/03): a delete that removed nothing (or
+                // only some paths) is a FAILURE, never a silent success.
+                if (deleted == 0 && effect.paths.isNotEmpty()) {
+                    throw IllegalStateException(firstError ?: "Delete failed")
+                }
+                if (deleted < effect.paths.size) {
+                    throw IllegalStateException("Deleted $deleted of ${effect.paths.size} path(s): ${firstError ?: "unknown error"}")
+                }
             }
             is CommandTranslator.Effect.Move -> {
-                if (rename(effect.from, effect.to, source, messageId).success) {
+                val r = rename(effect.from, effect.to, source, messageId)
+                if (r.success) {
                     changed.add(effect.from); changed.add(effect.to)
                     output.append("Moved ${effect.from} -> ${effect.to}")
-                } else output.append("Move failed")
+                } else throw IllegalStateException(r.error ?: "Move failed")
             }
             is CommandTranslator.Effect.Copy -> {
-                if (copyFile(effect.from, effect.to, source, messageId).success) {
+                val r = copyFile(effect.from, effect.to, source, messageId)
+                if (r.success) {
                     changed.add(effect.to)
                     output.append("Copied ${effect.from} -> ${effect.to}")
-                } else output.append("Copy failed")
+                } else throw IllegalStateException(r.error ?: "Copy failed")
             }
             is CommandTranslator.Effect.ListDir -> {
                 val entries = fs.list(effect.path)
@@ -362,23 +400,35 @@ class ActionDispatcher(
 class MutationLog(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
 
     private val log = ArrayDeque<FileMutation>()
+    private val lock = Any()
 
     fun record(mutation: FileMutation) {
-        log.addLast(mutation)
-        while (log.size > maxEntries) log.removeFirst()
+        // v4.10.1 (BUG-05): the journal is written from multiple coroutines
+        // (ArrayDeque is not thread-safe) and a pure entry-count cap lets a
+        // few multi-MB snapshots hold hundreds of MB — bound BOTH the count
+        // and the total journaled characters.
+        synchronized(lock) {
+            log.addLast(mutation)
+            while (log.size > maxEntries || (log.size > 1 && journalChars() > MAX_JOURNAL_CHARS)) {
+                log.removeFirst()
+            }
+        }
     }
 
-    fun all(): List<FileMutation> = log.toList()
+    private fun journalChars(): Long =
+        log.sumOf { (it.before?.length ?: 0).toLong() + (it.after?.length ?: 0).toLong() }
 
-    fun forPath(path: String): List<FileMutation> = log.filter { it.path == path }
+    fun all(): List<FileMutation> = synchronized(lock) { log.toList() }
 
-    fun latestForPath(path: String): FileMutation? = log.lastOrNull { it.path == path }
+    fun forPath(path: String): List<FileMutation> = synchronized(lock) { log.filter { it.path == path } }
+
+    fun latestForPath(path: String): FileMutation? = synchronized(lock) { log.lastOrNull { it.path == path } }
 
     /** Most recent mutation per path — the diff/review view. */
-    fun latestPerPath(): List<FileMutation> {
+    fun latestPerPath(): List<FileMutation> = synchronized(lock) {
         val out = LinkedHashMap<String, FileMutation>()
         for (m in log) out[m.path] = m
-        return out.values.toList()
+        out.values.toList()
     }
 
     /** Revert a single mutation (undo one AI write). Returns false if not revertible. */
@@ -395,20 +445,36 @@ class MutationLog(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
             }
             MutationOp.DELETE -> m.before?.let { fs.writeFile(m.path, it); true } ?: false
             MutationOp.RENAME -> {
-                val restored = m.before?.let { fs.writeFile(m.path, it); true } ?: false
-                val removed = fs.delete(m.renamedTo ?: "", recursive = true)
-                restored && removed
+                // v4.10.1 (BUG-01): undoing a rename is a MOVE BACK, never a
+                // content rewrite + delete. The old code deleted the renamed
+                // path unconditionally: for directories (before == null) the
+                // content was destroyed, and for binary files a lossy UTF-8
+                // round-trip corrupted the restored copy before deleting
+                // the good one.
+                val target = m.renamedTo ?: return false
+                when {
+                    fs.exists(target) && !fs.exists(m.path) -> fs.move(target, m.path)
+                    // The renamed file is gone; only a text snapshot can be
+                    // restored from the journal (binary snapshots are lossy).
+                    !fs.exists(target) && m.before != null -> {
+                        fs.writeFile(m.path, m.before)
+                        true
+                    }
+                    else -> false
+                }
             }
         }
     } catch (_: Exception) {
         false
     }
 
-    fun clear() = log.clear()
+    fun clear() = synchronized(lock) { log.clear() }
 
-    val size: Int get() = log.size
+    val size: Int get() = synchronized(lock) { log.size }
 
     companion object {
         const val DEFAULT_MAX_ENTRIES = 500
+        /** Total before+after characters retained across the journal (~32 MB of text). */
+        const val MAX_JOURNAL_CHARS = 32_000_000L
     }
 }

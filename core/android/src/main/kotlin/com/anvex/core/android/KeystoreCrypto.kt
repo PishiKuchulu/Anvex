@@ -80,6 +80,10 @@ object KeystoreCrypto {
 
     class CryptoException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+    // v4.10.1 (SEC-14): two threads racing first use could each generate a
+    // key under the same alias (the loser overwrites; data encrypted with
+    // the first becomes unreadable). Serialize key creation.
+    @Synchronized
     private fun getOrCreateKey(): SecretKey {
         val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (ks.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }

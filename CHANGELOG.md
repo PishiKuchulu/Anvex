@@ -1,5 +1,67 @@
 # Changelog
 
+## 4.10.1 — External-review fix pass
+
+Fixes from an independent static review of 4.10.0 (44 findings; the real
+ones are fixed here, each verified against the source first).
+
+### Fixed — data safety
+- Undoing a file **rename** no longer deletes the renamed file (it moves
+  it back); undoing after external changes restores content safely.
+- Approved `rm -rf` deletions now actually run (the approval is honoured
+  through the effect path) — and failed moves/copies/deletes are reported
+  as failures instead of silent "success".
+- File writes are atomic (temp file + fsync + rename); move/copy refuse to
+  clobber an existing file or delete the source onto itself.
+- The agent can no longer write into `.git/` or `.anvex/` internals, and
+  its read tool refuses secret files (.env, keys, .git/.anvex content).
+- Command safety checks were bypassable (`/bin/rm -rf`, `env rm`,
+  `find -delete`, `git push --force`, …) — the analysis now normalises
+  wrappers/prefixes and gates each pipeline segment.
+- Project context building respects its budget on large projects and
+  excludes `.git/`, `node_modules/` and `.anvex/`; ZIP export applies the
+  same exclusions so real projects fit the export caps.
+
+### Fixed — local servers & network
+- The preview and harness servers now require a per-session token
+  (another app on the device could previously read — and via the harness,
+  write — project files), and never serve secret files.
+- Preview server: correct `+`/percent decoding (files like `c++.txt`
+  work), modern MIME types, `[::1]` handling, malformed lines dropped.
+- Harness downloads keep non-Latin filenames intact (UTF-8).
+- SSRF guard covers the full special-purpose IPv4 ranges (0.0.0.0/8,
+  198.18.0.0/15, 240.0.0.0/4, NAT64/6to4 on IPv6).
+- Provider validation matches Android's cleartext rules: LAN `http://`
+  endpoints now explain the block instead of failing mysteriously.
+
+### Fixed — GitHub sync & updates
+- Push is a single atomic commit (Git Data API) instead of one commit per
+  file; pull validates everything before writing anything; local deletions
+  propagate on push; protected files are reported as skipped, never
+  silently dropped or half-applied. An undecryptable stored token now
+  says so instead of pretending none exists.
+- App updates verify the downloaded size and, when the release publishes
+  one, the SHA-256 checksum before installing.
+- Backups use PBKDF2 600,000 iterations (OWASP 2023); older backups still
+  restore. Skill installs from GitHub record the exact commit and archive
+  hash. The Python sandbox pins its runtime with Subresource Integrity
+  and every run is bounded to 120 seconds.
+
+### Fixed — platform & CI
+- On-device Gradle builds state the Android 10+ (W^X) block upfront
+  (screen + engine) instead of dying with "Permission denied", and builds
+  time out after 30 minutes instead of hanging forever.
+- Plugin installs keep the previous version until the new one is safely
+  committed, and accept standard ZIP directory entries.
+- CI: the rolling debug release can no longer be replaced by a pull
+  request; the debug APK is signed with a fixed committed keystore so it
+  installs over previous downloads; lint and release assembly are gated
+  on every push; signed releases run the unit tests first, verify the tag
+  matches versionName, and publish only from version tags.
+- Runtime logs moved under `.anvex/logs/`; stale root-level logs are
+  cleaned by the self-healing pass.
+
+
 ## 4.10.0 — Pi engine in chat
 
 ### Added

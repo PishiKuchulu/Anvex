@@ -13,8 +13,8 @@ android {
         applicationId = "com.anvex.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 78
-        versionName = "4.10.0"
+        versionCode = 79
+        versionName = "4.10.1"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -22,6 +22,21 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            // v4.10.1 (CI-02): a FIXED debug keystore committed to the repo
+            // (keystore/debug.keystore — the standard public Android debug
+            // credentials). CI runners used to sign the rolling `latest`
+            // debug APK with a fresh per-runner key every time, so it could
+            // never be installed over the previous download. When the file
+            // is absent the default per-machine debug key is used as before.
+            val fixedDebugKs = rootProject.file("keystore/debug.keystore")
+            if (fixedDebugKs.exists()) {
+                signingConfig = signingConfigs.create("ciDebug") {
+                    storeFile = fixedDebugKs
+                    storePassword = "android"
+                    keyAlias = "androiddebugkey"
+                    keyPassword = "android"
+                }
+            }
         }
         release {
             isMinifyEnabled = true

@@ -1,5 +1,5 @@
 from pathlib import Path
-import json, re, zipfile, sys
+import json, re, zipfile, sys, hashlib
 root=Path(__file__).resolve().parents[1]
 checks=[]
 def check(name, ok, detail): checks.append((name, bool(ok), detail))
@@ -116,7 +116,16 @@ for p in root.rglob('*'):
     )
     if generated_output:
         continue
-    if p.is_file() and (p.suffix.lower() in {'.apk','.aab','.jks','.keystore'}): bad.append(str(p.relative_to(root)))
+    if p.is_file() and (p.suffix.lower() in {'.apk','.aab','.jks','.keystore'}):
+        # Sole exception (v4.10.1, CI-02): the committed DEBUG keystore uses
+        # the world-public Android debug credentials (alias androiddebugkey,
+        # password "android") so CI runners sign the rolling debug APK with a
+        # stable key. It is allowed ONLY byte-for-byte: any other keystore —
+        # or this file swapped for a real key — still fails the check.
+        if str(p.relative_to(root)) == 'keystore/debug.keystore' and \
+            hashlib.sha256(p.read_bytes()).hexdigest() == '73abace365ea6ec72f937875df263b6fbec8edabea793f4487a0f1f2dff4e54b':
+            continue
+        bad.append(str(p.relative_to(root)))
 check('source artifact hygiene', not bad, 'no APK/AAB/keystore' if not bad else str(bad))
 for n,ok,d in checks: print(('PASS' if ok else 'FAIL')+' | '+n+' | '+d)
 failed=sum(not ok for _,ok,_ in checks)

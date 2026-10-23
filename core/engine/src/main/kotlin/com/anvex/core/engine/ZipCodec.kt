@@ -20,9 +20,28 @@ object ZipCodec {
 
     class ZipSecurityException(message: String) : Exception(message)
 
+    /**
+     * Paths that never belong in an export/backup archive (v4.10.1, BUG-11):
+     * dependency/VCS/build junk that made exports of real projects blow the
+     * entry/size caps and fail outright, plus runtime log files. This is
+     * deliberately NOT the secret sweep — a backup must keep the user's own
+     * files (including `.anvex/attachments`); secrets are the sync/packaging
+     * policy's job, not the backup's.
+     */
+    fun isExportable(path: String): Boolean {
+        val parts = path.replace('\\', '/').split('/')
+        if (parts.any { it == ".git" || it == "node_modules" || it == ".gradle" || it == ".idea" }) return false
+        val buildIndex = parts.indexOfFirst { it == "build" }
+        if (buildIndex >= 0 && parts.take(buildIndex).none { it == "src" }) return false
+        val name = parts.last()
+        if (name.startsWith(".anvex-shell-") || name.startsWith(".anvex-node-")) return false
+        if (path.startsWith(".anvex/logs/")) return false
+        return true
+    }
+
     fun export(fs: ProjectFileSystem, out: OutputStream, onEntry: (String) -> Unit = {}) {
         ZipOutputStream(out.buffered()).use { zip ->
-            val files = fs.walk()
+            val files = fs.walk().filter { isExportable(it) }
             if (files.size > MAX_ENTRIES) throw ZipSecurityException("Project exceeds $MAX_ENTRIES files")
             var total = 0L
             for (path in files) {

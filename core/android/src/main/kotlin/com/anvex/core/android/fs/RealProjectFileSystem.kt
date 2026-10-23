@@ -34,15 +34,31 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
     override fun isDirectory(relativePath: String): Boolean = resolve(relativePath).isDirectory
 
     override fun writeFile(relativePath: String, content: String) {
-        val f = resolve(relativePath)
-        f.parentFile?.mkdirs()
-        f.writeText(content, Charsets.UTF_8)
+        writeAtomically(resolve(relativePath), content.toByteArray(Charsets.UTF_8))
     }
 
     override fun writeFileBytes(relativePath: String, bytes: ByteArray) {
-        val f = resolve(relativePath)
-        f.parentFile?.mkdirs()
-        f.writeBytes(bytes)
+        writeAtomically(resolve(relativePath), bytes)
+    }
+
+    /**
+     * v4.10.1 (BUG-06): writes go tmp + fsync + rename (the same discipline
+     * writeFileStream already had) — a process kill mid-write used to leave
+     * the target truncated or half-written.
+     */
+    private fun writeAtomically(target: File, bytes: ByteArray) {
+        target.parentFile?.mkdirs()
+        val tmp = File(target.parentFile, ".${target.name}.tmp-${java.util.UUID.randomUUID()}")
+        try {
+            java.io.FileOutputStream(tmp).use { out ->
+                out.write(bytes)
+                out.fd.sync()
+            }
+            require(tmp.renameTo(target)) { "Could not atomically publish ${target.name}" }
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
     }
 
     override fun writeFileStream(relativePath: String, input: java.io.InputStream, maxBytes: Long) {
@@ -110,8 +126,13 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
         val src = resolve(from)
         if (!src.exists()) return false
         val dst = resolve(to)
+        // v4.10.1 (BUG-04): renameTo onto an existing file silently clobbers
+        // it (POSIX rename) and the journal only holds the SOURCE's content,
+        // so the overwritten file was unrecoverable. Refuse instead; a
+        // same-path move is a no-op success.
+        if (src.canonicalFile == dst.canonicalFile) return true
         dst.parentFile?.mkdirs()
-        if (dst.isDirectory) return false
+        if (dst.exists()) return false
         return src.renameTo(dst)
     }
 
@@ -119,6 +140,9 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
         val src = resolve(from)
         if (!src.isFile) return false
         val dst = resolve(to)
+        // v4.10.1 (BUG-04): copyTo(overwrite=true) deletes the destination
+        // first — for `cp a a` that deletes the only copy before reading it.
+        if (src.canonicalFile == dst.canonicalFile) return true
         dst.parentFile?.mkdirs()
         src.copyTo(dst, overwrite = true)
         return true

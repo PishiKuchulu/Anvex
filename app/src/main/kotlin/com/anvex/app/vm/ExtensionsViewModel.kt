@@ -91,7 +91,7 @@ class ExtensionsViewModel : ViewModel() {
                 withContext(Dispatchers.IO) { SkillGitInstaller.installFromGit(graph.pluginInstaller, url.trim()) }
             }
             _status.value = result.fold(
-                onSuccess = { "Installed ${it.name} (${it.id} ${it.version})." },
+                onSuccess = { "Installed ${it.name} (${it.id} ${it.version})" + (it.commit?.let { c -> " @ ${c.take(7)}" } ?: "") + "." },
                 onFailure = { "GitHub install failed: ${it.message?.take(200)}" },
             )
             _busy.value = false

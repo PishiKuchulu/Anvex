@@ -58,6 +58,20 @@ class AndroidBuildEngine(private val toolchain: ToolchainManager) {
 
     /** Full entry point with live log streaming. Runs synchronously — call off the main thread. */
     fun build(request: BuildRequest, onLine: (String) -> Unit): BuildResult {
+        // v4.10.1 (ARCH-01): both execution modes (the project's ./gradlew and
+        // an imported toolchain) exec binaries out of app-writable storage.
+        // Android 10+ forbids exactly that for apps targeting API 29+
+        // (W^X — this app targets 35; see docs/OPENCODE_RUNTIME_FEASIBILITY.md),
+        // so the process would die with a bare "Permission denied". Fail
+        // honestly and point at the working alternative instead.
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            return BuildResult(
+                false, null,
+                "On-device Gradle builds are blocked by Android 10+ (W^X policy): apps cannot execute " +
+                    "binaries from their own storage. Use the cloud build, or build in Termux and import the APK.",
+                emptyList(),
+            )
+        }
         val log = ArrayDeque<String>()
         fun line(text: String) {
             if (text.isBlank()) return
@@ -124,8 +138,21 @@ class AndroidBuildEngine(private val toolchain: ToolchainManager) {
             pb.environment().putAll(extraEnv)
             val proc = pb.start()
             running = proc
-            proc.inputStream.bufferedReader().forEachLine { line(it) }
-            val exit = proc.waitFor()
+            // v4.10.1 (BUG-12): the old code blocked on the stream and then on
+            // waitFor() with NO timeout — a wedged build held the process (and
+            // its memory) forever. Drain on a thread and bound the wait.
+            val reader = kotlin.concurrent.thread(isDaemon = true) {
+                runCatching { proc.inputStream.bufferedReader().forEachLine { line(it) } }
+            }
+            val finished = proc.waitFor(BUILD_TIMEOUT_MINUTES, java.util.concurrent.TimeUnit.MINUTES)
+            if (!finished) {
+                proc.destroyForcibly()
+                reader.join(2_000)
+                running = null
+                return BuildResult(false, null, "Build timed out after $BUILD_TIMEOUT_MINUTES minutes and was stopped.", log.toList())
+            }
+            reader.join(2_000)
+            val exit = proc.exitValue()
             running = null
 
             if (cancelled.get()) return BuildResult(false, null, "Build cancelled.", log.toList())
@@ -164,6 +191,7 @@ class AndroidBuildEngine(private val toolchain: ToolchainManager) {
     }
 
     companion object {
+        const val BUILD_TIMEOUT_MINUTES = 30L
         const val DEFAULT_MAX_LOG_LINES = 2_000
         val VARIANTS = setOf("debug", "release")
     }

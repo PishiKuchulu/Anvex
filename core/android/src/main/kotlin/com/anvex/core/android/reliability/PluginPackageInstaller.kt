@@ -55,8 +55,10 @@ class PluginPackageInstaller(
                 while (true) {
                     val e = zip.nextEntry ?: break
                     count++; require(count <= maxEntries) { "Plugin package has too many entries." }
-                    require(!e.isDirectory) { "Directory entries are not required; package must contain files only." }
                     val name = e.name.replace('\\', '/')
+                    // v4.10.1 (BUG-13): standard zip tools emit directory
+                    // entries — skip them instead of rejecting the package.
+                    if (e.isDirectory) continue
                     require(name.isNotBlank() && !name.startsWith('/') && !name.contains("../") && !name.contains("/..")) { "Unsafe plugin package path." }
                     require(!name.contains(':')) { "Absolute drive paths are not allowed." }
                     val out = File(staging, name).canonicalFile
@@ -89,8 +91,22 @@ class PluginPackageInstaller(
             val destination = File(root, "${manifest.id}/${manifest.version}").canonicalFile
             require(destination.path.startsWith(root.canonicalFile.path + File.separator))
             destination.parentFile?.mkdirs()
-            if (destination.exists()) destination.deleteRecursively()
-            require(rootDir.renameTo(destination)) { "Could not commit plugin package." }
+            // v4.10.1 (BUG-13): the previous version used to be deleted
+            // BEFORE the rename — a failed commit lost both versions. Swap
+            // via a backup and restore it if the commit fails.
+            val backup = File(root, ".backup-${manifest.id}-${System.nanoTime()}")
+            val hadPrevious = destination.exists()
+            if (hadPrevious) require(destination.renameTo(backup)) { "Could not stage the previous plugin version." }
+            try {
+                require(rootDir.renameTo(destination)) { "Could not commit plugin package." }
+            } catch (t: Throwable) {
+                if (hadPrevious) backup.renameTo(destination)
+                throw t
+            }
+            if (hadPrevious) backup.deleteRecursively()
+            // When the manifest lived in a subdirectory, the staging wrapper
+            // (with the re-packaged zip) stayed behind after success.
+            if (rootDir != staging) staging.deleteRecursively()
             dao.upsert(PluginEntity(
                 id = manifest.id,
                 name = manifest.name,

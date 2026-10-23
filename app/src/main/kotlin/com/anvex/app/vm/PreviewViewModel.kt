@@ -123,6 +123,10 @@ class PreviewViewModel(
 
     fun onBridgeMessage(json: String) {
         // {"type":"console"|"error"|"ready","payload":{...}}
+        // v4.10.1 (SEC-07): the __anvex bridge accepts messages from any script
+        // running in the preview page; cap the size so a hostile/buggy page
+        // cannot flood the console pipeline with giant payloads.
+        if (json.length > 64_000) return
         try {
             val obj = kotlinx.serialization.json.Json.parseToJsonElement(json)
                 as? kotlinx.serialization.json.JsonObject ?: return

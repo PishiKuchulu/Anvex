@@ -99,8 +99,20 @@ Or open the project in Android Studio and press **Run ▶**.
 
 ## 🛡️ Security & Privacy
 
-- API keys are stored locally on-device.
-- No data is sent anywhere except to the AI provider **you** configure.
+- API keys are stored locally on-device, encrypted with a device key.
+- There is **no Anvex backend and no telemetry** — but "nothing leaves the
+  device except your AI provider" would not be honest either. The network
+  features, each used only when you use it:
+  - the AI provider **you** configure (your chats, code and prompts go there);
+  - optional agent web tools — search via DuckDuckGo's HTML endpoint and
+    page fetching — when the agent uses them or you ask it to;
+  - the live preview can load the libraries your web project references
+    (e.g. esm.sh) and npm installs contact the npm registry, like any
+    Node tool;
+  - the Python sandbox downloads its Pyodide runtime from jsDelivr;
+  - update checks read this repository's public releases on GitHub, and
+    GitHub sync talks to api.github.com with your own token — only when
+    you set it up and press sync.
 - The app has gone through multiple security-hardening and code-audit passes.
 
 Found a vulnerability? Please open a private security advisory on GitHub instead of a public issue.
@@ -108,8 +120,6 @@ Found a vulnerability? Please open a private security advisory on GitHub instead
 ## 🗺️ Roadmap
 
 - [ ] More agent tools and automation
-- [ ] Richer memory management (view / edit / clear what the agent knows)
-- [ ] Project templates
 - [ ] More UI languages
 
 Ideas and feature requests are welcome — open an issue!

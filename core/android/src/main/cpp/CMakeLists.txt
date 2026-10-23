@@ -22,6 +22,12 @@ set_target_properties(libnode PROPERTIES IMPORTED_LOCATION
 
 find_library(log-lib log)
 
+# v4.10.1 (ARCH-04 insurance): link our own JNI library with 16 KB ELF
+# page alignment so it stays loadable on Android 15+ 16 KB-page devices.
+# (The prebuilt libnode.so was verified 16 KB-aligned already — LOAD
+# segments at 0x4000 — contrary to the review's claim.)
+target_link_options(anvex-node PRIVATE "LINKER:-z,max-page-size=16384")
+
 target_link_libraries(anvex-node
                       libnode
                       ${log-lib})

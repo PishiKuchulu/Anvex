@@ -15,7 +15,6 @@ import java.io.File
 import java.io.InputStream
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.URLDecoder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -39,6 +38,10 @@ class StaticPreviewServer(
     /** Loads a bundled runtime asset by name (wired to app assets by AppGraph). */
     private val runtimeAsset: (String) -> ByteArray? = { null },
 ) {
+    /** v4.10.1 (SEC-01): per-session loopback token; see LoopbackAuth. */
+    val accessToken: String = LoopbackAuth.newToken()
+
+    private val pendingCookie = ThreadLocal<String?>()
     @Volatile
     var port: Int = 0
         private set
@@ -87,7 +90,8 @@ class StaticPreviewServer(
         pool = null
     }
 
-    val rootUrl: String get() = "http://127.0.0.1:$port/"
+    /** Base URL WITH the session token path — WebView entry points use this. */
+    val rootUrl: String get() = "http://127.0.0.1:$port/t/$accessToken/"
 
     /** Entry URL for WebView: harness for React projects, index.html for static. */
     val entryUrl: String
@@ -116,6 +120,7 @@ class StaticPreviewServer(
                 var contentLength = 0
                 var hostHeader = ""
                 var secFetchDest = ""
+                var cookieHeader: String? = null
                 while (true) {
                     val line = readLine(input) ?: break
                     if (line.isEmpty()) break
@@ -123,6 +128,7 @@ class StaticPreviewServer(
                     if (lower.startsWith("content-length:")) contentLength = lower.substring(15).trim().toIntOrNull() ?: 0
                     if (lower.startsWith("host:")) hostHeader = line.substring(5).trim()
                     if (lower.startsWith("sec-fetch-dest:")) secFetchDest = lower.substring(15).trim()
+                    if (lower.startsWith("cookie:")) cookieHeader = line.substring(7).trim()
                 }
                 if (contentLength > 0) {
                     var skipped = 0
@@ -135,7 +141,6 @@ class StaticPreviewServer(
                 }
 
                 val rawPath = parts[1].substringBefore('?')
-                val decoded = URLDecoder.decode(rawPath, "UTF-8")
 
                 // v1.1 §12: strict Host validation — only loopback origins may talk
                 // to this server (blocks cross-origin references from other apps' WebViews).
@@ -143,6 +148,22 @@ class StaticPreviewServer(
                     respond(socket, 403, "text/plain; charset=utf-8", "Forbidden host".toByteArray())
                     return
                 }
+
+                // v4.10.1 (SEC-01): the Host check constrains the destination,
+                // not the caller — require the per-session token (path or the
+                // cookie it plants) so other on-device apps cannot read the
+                // workspace through this server.
+                val auth = LoopbackAuth.check(rawPath, cookieHeader, accessToken)
+                if (auth is LoopbackAuth.Check.Denied) {
+                    respond(socket, 403, "text/plain; charset=utf-8", "Forbidden".toByteArray())
+                    return
+                }
+                val granted = auth as LoopbackAuth.Check.Granted
+                pendingCookie.set(if (granted.viaTokenPath) LoopbackAuth.cookieValue(accessToken) else null)
+                // v4.10.1 (BUG-08): URLDecoder turned '+' into a space (file
+                // names like c++.txt 404'd) and threw on malformed '%' —
+                // decode strictly as path bytes instead.
+                val decoded = decodePath(granted.path)
 
                 // v1.1 §11: bundled offline runtime assets (Babel / React / ReactDOM).
                 if (decoded.startsWith(PreviewHarness.RUNTIME_ROUTE)) {
@@ -158,7 +179,7 @@ class StaticPreviewServer(
                 // that send no Sec-Fetch header are treated as navigations.
                 if (secFetchDest.isEmpty() || secFetchDest == "document") {
                     val safeDiagram = PathSanitizer.sanitizeOrNull(decoded.trimStart('/'))
-                    if (safeDiagram != null && PreviewHarness.isDiagramPath(safeDiagram) && fs.exists(safeDiagram)) {
+                    if (safeDiagram != null && !com.anvex.core.engine.SensitivePaths.isSensitive(safeDiagram) && PreviewHarness.isDiagramPath(safeDiagram) && fs.exists(safeDiagram)) {
                         serveDiagramPage(socket, safeDiagram, method)
                         return
                     }
@@ -192,6 +213,12 @@ class StaticPreviewServer(
                 val safe = PathSanitizer.sanitizeOrNull(rel)
                 if (safe == null) {
                     respond(socket, 400, "text/plain; charset=utf-8", "Bad path".toByteArray())
+                    return
+                }
+                // v4.10.1 (SEC-01): secrets and app/VCS metadata are never
+                // served (404, so existence is not confirmed either).
+                if (com.anvex.core.engine.SensitivePaths.isSensitive(safe)) {
+                    respond(socket, 404, "text/plain; charset=utf-8", "Not found: $safe".toByteArray())
                     return
                 }
                 if (!fs.exists(safe)) {
@@ -235,6 +262,7 @@ class StaticPreviewServer(
             append("Content-Length: ").append(body.size).append("\r\n")
             append("Cache-Control: ").append(cacheControl).append("\r\n")
             append("X-Content-Type-Options: nosniff\r\n")
+            pendingCookie.get()?.let { append("Set-Cookie: ").append(it).append("\r\n") }
             append("Connection: close\r\n\r\n")
         }
         val out = socket.getOutputStream()
@@ -298,7 +326,7 @@ class StaticPreviewServer(
             if (c == -1) return if (sb.isEmpty()) null else sb.toString()
             if (c == '\n'.code) break
             if (c != '\r'.code) sb.append(c.toChar())
-            if (sb.length > 16_384) return sb.toString()
+            if (sb.length > 16_384) throw IllegalStateException("Header line too long")
         }
         return sb.toString()
     }
@@ -308,7 +336,7 @@ class StaticPreviewServer(
     private val json = Json { encodeDefaults = true }
 
     private fun harnessPage(): String {
-        val files = fs.walk().filter { !it.startsWith(".bolt/") }
+        val files = fs.walk().filter { path -> path.split('/').none { it == ".git" || it == ".anvex" || it == "node_modules" } }
         val manifest = buildJsonArray {
             files.forEach { add(buildJsonObject { put("path", it) }) }
         }
@@ -383,6 +411,18 @@ class StaticPreviewServer(
             "ico" -> "image/x-icon"
             "woff" -> "font/woff"
             "woff2" -> "font/woff2"
+            "ttf" -> "font/ttf"
+            "otf" -> "font/otf"
+            "mp4" -> "video/mp4"
+            "webm" -> "video/webm"
+            "mp3" -> "audio/mpeg"
+            "ogg" -> "audio/ogg"
+            "wav" -> "audio/wav"
+            "wasm" -> "application/wasm"
+            "pdf" -> "application/pdf"
+            "xml" -> "application/xml; charset=utf-8"
+            "csv" -> "text/csv; charset=utf-8"
+            "avif" -> "image/avif
             "txt", "md" -> "text/plain; charset=utf-8"
             "mmd", "mermaid" -> "text/plain; charset=utf-8"
             else -> "application/octet-stream"
@@ -393,6 +433,37 @@ class StaticPreviewServer(
 /** Host header is loopback only (127.0.0.1[:port] / localhost[:port] / [::1][:port]). */
 internal fun String?.isLocalLoopback(): Boolean {
     if (this == null) return false // WebView always sends Host; missing = malformed
-    val host = substringBefore(':').lowercase().removePrefix("[")
+    // v4.10.1 (BUG-08): bracketed IPv6 ("[::1]:8080") — substringBefore(':')
+    // used to yield "[" and the ::1 branches were unreachable.
+    val host = if (startsWith("[")) {
+        substring(1, indexOf(']').takeIf { it > 0 } ?: length).lowercase()
+    } else {
+        substringBefore(':').lowercase()
+    }
     return host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1"
+}
+
+/**
+ * Strict path percent-decoding (BUG-08): `%XX` bytes are UTF-8; '+' stays
+ * a literal plus (paths are not form-encoded); malformed escapes pass
+ * through literally instead of throwing the connection away.
+ */
+internal fun decodePath(raw: String): String {
+    if ('%' !in raw) return raw
+    val bytes = java.io.ByteArrayOutputStream()
+    var i = 0
+    while (i < raw.length) {
+        val c = raw[i]
+        if (c == '%' && i + 3 <= raw.length) {
+            val code = raw.substring(i + 1, i + 3).toIntOrNull(16)
+            if (code != null) {
+                bytes.write(code)
+                i += 3
+                continue
+            }
+        }
+        bytes.write(c.toString().toByteArray(Charsets.UTF_8))
+        i++
+    }
+    return String(bytes.toByteArray(), Charsets.UTF_8)
 }

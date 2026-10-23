@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<!-- v4.10.1 (SEC-04): Subresource Integrity pins the bootstrap loader to the
+     exact published bytes (hash computed from the v0.26.4 artifact), so a
+     tampered CDN response fails to execute. The loader then fetches the wasm
+     core from the same pinned index URL — full offline bundling remains the
+     complete fix. -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js" integrity="sha256-wAaRB2IdW5QqZZ5zehLndMwEUf6qIlb0ddcuBx2ETsc=" crossorigin="anonymous"></script>
 </head>
 <body>
 <script>

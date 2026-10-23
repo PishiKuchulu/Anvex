@@ -36,7 +36,7 @@ class AndroidShellRuntime(
             return@withContext ShellResult(false, "", "Approval required: ${effectiveAssessment.reason}", approvalRequired = true)
         }
         val safeTimeout = timeoutMs.coerceIn(1_000L, 10 * 60_000L)
-        val outputFile = File(projectRoot, ".anvex-shell-${System.nanoTime()}.log")
+        val outputFile = File(projectRoot, ".anvex/logs").apply { mkdirs() }.let { File(it, "shell-${System.nanoTime()}.log") }
         return@withContext try {
             val process = ProcessBuilder("/system/bin/sh", "-c", trimmed)
                 .directory(projectRoot)

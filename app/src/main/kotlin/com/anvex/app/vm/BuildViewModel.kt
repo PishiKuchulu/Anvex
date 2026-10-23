@@ -217,7 +217,7 @@ class BuildViewModel(
                 workspace = dir
                 val pushed = graph.github.push(RealProjectFileSystem(dir), owner, repo, branch, "Anvex cloud build push")
                     .getOrElse { error(it.message ?: "GitHub push failed.") }
-                _cloudStatus.value = "Pushed $pushed file(s). Checking workflow file…"
+                _cloudStatus.value = "Pushed ${pushed.count} file(s). Checking workflow file…"
                 graph.cloudBuild.ensureWorkflowFile(owner, repo, branch)
                     .getOrElse { error(it.message ?: "Could not publish the workflow file.") }
                 _cloudStatus.value = "Dispatching workflow…"

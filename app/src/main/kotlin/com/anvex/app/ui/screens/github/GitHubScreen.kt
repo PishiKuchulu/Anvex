@@ -160,7 +160,10 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                         busy = true; status = "Pushing…"
                         scope.launch {
                             val result = withContext(Dispatchers.IO) { graph.github.push(graph.projects.fileSystemForAsync(projectId), owner, repo, branch) }
-                            status = result.fold({ "Pushed ${it} file(s) to $owner/$repo@$branch." }, { it.message ?: "GitHub push failed." })
+                            status = result.fold({ outcome ->
+                                "Pushed ${outcome.count} file(s) to $owner/$repo@$branch." +
+                                    if (outcome.skipped.isEmpty()) "" else " Skipped ${outcome.skipped.size} protected file(s): ${outcome.skipped.take(3).joinToString(", ")}${if (outcome.skipped.size > 3) "…" else ""}"
+                            }, { it.message ?: "GitHub push failed." })
                             busy = false
                         }
                     },
@@ -236,7 +239,10 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                     showPullConfirm = false; busy = true; status = "Pulling…"
                     scope.launch {
                         val result = withContext(Dispatchers.IO) { graph.github.pull(graph.projects.fileSystemForAsync(projectId), owner, repo, branch) }
-                        status = result.fold({ "Pulled ${it} file(s) from $owner/$repo@$branch." }, { it.message ?: "GitHub pull failed." })
+                        status = result.fold({ outcome ->
+                            "Pulled ${outcome.count} file(s) from $owner/$repo@$branch." +
+                                if (outcome.skipped.isEmpty()) "" else " Skipped ${outcome.skipped.size} protected file(s)."
+                        }, { it.message ?: "GitHub pull failed." })
                         busy = false
                     }
                 }) { Text(tr("Pull")) }

@@ -4,7 +4,6 @@ import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.URLDecoder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -35,6 +34,11 @@ class HarnessWebServer(
     /** v4.1: resolves the project workspace root for /__anvex__/download. */
     private val workspaceRootProvider: () -> File? = { null },
 ) {
+    /** v4.10.1 (SEC-01): per-session loopback token; see LoopbackAuth. */
+    val accessToken: String = LoopbackAuth.newToken()
+
+    private val pendingCookie = ThreadLocal<String?>()
+
     @Volatile var port: Int = 0
         private set
     @Volatile private var serverSocket: ServerSocket? = null
@@ -83,7 +87,7 @@ class HarnessWebServer(
         pool = null
     }
 
-    val harnessUrl: String get() = "http://127.0.0.1:$port/harness/"
+    val harnessUrl: String get() = "http://127.0.0.1:$port/t/$accessToken/harness/"
 
     // ------------------------------------------------------------------ handler
 
@@ -103,6 +107,7 @@ class HarnessWebServer(
                 var hostHeader = ""
                 var fetchSite = ""
                 var contentLength = 0
+                var cookieHeader: String? = null
                 while (true) {
                     val line = readLine(input) ?: break
                     if (line.isEmpty()) break
@@ -110,6 +115,7 @@ class HarnessWebServer(
                     if (lower.startsWith("host:")) hostHeader = line.substring(5).trim()
                     if (lower.startsWith("sec-fetch-site:")) fetchSite = lower.substring(15).trim()
                     if (lower.startsWith("content-length:")) contentLength = lower.substring(15).trim().toIntOrNull() ?: 0
+                    if (lower.startsWith("cookie:")) cookieHeader = line.substring(7).trim()
                 }
                 if (contentLength > 0) {
                     val buf = ByteArray(minOf(contentLength, 64 * 1024))
@@ -134,7 +140,16 @@ class HarnessWebServer(
                 }
                 val rawTarget = parts[1]
                 val rawQuery = rawTarget.substringAfter('?', "")
-                val decoded = URLDecoder.decode(rawTarget.substringBefore('?'), "UTF-8")
+                // v4.10.1 (SEC-01): same token gate as the preview server —
+                // Sec-Fetch headers only ever constrained browsers.
+                val auth = LoopbackAuth.check(rawTarget.substringBefore('?'), cookieHeader, accessToken)
+                if (auth is LoopbackAuth.Check.Denied) {
+                    respond(socket, 403, "text/plain; charset=utf-8", "Forbidden".toByteArray())
+                    return
+                }
+                val granted = auth as LoopbackAuth.Check.Granted
+                pendingCookie.set(if (granted.viaTokenPath) LoopbackAuth.cookieValue(accessToken) else null)
+                val decoded = decodePath(granted.path)
                 when {
                     decoded == "/harness" || decoded == "/harness/" || decoded == "/harness/index.html" -> {
                         serveHarnessAsset(socket, "index.html", method)
@@ -210,8 +225,18 @@ class HarnessWebServer(
             respond(socket, status, "text/plain; charset=utf-8", message.toByteArray())
         }
         val relative = queryParam(rawQuery, "path")
-        if (relative.isNullOrEmpty() || relative.contains("..") || relative.startsWith("/") || relative.contains('\\')) {
+        // v4.10.1 (BUG-09): segment-based traversal check — the old
+        // contains("..") also rejected innocent names like "a..b.txt".
+        if (relative.isNullOrEmpty() || relative.startsWith("/") || relative.contains('\\') ||
+            relative.split('/').any { it == ".." }
+        ) {
             fail(400, "Bad download path")
+            return
+        }
+        // v4.10.1 (SEC-01): secrets and VCS internals are never downloadable
+        // (.anvex/attachments stays allowed — it is this route's purpose).
+        if (com.anvex.core.engine.SensitivePaths.isSecretFile(relative)) {
+            fail(404, "File not found")
             return
         }
         val root = workspaceRootProvider()?.canonicalFile
@@ -236,14 +261,25 @@ class HarnessWebServer(
         // Attachment filename: strip quotes/control chars so the header stays injectable-proof.
         val fileName = target.name.replace("\"", "_").replace(Regex("[\\p{Cntrl}]"), "")
             .ifBlank { "download.bin" }
+        // v4.10.1 (BUG-09): the header is written as ISO-8859-1, which turned
+        // Persian (and any non-Latin) names into '?'. Send an ASCII fallback
+        // in filename= plus the real name percent-encoded in filename*.
+        val asciiName = fileName.map { if (it.code in 0x20..0x7E) it else '_' }.joinToString("")
+            .ifBlank { "download.bin" }
+        val encodedName = fileName.toByteArray(Charsets.UTF_8).joinToString("") { b ->
+            val v = b.toInt() and 0xFF
+            val ch = v.toChar()
+            if (ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch in ".-_~") ch.toString() else "%%%02X".format(v)
+        }
         val head = buildString {
             append("HTTP/1.1 200 OK\r\n")
             append("Content-Type: application/octet-stream\r\n")
-            append("Content-Disposition: attachment; filename=\"$fileName\"\r\n")
+            append("Content-Disposition: attachment; filename=\"$asciiName\"; filename*=UTF-8''$encodedName\r\n")
             append("Content-Length: ").append(target.length()).append("\r\n")
             append("Cache-Control: no-store\r\n")
             append("X-Content-Type-Options: nosniff\r\n")
             append("Cross-Origin-Resource-Policy: same-origin\r\n")
+            pendingCookie.get()?.let { append("Set-Cookie: ").append(it).append("\r\n") }
             append("Connection: close\r\n\r\n")
         }
         val out = socket.getOutputStream()
@@ -281,7 +317,7 @@ class HarnessWebServer(
                     continue
                 }
             }
-            bytes.write(c.code and 0xFF)
+            bytes.write(c.toString().toByteArray(Charsets.UTF_8))
             i++
         }
         return bytes.toString("UTF-8")
@@ -299,6 +335,7 @@ class HarnessWebServer(
             append("Cache-Control: ").append(cacheControl).append("\r\n")
             append("X-Content-Type-Options: nosniff\r\n")
             append("Cross-Origin-Resource-Policy: same-origin\r\n")
+            pendingCookie.get()?.let { append("Set-Cookie: ").append(it).append("\r\n") }
             append("Connection: close\r\n\r\n")
         }
         val out = socket.getOutputStream()
@@ -314,7 +351,7 @@ class HarnessWebServer(
             if (c == -1) return if (sb.isEmpty()) null else sb.toString()
             if (c == '\n'.code) break
             if (c != '\r'.code) sb.append(c.toChar())
-            if (sb.length > 16_384) return sb.toString()
+            if (sb.length > 16_384) throw IllegalStateException("Header line too long")
         }
         return sb.toString()
     }

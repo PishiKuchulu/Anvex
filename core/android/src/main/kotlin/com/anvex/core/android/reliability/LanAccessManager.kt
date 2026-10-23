@@ -96,7 +96,8 @@ class LanAccessManager {
             val request = reader.readLine().orEmpty().take(2_000)
             var line = reader.readLine()
             var authorized = false
-            while (!line.isNullOrEmpty()) {
+            var headerCount = 0
+            while (!line.isNullOrEmpty() && ++headerCount <= 64) {
                 if (line.startsWith("Authorization:", ignoreCase = true)) {
                     val value = line.substringAfter(':').trim()
                     authorized = value.startsWith("Bearer ") && authenticate(value.removePrefix("Bearer ").trim())
