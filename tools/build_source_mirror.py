@@ -36,6 +36,10 @@ EXCLUDED_SOURCE_PREFIXES = (
     "docs/FINAL_RELEASE_AUDIT.json",         # machine-specific generated audit output
     "docs/PFP_V4_TRACEABILITY.md",            # internal governance traceability, not app source
     ".github/",                            # CI configuration
+    "keystore/",                           # v4.10.1 (CI-02): the fixed public debug keystore is
+                                           # build infrastructure, not app source — it must not
+                                           # be mirrored into the app's bundled source assets
+                                           # (the mirror verifier rejects keystore artifacts).
 )
 
 
