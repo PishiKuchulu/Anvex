@@ -56,6 +56,18 @@ jobs:
       - name: Unit tests
         run: ./gradlew --no-daemon :core:engine:test :core:android:testDebugUnitTest :core:ai:test :app:testDebugUnitTest
 
+      - name: Lint (v4.10.1, CI-04)
+        run: ./gradlew --no-daemon lintDebug
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anvex-lint-reports-${{ github.run_number }}-${{ github.run_attempt }}
+          path: '**/build/reports/lint-results-*.html'
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -103,6 +115,9 @@ jobs:
       - name: Clean and build fresh debug APK
         run: ./gradlew --no-daemon clean :app:assembleDebug
 
+      - name: Verify release assembly (v4.10.1, CI-04 — R8/minify gate on every push, not only at tag time)
+        run: ./gradlew --no-daemon :app:assembleRelease
+
       # v4.6: ABI splits renamed the outputs — the universal APK is now
       # app-universal-debug.apk (app-debug.apk no longer exists), next to
       # app-<abi>-debug.apk per architecture.
@@ -128,6 +143,11 @@ jobs:
 
   release:
     needs: apk
+    # v4.10.1 (CI-01): this job replaces the shared rolling `latest` release.
+    # The workflow also triggers on pull_request, and the job previously had
+    # no condition — a same-repo PR run would have REPLACED the published
+    # debug APK with unreviewed PR code while the PR was still open.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

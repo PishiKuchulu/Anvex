@@ -13,7 +13,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973 cmake;3.22.1'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # v4.10.1 (CI-03): a signed release must pass the unit suite first —
+      # previously this workflow built and published with no test gate.
+      - name: Unit tests
+        run: ./gradlew --no-daemon :core:engine:test :core:android:testDebugUnitTest :core:ai:test :app:testDebugUnitTest
+
+      - name: Tag matches versionName (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
+          echo "tag=$TAG_VERSION versionName=$APP_VERSION"
+          if [ "$TAG_VERSION" != "$APP_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION does not match versionName $APP_VERSION in app/build.gradle.kts"
+            exit 1
+          fi
+
   signed-release:
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -37,12 +72,15 @@ jobs:
           ls -l "${{ runner.temp }}/release.keystore"
 
       - name: Build signed release APK
-        run: >
-          ./gradlew --no-daemon clean :app:assembleRelease
-          -PANVEX_KEYSTORE=${{ runner.temp }}/release.keystore
-          -PANVEX_KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}
-          -PANVEX_KEY_ALIAS=${{ secrets.KEY_ALIAS }}
-          -PANVEX_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
+        # v4.10.1 (CI-03): signing values travel via ORG_GRADLE_PROJECT_* env
+        # vars instead of -P command-line properties (which leak into process
+        # lists and Gradle daemon/build-scan logs).
+        env:
+          ORG_GRADLE_PROJECT_ANVEX_KEYSTORE: ${{ runner.temp }}/release.keystore
+          ORG_GRADLE_PROJECT_ANVEX_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_ANVEX_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_ANVEX_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew --no-daemon clean :app:assembleRelease
 
       - name: Rename APKs with version + checksum
         run: |
@@ -63,6 +101,11 @@ jobs:
           cat Anvex-*.apk.sha256
 
       - name: Publish signed release
+        # v4.10.1 (CI-03): a manual dispatch from a branch still builds (and
+        # the rename step shows the artifacts in the log) but must not
+        # publish a "release" from an arbitrary ref — publishing is for
+        # version tags only.
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
