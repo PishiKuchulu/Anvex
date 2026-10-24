@@ -7,25 +7,6 @@ verified against the source first, as with 4.10.1). The reviewer was
 right about the important ones — including one critical bug the first
 review's fixes had introduced.
 
-### Security — Node.js runtime upgrade (Oct 2026 security release)
-
-- Bundled Node.js upgraded 24.18.0 → 24.22.1 (LTS), npm 11.16.0 → 11.19.1,
-  following the Node.js October 2026 security release (21 October 2026).
-  The libnode package was rebuilt from Termux nodejs-lts 24.22.1 with the
-  same --shared build and DT_NEEDED closure as 4.10.1; the new package is
-  published as release libnode-v24.22.1 and pinned by SHA-256 in
-  core/android/build.gradle.kts (downloadNodeLibs).
-- CVE-2026-111497 (Node2Shell): out-of-bounds write in the Brotli decoder,
-  rated High by Node.js (CVSS 4.0 9.2) — a crafted Brotli payload could
-  achieve remote code execution in the in-process libnode runtime, whose
-  agent scripts fetch URLs, downloads, and npm packages.
-- TLS hostname-check bypasses CVE-2026-105482, CVE-2026-105483, and
-  CVE-2026-106069: a wrong-certificate acceptance path under a
-  man-in-the-middle position (e.g. public Wi-Fi).
-- DNS name truncation on NUL characters, and a CA store refresh removing
-  trust in compromised eMudhra intermediates.
-- On-device terminal check: `node --version` → v24.22.1.
-
 ### Fixed — critical: loopback token leak (review #1)
 - The preview and harness servers kept the session cookie in a
   `ThreadLocal` that was never cleared. After the app's WebView opened
