@@ -127,6 +127,23 @@ for p in root.rglob('*'):
             continue
         bad.append(str(p.relative_to(root)))
 check('source artifact hygiene', not bad, 'no APK/AAB/keystore' if not bad else str(bad))
+# v4.10.2 (second review #10): the Node bump once landed in only one
+# file (libnode-release.yml -> 24.22.1) while the app still built
+# 24.18.0. All four version mentions must agree, or the audit fails.
+def _node_versions():
+    gradle = (root/'core/android/build.gradle.kts').read_text(encoding='utf-8')
+    runtime = (root/'core/android/src/main/kotlin/com/anvex/core/android/runtime/node/NodeMobileRuntime.kt').read_text(encoding='utf-8')
+    rel = (root/'.github/workflows/libnode-release.yml').read_text(encoding='utf-8')
+    reasm = (root/'.github/workflows/libnode-reassemble.yml').read_text(encoding='utf-8')
+    found = set()
+    for m in re.finditer(r'NODE_VERSION:\s*"([0-9.]+)"', rel): found.add(m.group(1))
+    for m in re.finditer(r'NODE_VERSION:\s*"([0-9.]+)"', reasm): found.add(m.group(1))
+    for m in re.finditer(r'libnode-v([0-9.]+)', gradle): found.add(m.group(1))
+    for m in re.finditer(r'\.anvex-node-([0-9.]+)\.ok', gradle): found.add(m.group(1))
+    for m in re.finditer(r'RUNTIME_VERSION\s*=\s*"([0-9.]+)-', runtime): found.add(m.group(1))
+    return found
+_node = _node_versions()
+check('libnode version consistency', len(_node) == 1, 'single Node version across workflows, build.gradle.kts and runtime: ' + (','.join(sorted(_node)) or 'none found'))
 for n,ok,d in checks: print(('PASS' if ok else 'FAIL')+' | '+n+' | '+d)
 failed=sum(not ok for _,ok,_ in checks)
 print(f'RESULT: {"PASS" if failed==0 else "FAIL"} ({len(checks)-failed}/{len(checks)})')
