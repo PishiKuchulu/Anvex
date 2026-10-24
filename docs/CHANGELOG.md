@@ -1,3 +1,8 @@
+> **Historical file — frozen at 3.3.8.** The current changelog is the
+> root [`CHANGELOG.md`](../CHANGELOG.md). This file is kept for history
+> only (second external review #14: two changelogs that disagree are
+> worse than one).
+
 ## 3.3.8 — Deep Audit Hardening
 - Deep-audit pass fixed LAN web-server wiring, command-translator safety classification, chat artifact execution wiring, build-script confirmation flow, secure legacy provider-header fallback, atomic artifact publishing, and documentation/test-count drift.
 - Version 3.3.8 / versionCode 58.
