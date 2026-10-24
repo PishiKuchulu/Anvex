@@ -30,8 +30,8 @@ object ActionSafetyPolicy {
         // --flag=value normalization, git push gated as a publish, and
         // /dev/null + curl-upload + recursive-chmod gates.
         val normalized = command.trim()
-            .replace(Regex("\\$\\{ifs\\}", RegexOption.IGNORE_CASE), " ")
-            .replace(Regex("\\$ifs", RegexOption.IGNORE_CASE), " ")
+            .replace("\${IFS}", " ", ignoreCase = true)
+            .replace("\$IFS", " ", ignoreCase = true)
         if (normalized.isBlank()) return Assessment(Risk.SAFE, "Empty command")
         // Newline/CR and shell line-continuation can introduce a second command
         // while still looking like a single allowlisted command. Treat all
