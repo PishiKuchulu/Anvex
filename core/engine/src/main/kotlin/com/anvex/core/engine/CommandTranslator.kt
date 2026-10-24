@@ -15,7 +15,7 @@ object CommandTranslator {
         data class Mkdir(val paths: List<String>) : Effect()
         data class Touch(val paths: List<String>) : Effect()
         data class Write(val path: String, val content: String, val append: Boolean) : Effect()
-        data class Delete(val paths: List<String>, val recursive: Boolean) : Effect()
+        data class Delete(val paths: List<String>, val recursive: Boolean, val force: Boolean = false) : Effect()
         data class Move(val from: String, val to: String) : Effect()
         data class Copy(val from: String, val to: String) : Effect()
         data class ListDir(val path: String) : Effect()
@@ -137,10 +137,14 @@ object CommandTranslator {
             }
             "rm" -> {
                 val recursive = tokens.contains("-r") || tokens.contains("-rf") || tokens.contains("-fr") || tokens.contains("-R")
+                // v4.10.1: POSIX rm -f ignores nonexistent operands; the
+                // dispatcher needs the flag to tell "already absent" (the
+                // desired end state) from a real deletion failure.
+                val force = tokens.any { it.startsWith("-") && it.contains('f') }
                 val raw = tokens.drop(1).filter { !it.startsWith("-") }
                 val paths = raw.mapNotNull(PathSanitizer::sanitizeOrNull)
                 if (paths.isEmpty()) return bad(cmd, "rm: missing or invalid operand")
-                return Part(cmd, Tier.SUPPORTED, Effect.Delete(paths, recursive), "Deleted ${paths.size} path(s)" +
+                return Part(cmd, Tier.SUPPORTED, Effect.Delete(paths, recursive, force), "Deleted ${paths.size} path(s)" +
                     if (paths.size < raw.size) " (rejected ${raw.size - paths.size} unsafe path(s))" else "")
             }
             "mv" -> if (tokens.size == 3) {

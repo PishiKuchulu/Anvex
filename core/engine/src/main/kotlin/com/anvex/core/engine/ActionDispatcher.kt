@@ -346,6 +346,12 @@ class ActionDispatcher(
                 var deleted = 0
                 var firstError: String? = null
                 effect.paths.forEach { p ->
+                    // rm -f semantics: an already-absent path IS the desired
+                    // end state, so it counts as satisfied rather than as a
+                    // failed deletion (BUG-03 targets real failures: a path
+                    // that exists but cannot be removed, partial multi-path
+                    // deletes, protected paths).
+                    if (effect.force && !fs.exists(p)) { deleted++; return@forEach }
                     val r = deleteFile(p, effect.recursive, source, messageId, approvalGranted = approvalGranted)
                     if (r.success) { deleted++; changed.add(p) } else if (firstError == null) firstError = r.error
                 }
