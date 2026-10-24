@@ -11,22 +11,22 @@ plugins {
 
 // ---------------------------------------------------------------------------
 // Bundled Node.js 24 runtime (real Node.js on-device). Since 4.8.0 the
-// libnode package is Anvex's own: Node 24.18.0 (LTS) built for bionic via
+// libnode package is Anvex's own: Node 24.22.1 (LTS) built for bionic via
 // Termux nodejs-lts with --shared, plus its DT_NEEDED dependency closure,
-// published as the repo release "libnode-v24.18.0" by the libnode-release /
+// published as the repo release "libnode-v24.22.1" by the libnode-release /
 // libnode-reassemble workflows. The ~105 MB zip is NOT committed to git;
 // this task downloads it once, verifies its SHA-256, and extracts bin/ +
 // include/ into libnode/ (gitignored). preBuild depends on it, so local
 // and CI builds both fetch it deterministically.
 val nodeLibsDir = layout.projectDirectory.dir("libnode").asFile
-val nodeLibsMarker = File(nodeLibsDir, ".anvex-node-24.18.0.ok")
+val nodeLibsMarker = File(nodeLibsDir, ".anvex-node-24.22.1.ok")
 val downloadNodeLibs = tasks.register("downloadNodeLibs") {
     description = "Downloads and hash-verifies the bundled libnode 24 runtime."
     outputs.file(nodeLibsMarker)
     onlyIf { !nodeLibsMarker.isFile }
     doLast {
-        val url = "https://github.com/PishiKuchulu/Anvex/releases/download/libnode-v24.18.0/anvex-libnode-24.18.0.zip"
-        val expectedSha256 = "f4ddc0f428ca55b8e75c8f9349efa3ea6d66523e73e9d7c122e079599bc8115f"
+        val url = "https://github.com/PishiKuchulu/Anvex/releases/download/libnode-v24.22.1/anvex-libnode-24.22.1.zip"
+        val expectedSha256 = "d7c2e9ea3f23bb2bd0461dfeadf55b02b6f0a4964d2a2c0e7c90e5eda617d6a2"
         val zipFile = File(layout.buildDirectory.get().asFile, "nodejs-mobile.zip")
         zipFile.parentFile.mkdirs()
         URL(url).openStream().use { input -> zipFile.outputStream().use { input.copyTo(it) } }
@@ -52,7 +52,7 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
                 zip.closeEntry()
             }
         }
-        nodeLibsMarker.writeText("anvex-libnode v24.18.0 sha256=$expectedSha256\n")
+        nodeLibsMarker.writeText("anvex-libnode v24.22.1 sha256=$expectedSha256\n")
     }
 }
 tasks.named("preBuild") { dependsOn(downloadNodeLibs) }
