@@ -184,7 +184,7 @@ class PiEngine(
                         "extension_ui_request" -> launch {
                             // A response racing teardown may hit a closed
                             // socket; the run is already ending either way.
-                            runCatching { handleUiRequest(record, config, approvalPrompt) { response -> send(response) } }
+                            runCatching { handleUiRequest(record, config, projectRoot, approvalPrompt) { response -> send(response) } }
                         }
                         else -> {
                             val type = record.optString("type")
@@ -245,6 +245,7 @@ class PiEngine(
     private suspend fun handleUiRequest(
         record: JSONObject,
         config: RunConfig,
+        projectRoot: File,
         approvalPrompt: ApprovalPrompt,
         respond: suspend (JSONObject) -> Unit,
     ) {
@@ -261,6 +262,14 @@ class PiEngine(
             return
         }
         val (toolName, input) = parsed
+        // v4.10.2 (second review #3): sensitive reads and
+        // workspace-escaping tool calls are denied outright — they
+        // never reach the approval prompt, because a prompt-injected
+        // model must not be able to talk a user into leaking `.env`.
+        if (PiToolMapping.isHardDenied(toolName, input, projectRoot)) {
+            respond(response(false))
+            return
+        }
         val action = PiToolMapping.toBoltAction(toolName, input)
         val decision = approvals.decide(config.sessionId, config.projectId, action)
         if (decision.allowed) {
