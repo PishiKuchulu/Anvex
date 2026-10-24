@@ -29,11 +29,13 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -92,6 +94,11 @@ fun PreviewScreen(nav: NavController, projectId: String) {
     val refreshTick by vm.refreshTick.collectAsState()
     val previewFiles by vm.previewFiles.collectAsState()
     var showConsole by remember { mutableStateOf(false) }
+    // v4.10.2 (second review #8): the preview URL carries the loopback
+    // session token in its path, so "Open in browser" hands that token
+    // to another app (and its history) — the very thing SEC-01 keeps
+    // out. Ask first instead of silently sharing it.
+    var showBrowserWarning by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // v4.4 (architect feature 7): retained reference for the screenshot capture.
@@ -189,13 +196,7 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                 Icon(Icons.Filled.PhotoCamera, contentDescription = "Send screenshot to chat")
             }
             IconButton(
-                onClick = {
-                    url?.let {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it)))
-                        }
-                    }
-                },
+                onClick = { showBrowserWarning = true },
             ) {
                 Icon(Icons.Filled.OpenInBrowser, contentDescription = "Open in browser")
             }
@@ -206,6 +207,33 @@ fun PreviewScreen(nav: NavController, projectId: String) {
         // device (content rendered behind the banner); this is deterministic.
         var headerHeightPx by remember { mutableIntStateOf(0) }
         val density = LocalDensity.current
+        if (showBrowserWarning) {
+            AlertDialog(
+                onDismissRequest = { showBrowserWarning = false },
+                title = { Text("Open in external browser?") },
+                text = {
+                    Text(
+                        "The preview URL contains this session's access token, " +
+                            "so the browser app will receive it and keep it in its history. " +
+                            "The token stops working when the preview stops, but the URL " +
+                            "remains in the browser's history until cleared there.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showBrowserWarning = false
+                        url?.let {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it)))
+                            }
+                        }
+                    }) { Text("Open anyway") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBrowserWarning = false }) { Text("Cancel") }
+                },
+            )
+        }
         Box(modifier.fillMaxSize()) {
             var lastLoaded by remember { mutableStateOf("") }
             var lastTick by remember { mutableStateOf(0) }
