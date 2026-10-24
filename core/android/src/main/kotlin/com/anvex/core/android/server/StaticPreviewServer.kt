@@ -104,6 +104,12 @@ class StaticPreviewServer(
     // ------------------------------------------------------------------ handler
 
     private fun handle(client: Socket) {
+        // v4.10.2 (second review #1, CRITICAL): same ThreadLocal leak
+        // as the harness server — pendingCookie was never cleared, so
+        // a token-less error response on a reused pool thread leaked
+        // the real session token. Cleared at request start and in
+        // finally; within one request it is only set after auth.
+        pendingCookie.remove()
         try {
             client.use { socket ->
                 socket.soTimeout = 15_000
@@ -153,13 +159,13 @@ class StaticPreviewServer(
                 // not the caller — require the per-session token (path or the
                 // cookie it plants) so other on-device apps cannot read the
                 // workspace through this server.
-                val auth = LoopbackAuth.check(rawPath, cookieHeader, accessToken)
+                val auth = LoopbackAuth.check(rawPath, cookieHeader, accessToken, LoopbackAuth.PREVIEW_COOKIE)
                 if (auth is LoopbackAuth.Check.Denied) {
                     respond(socket, 403, "text/plain; charset=utf-8", "Forbidden".toByteArray())
                     return
                 }
                 val granted = auth as LoopbackAuth.Check.Granted
-                pendingCookie.set(if (granted.viaTokenPath) LoopbackAuth.cookieValue(accessToken) else null)
+                pendingCookie.set(if (granted.viaTokenPath) LoopbackAuth.cookieValue(accessToken, LoopbackAuth.PREVIEW_COOKIE) else null)
                 // v4.10.1 (BUG-08): URLDecoder turned '+' into a space (file
                 // names like c++.txt 404'd) and threw on malformed '%' —
                 // decode strictly as path bytes instead.
@@ -229,7 +235,7 @@ class StaticPreviewServer(
             }
         } catch (e: Exception) { android.util.Log.w("Anvex", "non-fatal: ${e.javaClass.simpleName}", e);
             // connection-level error: drop
-        }
+        } finally { pendingCookie.remove() }
     }
 
     private fun serveFile(socket: Socket, rel: String, method: String) {
@@ -336,7 +342,7 @@ class StaticPreviewServer(
     private val json = Json { encodeDefaults = true }
 
     private fun harnessPage(): String {
-        val files = fs.walk().filter { path -> path.split('/').none { it == ".git" || it == ".anvex" || it == "node_modules" } }
+        val files = fs.walk().filter { path -> path.split('/').none { it == ".git" || it == ".anvex" || it == ".anvex-pi" || it == "node_modules" } }
         val manifest = buildJsonArray {
             files.forEach { add(buildJsonObject { put("path", it) }) }
         }
@@ -384,6 +390,17 @@ class StaticPreviewServer(
                     for ((name, versionEl) in deps) {
                         if (PreviewHarness.OFFLINE_SPECIFIERS.containsKey(name) || name == "react-dom/client") continue
                         val version = (versionEl as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "latest"
+                        // v4.10.2 (second review #13): non-registry
+                        // specifiers (file:, workspace:, link:, git+, raw
+                        // URLs) are local packages, not registry versions —
+                        // mapping them to esm.sh fabricated a broken URL.
+                        // Skip them instead of inventing one; registry
+                        // ranges (>=, *, ^, ~) are left for esm.sh to
+                        // resolve, as before.
+                        if (version.startsWith("file:") || version.startsWith("workspace:") ||
+                            version.startsWith("link:") || version.startsWith("git+") ||
+                            version.startsWith("http://") || version.startsWith("https://")
+                        ) continue
                         val v = version.removePrefix("^").removePrefix("~").ifBlank { "latest" }
                         map[name] = "https://esm.sh/$name@$v"
                     }
@@ -456,7 +473,10 @@ internal fun decodePath(raw: String): String {
         val c = raw[i]
         if (c == '%' && i + 3 <= raw.length) {
             val code = raw.substring(i + 1, i + 3).toIntOrNull(16)
-            if (code != null) {
+            // v4.10.2 (second review #13): the harness decoder rejects
+            // negative codes, this one did not — "%-1" parsed as -1 and
+            // ByteArrayOutputStream.write(-1) silently wrote 0xFF.
+            if (code != null && code >= 0) {
                 bytes.write(code)
                 i += 3
                 continue

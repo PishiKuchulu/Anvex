@@ -92,6 +92,15 @@ class HarnessWebServer(
     // ------------------------------------------------------------------ handler
 
     private fun handle(client: Socket) {
+        // v4.10.2 (second review #1, CRITICAL): pendingCookie is
+        // per-REQUEST state on a pooled thread (pool size 2) and was
+        // never cleared — after the app's WebView opened a token URL
+        // once, the NEXT request on the same thread (even a 405/403
+        // error response to a token-less attacker request) carried
+        // `Set-Cookie` with the real token. Clear it at request start
+        // AND in finally, so a stale value can never leak across
+        // requests; within one request it is only set after auth.
+        pendingCookie.remove()
         try {
             client.use { socket ->
                 socket.soTimeout = 15_000
@@ -142,13 +151,13 @@ class HarnessWebServer(
                 val rawQuery = rawTarget.substringAfter('?', "")
                 // v4.10.1 (SEC-01): same token gate as the preview server —
                 // Sec-Fetch headers only ever constrained browsers.
-                val auth = LoopbackAuth.check(rawTarget.substringBefore('?'), cookieHeader, accessToken)
+                val auth = LoopbackAuth.check(rawTarget.substringBefore('?'), cookieHeader, accessToken, LoopbackAuth.HARNESS_COOKIE)
                 if (auth is LoopbackAuth.Check.Denied) {
                     respond(socket, 403, "text/plain; charset=utf-8", "Forbidden".toByteArray())
                     return
                 }
                 val granted = auth as LoopbackAuth.Check.Granted
-                pendingCookie.set(if (granted.viaTokenPath) LoopbackAuth.cookieValue(accessToken) else null)
+                pendingCookie.set(if (granted.viaTokenPath) LoopbackAuth.cookieValue(accessToken, LoopbackAuth.HARNESS_COOKIE) else null)
                 val decoded = decodePath(granted.path)
                 when {
                     decoded == "/harness" || decoded == "/harness/" || decoded == "/harness/index.html" -> {
@@ -190,6 +199,7 @@ class HarnessWebServer(
                 }
             }
         } catch (e: Exception) { android.util.Log.w("Anvex", "non-fatal: ${e.javaClass.simpleName}", e); }
+        finally { pendingCookie.remove() }
     }
 
     private fun serveHarnessAsset(socket: Socket, name: String, method: String) {
