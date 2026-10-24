@@ -31,7 +31,7 @@ object NodeBridge {
             // emulator smoke: "cannot locate symbol
             // UCNV_TO_U_CALLBACK_STOP_78 referenced by libnode.so"), while
             // the same libraries load cleanly one by one. The closure ships
-            // in the app lib dir next to libnode.so (see the libnode-v24.18.0
+            // in the app lib dir next to libnode.so (see the libnode-v24.22.1
             // runtime package); system libraries are not in this list.
             for (lib in CLOSURE) System.loadLibrary(lib)
             System.loadLibrary("anvex-node")
