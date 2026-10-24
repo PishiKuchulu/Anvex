@@ -59,10 +59,10 @@ class AndroidTerminalSession(
         if (text.length > maxChars) text.take(maxChars) else text
     }
 
-    private fun containsSensitivePath(command: String): Boolean {
-        val sensitive = Regex("(?i)(^|[ /._-])(\\.env(?:\\.[^ /]+)?|local\\.properties|gradle\\.properties|credentials(?:\\.[^ /]+)?|secrets?(?:\\.[^ /]+)?|.*(?:token|apikey|api_key|secret|password).*?)(?=$|[ /])")
-        return sensitive.containsMatchIn(command) || command.contains(".git/config", ignoreCase = true)
-    }
+    // v4.10.2 (second review #7): same drift as the shell runtime —
+    // replaced the private regex with the shared SensitivePaths list.
+    private fun containsSensitivePath(command: String): Boolean =
+        com.anvex.core.engine.SensitivePaths.commandReferencesSensitive(command)
 
     override fun close() {
         closed.set(true)

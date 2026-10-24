@@ -80,10 +80,13 @@ class AndroidShellRuntime(
         return head in setOf("pwd", "ls", "cat", "head", "tail", "find", "grep", "which", "echo", "printf", "true", "date")
     }
 
-    private fun containsSensitivePath(command: String): Boolean {
-        val sensitive = Regex("(?i)(^|[ /._-])(\\.env(?:\\.[^ /]+)?|local\\.properties|gradle\\.properties|credentials(?:\\.[^ /]+)?|secrets?(?:\\.[^ /]+)?|.*(?:token|apikey|api_key|secret|password).*?)(?=$|[ /])")
-        return sensitive.containsMatchIn(command) || command.contains(".git/config", ignoreCase = true)
-    }
+    // v4.10.2 (second review #7): this used to be a private regex that
+    // missed id_rsa, *.pem/*.jks/*.p12/*.keystore, .npmrc and .pypirc
+    // even though SensitivePaths already listed them — the two lists
+    // had drifted apart. It now IS the shared list, so the shell, the
+    // agent read tool and both servers agree on what is sensitive.
+    private fun containsSensitivePath(command: String): Boolean =
+        com.anvex.core.engine.SensitivePaths.commandReferencesSensitive(command)
 
     private fun readBounded(file: File): String {
         if (!file.isFile) return ""
