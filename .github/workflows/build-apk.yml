@@ -57,7 +57,9 @@ jobs:
         run: ./gradlew --no-daemon :core:engine:test :core:android:testDebugUnitTest :core:ai:test :app:testDebugUnitTest
 
       - name: Lint (v4.10.1, CI-04)
-        run: ./gradlew --no-daemon lintDebug
+        # --continue: report every module's lint errors in ONE run instead
+        # of stopping at the first failing module.
+        run: ./gradlew --no-daemon lintDebug --continue
 
       - name: Upload lint reports
         if: always()
