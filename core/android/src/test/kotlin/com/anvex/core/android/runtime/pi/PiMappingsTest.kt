@@ -71,6 +71,52 @@ class PiMappingsTest {
     }
 
     @Test
+    fun `review 2 large write payload parses when the gateway sends full JSON`() {
+        // The v4.10.1 gateway truncated line 2 at 4000 chars, so a
+        // 5000-char write never parsed (silently denied). The v4.10.2
+        // gateway sends the full JSON; the parser must accept it.
+        val big = "x".repeat(5000)
+        val full = JSONObject().put("path", "src/Big.jsx").put("content", big)
+        val message = "tool=write\ninput=$full\n\nTool: write\nsrc/Big.jsx"
+        val parsed = PiToolMapping.parseGatewayConfirm(message)
+        assertEquals("write", parsed?.first)
+        assertEquals(5000, parsed?.second?.optString("content")?.length)
+        // And the old truncated shape still fails closed, which is
+        // exactly why the gateway had to change, not the parser.
+        val truncated = full.toString().take(4000) + "…"
+        assertNull(PiToolMapping.parseGatewayConfirm("tool=write\ninput=$truncated"))
+    }
+
+    @Test
+    fun `review 2 pi sensitive and escaping tool calls are hard denied`() {
+        val root = java.io.File(System.getProperty("java.io.tmpdir"), "anvex-pi-test-root").apply { mkdirs() }
+        fun denied(tool: String, json: String) =
+            PiToolMapping.isHardDenied(tool, JSONObject(json), root)
+        fun allowed(tool: String, json: String) =
+            !PiToolMapping.isHardDenied(tool, JSONObject(json), root)
+        assertTrue(denied("read", """{"path":".env"}"""))
+        assertTrue(denied("read", """{"path":"release.jks"}"""))
+        assertTrue(denied("read", """{"path":".anvex-pi/agent/sessions/x.jsonl"}"""))
+        assertTrue(denied("read", """{"path":"../other-project/.env"}"""))
+        assertTrue(denied("read", """{"path":"/etc/passwd"}"""))
+        assertTrue(denied("ls", """{"path":"../.."}"""))
+        assertTrue(denied("grep", """{"pattern":"key","path":".env"}"""))
+        assertTrue(denied("find", """{"pattern":".env"}"""))
+        assertTrue(denied("bash", """{"command":"cat .env"}"""))
+        assertTrue(denied("bash", """{"command":"cat /etc/passwd"}"""))
+        assertTrue(denied("bash", """{"command":"cp .env backup.txt"}"""))
+        assertTrue(denied("write", """{"path":"../escape.txt","content":"x"}"""))
+        assertTrue(denied("write", """{"path":"/etc/escape.txt","content":"x"}"""))
+        assertTrue(allowed("read", """{"path":"src/app.txt"}"""))
+        assertTrue(allowed("read", """{"path":"${root.absolutePath}/src/app.txt"}"""))
+        assertTrue(allowed("bash", """{"command":"ls src"}"""))
+        assertTrue(allowed("bash", """{"command":"npm run build"}"""))
+        // Writing your own .env through the write tool stays allowed:
+        // only exfiltration READS are hard-denied, not legitimate edits.
+        assertTrue(allowed("write", """{"path":".env","content":"KEY=x"}"""))
+    }
+
+    @Test
     fun `provider families map to pi apis`() {
         assertEquals("openai-completions", PiProviderMapping.apiFor(ProviderKind.DEEPSEEK))
         assertEquals("openai-completions", PiProviderMapping.apiFor(ProviderKind.CUSTOM_OPENAI))
