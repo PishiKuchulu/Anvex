@@ -1,10 +1,10 @@
 name: Build libnode 24 release (Termux nodejs-lts, all ABIs)
 
 # Phase 1a of the harness-engine roadmap: produce Anvex's own hash-pinnable
-# libnode 24.18.0 package for Android — bin/<abi>/libnode.so plus its exact
+# libnode 24.22.1 package for Android — bin/<abi>/libnode.so plus its exact
 # DT_NEEDED dependency closure, and include/node headers from the official
-# Node.js v24.18.0 source tarball — published as the GitHub Release
-# "libnode-v24.18.0" (asset anvex-libnode-24.18.0.zip). The app build pins
+# Node.js v24.22.1 source tarball — published as the GitHub Release
+# "libnode-v24.22.1" (asset anvex-libnode-24.22.1.zip). The app build pins
 # this zip by SHA-256 in core/android/build.gradle.kts (downloadNodeLibs).
 #
 # LESSON (run 39676591153, failed): Termux's published nodejs-lts deb ships
@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 env:
-  NODE_VERSION: "24.18.0"
+  NODE_VERSION: "24.22.1"
 
 jobs:
   build:
