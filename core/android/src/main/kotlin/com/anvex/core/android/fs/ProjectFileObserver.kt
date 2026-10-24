@@ -57,7 +57,9 @@ class ProjectFileObserver(
         val mask = FileObserver.CREATE or FileObserver.MODIFY or FileObserver.DELETE or
             FileObserver.MOVED_FROM or FileObserver.MOVED_TO
         val relativeRoot = root
-        val observer = object : FileObserver(dir, mask) {
+        // v4.10.1: the File-based FileObserver constructor is API 29+; the
+        // path-based one exists since API 1 and behaves identically here.
+        val observer = object : FileObserver(dir.absolutePath, mask) {
             override fun onEvent(event: Int, rawPath: String?) {
                 if (rawPath.isNullOrBlank()) return
                 val file = File(dir, rawPath)
