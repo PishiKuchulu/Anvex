@@ -422,7 +422,7 @@ class StaticPreviewServer(
             "pdf" -> "application/pdf"
             "xml" -> "application/xml; charset=utf-8"
             "csv" -> "text/csv; charset=utf-8"
-            "avif" -> "image/avif
+            "avif" -> "image/avif"
             "txt", "md" -> "text/plain; charset=utf-8"
             "mmd", "mermaid" -> "text/plain; charset=utf-8"
             else -> "application/octet-stream"
