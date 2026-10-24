@@ -19,7 +19,7 @@ object ContextBuilder {
     /** Directories that never belong in model context (deps, VCS, app-private state, build output). */
     private fun excluded(path: String): Boolean {
         val parts = path.split('/')
-        if (parts.any { it == ".git" || it == "node_modules" || it == ".anvex" || it == ".gradle" || it == ".idea" }) return true
+        if (parts.any { it == ".git" || it == "node_modules" || it == ".anvex" || it == ".anvex-pi" || it == ".gradle" || it == ".idea" }) return true
         val buildIndex = parts.indexOfFirst { it == "build" }
         if (buildIndex >= 0 && parts.take(buildIndex).none { it == "src" }) return true
         return false

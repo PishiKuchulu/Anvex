@@ -19,15 +19,39 @@ object SensitivePaths {
         "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
         ".git-credentials", ".npmrc", ".pypirc", "local.properties",
         "credentials", "credentials.json", "service-account.json",
+        "secrets.json", "secret.json",
     )
 
-    /** Full check: metadata directories (.git/.anvex) AND secret files. */
+    /** Full check: metadata directories (.git/.anvex/.anvex-pi) AND secret files. */
     fun isSensitive(path: String): Boolean {
         val normalized = path.replace('\\', '/').trim()
         if (normalized.isEmpty()) return false
         val parts = normalized.split('/').filter { it.isNotEmpty() }
-        if (parts.any { it == ".git" || it == ".anvex" }) return true
+        if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" }) return true
         return isSecretFile(path)
+    }
+
+    /**
+     * v4.10.2 (second review #7): the shell runtime and the terminal
+     * session each had their own secret regex, and neither caught
+     * `id_rsa`, `*.pem`/`*.jks`/`*.p12`, `.npmrc` or `.pypirc` — all of
+     * which ARE in this list. Both now call this shared check instead
+     * of their own regex, so the KDoc claim above is finally true.
+     * Tokenizes a command line (whitespace, then `=`/`@` splits for
+     * `--flag=value` and `curl -d @file` shapes) and reports whether
+     * any token names a sensitive path. Deliberately name-based, like
+     * [isSensitive]: a file merely called `token.ts` is ordinary code.
+     */
+    fun commandReferencesSensitive(command: String): Boolean {
+        for (raw in command.split(Regex("\\s+"))) {
+            val token = raw.trim('\'', '"').trim(',', ';', ':')
+            if (token.isEmpty()) continue
+            for (piece in token.split('=', '@')) {
+                val p = piece.trim('\'', '"')
+                if (p.isNotEmpty() && isSensitive(p)) return true
+            }
+        }
+        return false
     }
 
     /**
@@ -39,7 +63,7 @@ object SensitivePaths {
         val normalized = path.replace('\\', '/').trim()
         if (normalized.isEmpty()) return false
         val parts = normalized.split('/').filter { it.isNotEmpty() }
-        if (parts.any { it == ".git" }) return true
+        if (parts.any { it == ".git" || it == ".anvex-pi" }) return true
         val name = parts.last().lowercase()
         if (name == ".env" || name.startsWith(".env.") || name.endsWith(".env")) return true
         if (name in KEY_NAMES) return true

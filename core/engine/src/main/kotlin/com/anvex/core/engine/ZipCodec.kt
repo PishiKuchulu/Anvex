@@ -30,7 +30,7 @@ object ZipCodec {
      */
     fun isExportable(path: String): Boolean {
         val parts = path.replace('\\', '/').split('/')
-        if (parts.any { it == ".git" || it == "node_modules" || it == ".gradle" || it == ".idea" }) return false
+        if (parts.any { it == ".git" || it == "node_modules" || it == ".gradle" || it == ".idea" || it == ".anvex-pi" }) return false
         val buildIndex = parts.indexOfFirst { it == "build" }
         if (buildIndex >= 0 && parts.take(buildIndex).none { it == "src" }) return false
         val name = parts.last()

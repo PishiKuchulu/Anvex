@@ -5,7 +5,7 @@ object ProjectSearch {
     data class Match(val path: String, val line: Int, val column: Int, val preview: String)
     data class ReplaceResult(val path: String, val replacements: Int)
 
-    private val ignoredRoots = setOf(".git", ".gradle", "build", "node_modules", ".idea", ".anvex")
+    private val ignoredRoots = setOf(".git", ".gradle", "build", "node_modules", ".idea", ".anvex", ".anvex-pi")
 
     fun search(fs: ProjectFileSystem, query: String, caseSensitive: Boolean = false, maxMatches: Int = 2000): List<Match> {
         if (query.isEmpty() || maxMatches <= 0) return emptyList()

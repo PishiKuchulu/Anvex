@@ -71,7 +71,7 @@ object ArtifactHygienePolicy {
         val normalized = path.replace('\\', '/').trim('/')
         if (normalized.isBlank()) return false
         val parts = normalized.split('/')
-        if (parts.any { it == ".git" || it == ".gradle" || it == "node_modules" || it == ".idea" || it == ".anvex" || it == "pFP" || it == "pfp" }) return false
+        if (parts.any { it == ".git" || it == ".gradle" || it == "node_modules" || it == ".idea" || it == ".anvex" || it == ".anvex-pi" || it == "pFP" || it == "pfp" }) return false
         // Gradle/Node output directories only. A source package that happens to be called
         // "build" (e.g. core/android/src/main/kotlin/.../build/) must stay in the archive.
         val buildIndex = parts.indexOfFirst { it == "build" }
