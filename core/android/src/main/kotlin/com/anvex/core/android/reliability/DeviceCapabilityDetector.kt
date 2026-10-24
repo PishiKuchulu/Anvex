@@ -32,7 +32,13 @@ class DeviceCapabilityDetector(private val context: Context) {
             runCatching { Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", 0) == 1 }.getOrDefault(false)
         } else false
         val shizuku = runCatching { context.packageManager.getApplicationInfo("moe.shizuku.privileged.api", 0); true }.getOrDefault(false)
-        val storage = if (api >= 30) runCatching { Environment.isExternalStorageManager() }.getOrDefault(false) else true
+        // v4.10.1: lint's NewApi check cannot follow the `api` alias +
+        // runCatching lambda, so the guard is written in the form lint
+        // verifies (direct SDK_INT check, try/catch instead of a lambda) —
+        // runtime behavior is identical.
+        val storage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try { Environment.isExternalStorageManager() } catch (t: Throwable) { false }
+        } else true
         return Capabilities(api, abi, Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }, api >= 33, api >= 26, wirelessCapable, wirelessEnabled, shizuku, storage, true)
     }
 }
