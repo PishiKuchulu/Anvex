@@ -263,7 +263,7 @@ class NodeMobileRuntime(
         private val SHARED_BUSY = AtomicBoolean(false)
         private val SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
         private const val MAX_LINES = 5_000
-        private const val RUNTIME_VERSION = "24.18.0-npm11.16.0"
+        private const val RUNTIME_VERSION = "24.22.1-npm11.19.1"
 
         /**
          * v4.6.1: device-level availability of the bundled runtime — the one
