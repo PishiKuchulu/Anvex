@@ -912,6 +912,10 @@ class HarnessBridge(
      * IS_PENDING=0. On any write failure the pending row is deleted so no empty
      * husk lingers in Downloads.
      */
+    // v4.10.1: MediaStore.Downloads is API 29+; both call sites already
+    // guard with SDK_INT >= Q — the annotation is what lets lint verify
+    // that contract instead of flagging the body (NewApi).
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
     private fun saveZipViaMediaStoreDownloads(bytes: ByteArray, fileName: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
