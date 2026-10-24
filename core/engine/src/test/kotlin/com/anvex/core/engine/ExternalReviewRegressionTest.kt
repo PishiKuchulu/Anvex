@@ -47,6 +47,22 @@ class ExternalReviewRegressionTest {
         assertFalse(fs.exists("b.txt"))
     }
 
+    // ------------------------------------------------------------- BUG-03 semantics
+
+    @Test
+    fun `BUG-03 rm -f of a missing path succeeds but plain rm fails honestly`() {
+        // POSIX: rm -f ignores nonexistent operands (the end state — path
+        // absent — already holds); rm without -f errors. CI run 87 caught
+        // the blanket "nothing deleted = failure" rule breaking the first
+        // half of that contract (Batch1AgentRuntimeTest).
+        val approving = ActionDispatcher(FakeFs(), approval = { it.requiresApproval })
+        val forced = approving.applyShellAction(BoltAction.ShellAction("rm -rf src"), "shell").single()
+        assertTrue("rm -rf of a missing path must succeed", forced.success)
+
+        val plain = approving.applyShellAction(BoltAction.ShellAction("rm src"), "shell").single()
+        assertFalse("rm of a missing path must fail honestly", plain.success)
+    }
+
     // ------------------------------------------------------------- BUG-02
 
     @Test
