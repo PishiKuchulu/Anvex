@@ -101,7 +101,16 @@ object VideoRenderer {
     private suspend fun createWebView(context: Context, htmlFile: File, width: Int, height: Int): WebView {
         val webView = WebView(context)
         webView.settings.javaScriptEnabled = true
+        // v4.10.2 (second review #12): this WebView renders AI-written
+        // HTML off-screen. file:// access is required for the page
+        // itself, but it used to come with no navigation or network
+        // limits at all. Now: no network loads, no file-URL JS access
+        // to other files, and navigations are blocked in the client.
         webView.settings.allowFileAccess = true
+        webView.settings.allowFileAccessFromFileURLs = false
+        webView.settings.allowUniversalAccessFromFileURLs = false
+        webView.settings.blockNetworkLoads = true
+        webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
         webView.settings.domStorageEnabled = false
         webView.setBackgroundColor(Color.BLACK)
         webView.measure(
@@ -114,6 +123,42 @@ object VideoRenderer {
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (!cont.isCompleted) cont.resume(true)
+                    }
+
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                    ): Boolean {
+                        // The render page must not navigate anywhere:
+                        // only the initial file:// load of this exact
+                        // page is allowed through; everything else
+                        // (including clicks to other files or sites)
+                        // is blocked.
+                        val target = request?.url?.toString()
+                        return target != "file://" + htmlFile.absolutePath
+                    }
+
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                    ): android.webkit.WebResourceResponse? {
+                        // Belt and braces beside blockNetworkLoads: block
+                        // network subresources and file subresources
+                        // outside the render page's own directory, so
+                        // AI-written HTML cannot pull in arbitrary
+                        // on-device files as images/scripts.
+                        val uri = request?.url ?: return null
+                        if (uri.scheme == "http" || uri.scheme == "https") {
+                            return android.webkit.WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                        }
+                        if (uri.scheme == "file") {
+                            val dir = htmlFile.parentFile?.absolutePath ?: return null
+                            val target = uri.path ?: return null
+                            if (target != htmlFile.absolutePath && !target.startsWith("$dir/")) {
+                                return android.webkit.WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                            }
+                        }
+                        return null
                     }
                 }
                 webView.loadUrl("file://${htmlFile.absolutePath}")
