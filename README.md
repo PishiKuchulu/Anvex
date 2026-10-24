@@ -114,6 +114,16 @@ Or open the project in Android Studio and press **Run ▶**.
     GitHub sync talks to api.github.com with your own token — only when
     you set it up and press sync.
 - The app has gone through multiple security-hardening and code-audit passes.
+- **Nightly debug builds are signed with a publicly known debug key.**
+  The rolling debug APK (tag `latest`, package `com.anvex.app.debug`) is
+  signed with the committed `keystore/debug.keystore` so that each nightly
+  installs over the previous one — that keystore's private key is in this
+  public repository, so anyone can sign an APK that Android treats as an
+  update to a debug install (and that would inherit its data). Install
+  nightly debug builds only from this repository's own releases, and do
+  not keep sensitive projects in a debug install. Versioned releases
+  (`vX.Y.Z`) are signed with a private release key and are unaffected;
+  the in-app updater only ever offers those versioned releases.
 
 Found a vulnerability? Please open a private security advisory on GitHub instead of a public issue.
 

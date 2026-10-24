@@ -1,5 +1,95 @@
 # Changelog
 
+## 4.10.2 — Second external-review fix pass
+
+Fixes from a second independent review of 4.10.1 (14 findings; each
+verified against the source first, as with 4.10.1). The reviewer was
+right about the important ones — including one critical bug the first
+review's fixes had introduced.
+
+### Fixed — critical: loopback token leak (review #1)
+- The preview and harness servers kept the session cookie in a
+  `ThreadLocal` that was never cleared. After the app's WebView opened
+  a token URL once, a token-less request on the same pooled thread
+  (even a `POST` answered 405 before any auth check) came back with
+  `Set-Cookie` carrying the real token — which would have defeated
+  the whole SEC-01 token gate. The cookie is now cleared at request
+  start and in `finally`, so a stale value can never cross requests;
+  a socket-level regression test reproduces the exact attack.
+- Token comparison is now constant-time, and the two servers no longer
+  share one cookie name on 127.0.0.1 (review #11): cookies are not
+  port-scoped, so the preview token used to overwrite the harness
+  token and break absolute-path harness downloads.
+
+### Fixed — command policy bypasses (review #2, #6)
+- `sh -c`, `'rm' -rf`, `toybox rm`, `nice -n 10 rm`, `timeout 5 rm`,
+  `sudo`/`exec` wrappers, `node -e` / `python -c`, `git push origin
+  +main` / `--delete` / `--mirror`, `rm --recursive=x`, `mv x
+  /dev/null`, `chmod -R 000`, and `curl -d @.env` all read as SAFE
+  before; they now require approval (nested shells and interpreter
+  `-e`/`-c` always do). Wrapper flags and their values are skipped
+  properly, `--flag=value` is normalized, and `git push` is gated as
+  a publish in all forms.
+- `git branch -D` never required approval: the policy lowercased the
+  whole command, turning `-D` into `-d` before comparison. Arguments
+  now keep their case (only the command word is lowercased), so `-D`
+  gates and `-d` stays safe.
+
+### Fixed — Pi engine (review #3, #4, #5)
+- Pi tool calls previously went through `ActionSafetyPolicy` alone:
+  `read .env` and `cat .env` through Pi were silently SAFE, because
+  read tools always assess SAFE and Pi has no second allowlist behind
+  the gateway. Sensitive reads and workspace-escaping tool calls are
+  now hard-denied in the Pi engine before any approval prompt; Pi bash
+  additionally denies commands referencing sensitive files or absolute
+  paths outside the project. (Pi bash is still a general shell — this
+  closes the silent exfiltration hole, it does not make Pi equal to
+  the native allowlist.)
+- Pi could not write any file larger than ~4 KB: the approval gateway
+  truncated its confirm payload at 4000 chars, so the Kotlin parser
+  failed and the call was denied with no useful reason. The gateway
+  (`ext/gateway.ts` inside `pi-runtime.zip`) now sends the full JSON;
+  the 300-char compact form survives only in the dialog prose.
+- Pi session transcripts (`.anvex-pi/`) used to flow into GitHub sync,
+  ZIP export, model context and the preview server, because every
+  exclusion list named `.anvex` but not `.anvex-pi`. All of them now
+  exclude `.anvex-pi`, and `SensitivePaths` treats it as sensitive.
+
+### Fixed — other
+- The shell runtime and terminal session each had a private secret
+  regex that missed `id_rsa`, `*.pem`/`*.jks`/`*.p12`, `.npmrc` and
+  `.pypirc` (review #7) — both now use the shared `SensitivePaths`
+  list, so the documented claim is finally true.
+- "Open in browser" now warns before handing the token-bearing preview
+  URL to another app (review #8); the in-app updater still only ever
+  offers versioned, release-signed releases.
+- The nightly debug builds' signing key is public by design (a fixed
+  committed debug keystore) — this is now stated in the README with
+  its exact consequence, instead of living only in a build comment
+  (review #9). The debug package is `com.anvex.app.debug`, not the
+  release package, and release signing is unaffected.
+- Node.js bump completed (review #10): the remote `52da67a` commit
+  bumped only `libnode-release.yml` to 24.22.1 while the app still
+  built 24.18.0. The app build, reassemble workflow and runtime
+  version constant now all point at the released
+  `libnode-v24.22.1` package (npm 11.19.1), hash-pinned in
+  `core/android/build.gradle.kts`.
+- Preview server: `%-1` no longer decodes to byte 0xFF (review #13,
+  matching the harness decoder), and non-registry dependency
+  specifiers (`file:`, `workspace:`, `git+`, URLs) are no longer
+  mapped to fabricated esm.sh URLs. Full-file-in-RAM serving and the
+  missing `Range` support are deferred: they need a new filesystem
+  stream API across the real and SAF filesystems, not a one-line fix.
+- VideoRenderer (review #12): AI-written render pages now load with
+  network loads blocked, no file-URL access to other files, and
+  navigation/subresources outside the page's own directory blocked.
+- Docs hygiene (review #14, cheap parts only): `docs/CHANGELOG.md`
+  is marked frozen at 3.3.8 with a pointer to the root changelog.
+  Deferred, deliberately: archiving `docs/audit/`, breaking up the
+  1000+ line screens, LFS for the bundled zips, and SHA-pinning
+  GitHub Actions are maintenance refactors, not fixes, and rewriting
+  published history to "fix" duplicate commit messages is not done.
+
 ## 4.10.1 — External-review fix pass
 
 Fixes from an independent static review of 4.10.0 (44 findings; the real
