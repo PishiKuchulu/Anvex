@@ -51,6 +51,8 @@ class PiEngine(
     data class RunConfig(
         val providerName: String? = null,
         val modelId: String? = null,
+        /** Pi `--thinking` level (pi's native low/medium/high/xhigh/max), or null for pi's default. */
+        val thinkingLevel: String? = null,
         val apiKey: String? = null,
         val modelsJson: JSONObject? = null,
         /** Resume a previous Pi session file (from an earlier run's result). */
@@ -154,6 +156,7 @@ class PiEngine(
                 .put("extraExtensions", org.json.JSONArray(config.extraExtensions))
             if (config.providerName != null) configJson.put("providerName", config.providerName)
             if (config.modelId != null) configJson.put("modelId", config.modelId)
+            if (config.thinkingLevel != null) configJson.put("thinkingLevel", config.thinkingLevel)
             if (config.sessionFile != null) configJson.put("sessionFile", config.sessionFile)
             if (config.agentDir != null) configJson.put("agentDir", config.agentDir)
             if (config.modelsJson != null) configJson.put("modelsJson", config.modelsJson)

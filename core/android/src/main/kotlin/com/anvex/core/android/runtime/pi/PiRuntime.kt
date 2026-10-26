@@ -14,10 +14,15 @@ import java.util.zip.ZipInputStream
  * contains Pi's self-contained dist/bundle (9.0 MB), the jiti extension
  * loader (Pi's one deliberate external dependency), the Anvex driver and
  * the approval-gateway extension. No node_modules tree is shipped.
+ *
+ * The `-thinking1` suffix marks the driver change that forwards the
+ * Anvex Thinking setting as pi's `--thinking` flag; the versioned
+ * install dir changes with it, so existing installs re-extract
+ * instead of keeping a stale driver.
  */
 object PiRuntime {
 
-    const val RUNTIME_VERSION = "pi-1.4.0"
+    const val RUNTIME_VERSION = "pi-1.4.0-thinking1"
     private const val ASSET_NAME = "pi-runtime.zip"
     private const val MARKER = ".anvex-pi-runtime.ok"
 

@@ -11,7 +11,67 @@ enum class ThinkingLevel(val label: String, val budgetTokens: Int) {
     NORMAL("Normal", 4096),
     HIGH("High", 8192),
     XHIGH("XHigh", 16384),
-    MAX("Max", 32768),
+    MAX("Max", 32768);
+
+    /**
+     * Wire value for OpenAI-compatible `reasoning_effort` endpoints whose
+     * documented vocabulary is low/medium/high/xhigh/max (OpenAI GPT-5.x,
+     * OpenRouter passthrough). Anvex's NORMAL is the balanced default, so
+     * it maps to "medium" — the old verbatim "normal" is not a provider
+     * value and was silently meaningless.
+     */
+    fun toOpenAiEffort(): String = when (this) {
+        LOW -> "low"
+        NORMAL -> "medium"
+        HIGH -> "high"
+        XHIGH -> "xhigh"
+        MAX -> "max"
+    }
+
+    /**
+     * DeepSeek V4 wire value: its documented effort vocabulary is only
+     * low/high/max, so NORMAL shares the provider default ("high") and
+     * XHIGH shares "max" with MAX. Sent together with
+     * `thinking: {"type": "enabled"}` (DeepSeek's official example pairs
+     * the two); a non-thinking model rejects the pair and the client
+     * retries once without it.
+     */
+    fun toDeepSeekEffort(): String = when (this) {
+        LOW -> "low"
+        NORMAL -> "high"
+        HIGH -> "high"
+        XHIGH -> "max"
+        MAX -> "max"
+    }
+
+    /**
+     * Groq wire value: Groq documents low/medium/high/xhigh/max but
+     * rejects values outside a model's supported set with HTTP 400, so
+     * the top levels are capped at "high" — the value every documented
+     * Groq reasoning model accepts (on Qwen 3.8, "high" selects the
+     * model's native xhigh mode). Anything Groq still rejects is
+     * covered by the client's retry-without-effort fallback.
+     */
+    fun toGroqEffort(): String = when (this) {
+        LOW -> "low"
+        NORMAL -> "medium"
+        HIGH -> "high"
+        XHIGH -> "high"
+        MAX -> "high"
+    }
+
+    /**
+     * Pi engine wire value for pi-coding-agent's `--thinking` flag, whose
+     * native levels are off/minimal/low/medium/high/xhigh/max — a 1:1
+     * match except NORMAL, which is pi's "medium".
+     */
+    fun toPiLevel(): String = when (this) {
+        LOW -> "low"
+        NORMAL -> "medium"
+        HIGH -> "high"
+        XHIGH -> "xhigh"
+        MAX -> "max"
+    }
 }
 
 /**

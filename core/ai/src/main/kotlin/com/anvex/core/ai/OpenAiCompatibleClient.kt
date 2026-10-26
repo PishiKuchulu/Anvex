@@ -71,18 +71,69 @@ class OpenAiCompatibleClient(
                 })
             }
         }
+        val effort = effortFor(request.thinkingLevel)
+        // Attempt 0 sends the level mapped to this provider's vocabulary.
+        // If the endpoint rejects the knob with HTTP 400 before any token
+        // streams, attempt 1 retries the identical request without it, so
+        // a provider with no reasoning parameter still chats instead of
+        // failing. A failure after tokens started streaming is never
+        // retried (it would duplicate tokens).
+        var outcome = runAttempt(request, messages, effort, sendEffort = true)
+        if (outcome.failure?.httpStatus == 400 && outcome.tokenCount == 0) {
+            outcome = runAttempt(request, messages, effort, sendEffort = false)
+        }
+        when {
+            outcome.failure != null -> emit(StreamEvent.Failed(outcome.failure))
+            outcome.sawDone || outcome.tokenCount > 0 -> emit(StreamEvent.Completed(outcome.finishReason, outcome.usage))
+            else -> emit(StreamEvent.Failed(AiError(AiError.Kind.PROTOCOL, "Stream ended without content")))
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private data class AttemptOutcome(
+        val failure: AiError?,
+        val sawDone: Boolean,
+        val tokenCount: Int,
+        val finishReason: String?,
+        val usage: Usage?,
+    )
+
+    /**
+     * Provider vocabulary for this endpoint's reasoning knob. OpenAI and
+     * OpenRouter use the OpenAI map; DeepSeek uses its low/high/max map
+     * (plus the thinking toggle its docs pair with it); Groq uses the
+     * capped map because it rejects out-of-set values with HTTP 400.
+     * Every other OpenAI-protocol kind (Mistral, custom endpoints,
+     * OpenCode, legacy local servers) gets the OpenAI map and relies on
+     * the retry-without-effort fallback if the endpoint rejects it.
+     */
+    private fun effortFor(level: com.anvex.core.model.ThinkingLevel): String = when (runtime.config.kind) {
+        com.anvex.core.model.ProviderKind.DEEPSEEK -> level.toDeepSeekEffort()
+        com.anvex.core.model.ProviderKind.GROQ -> level.toGroqEffort()
+        else -> level.toOpenAiEffort()
+    }
+
+    /**
+     * One streaming attempt. Tokens and reasoning deltas are emitted as
+     * they arrive; the outcome reports whether anything streamed, so the
+     * caller can decide whether a retry is safe.
+     */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<StreamEvent>.runAttempt(
+        request: ChatRequest,
+        messages: kotlinx.serialization.json.JsonArray,
+        effort: String?,
+        sendEffort: Boolean,
+    ): AttemptOutcome {
         val body = buildJsonObject {
             put("model", runtime.config.model)
             put("messages", messages)
             put("stream", true)
             request.temperature?.let { put("temperature", it) } ?: runtime.config.temperature?.let { put("temperature", it) }
             (request.maxTokens ?: runtime.config.maxTokens)?.let { put("max_tokens", it) }
-            // reasoning_effort is supported by OpenAI/OpenRouter but is not a
-            // universal OpenAI-compatible field. In particular, Ollama, LM
-            // Studio and arbitrary custom endpoints may reject unknown fields.
-            if (runtime.config.kind == com.anvex.core.model.ProviderKind.OPENAI ||
-                runtime.config.kind == com.anvex.core.model.ProviderKind.OPENROUTER) {
-                put("reasoning_effort", request.thinkingLevel.name.lowercase())
+            if (sendEffort && effort != null) {
+                put("reasoning_effort", effort)
+                if (runtime.config.kind == com.anvex.core.model.ProviderKind.DEEPSEEK) {
+                    put("thinking", buildJsonObject { put("type", "enabled") })
+                }
             }
         }
 
@@ -123,13 +174,8 @@ class OpenAiCompatibleClient(
             }
             usage = obj["usage"]?.let { parseUsage(it) } ?: usage
         }
-        val err = failure
-        when {
-            err != null -> emit(StreamEvent.Failed(err))
-            sawDone || tokenCount > 0 -> emit(StreamEvent.Completed(finishReason, usage))
-            else -> emit(StreamEvent.Failed(AiError(AiError.Kind.PROTOCOL, "Stream ended without content")))
-        }
-    }.flowOn(Dispatchers.IO)
+        return AttemptOutcome(failure, sawDone, tokenCount, finishReason, usage)
+    }
 
     override suspend fun listModels(): List<ModelInfo> = executeModelsCall()
 

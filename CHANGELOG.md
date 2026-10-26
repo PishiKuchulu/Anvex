@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — Thinking level works on every API
+
+- The Thinking menu (Low / Normal / High / XHigh / Max) previously only
+  affected some providers: the Pi engine ignored it entirely, the
+  OpenAI-compatible client sent it only to OpenAI and OpenRouter (and
+  with the verbatim label "normal", which is not a provider value), and
+  DeepSeek/Groq/Mistral/custom endpoints never saw it. Now every
+  OpenAI-protocol endpoint receives the level mapped to that provider's
+  documented vocabulary (OpenAI: low/medium/high/xhigh/max; DeepSeek:
+  low/high/max plus the thinking toggle its docs pair with it; Groq:
+  capped at high because Groq rejects out-of-set values with HTTP 400),
+  and an endpoint that still rejects the knob with HTTP 400 is retried
+  once without it, so an unsupported knob can never break a chat.
+- Pi engine: the Thinking setting is forwarded as pi-coding-agent's
+  native `--thinking` flag (low/medium/high/xhigh/max) on every run,
+  including session resumes, for both chat turns and durable
+  `pi-agent` tasks. The bundled `pi-runtime.zip` driver gained the
+  flag; the runtime version bumped to `pi-1.4.0-thinking1` so existing
+  installs re-extract instead of keeping a stale driver.
+- The regenerate-answer path in project chat now uses the session's
+  Thinking level instead of silently defaulting to Normal.
+- Documented provider limits that remain (not code gaps): Anthropic
+  adaptive-thinking models expose only three effort steps
+  (low/medium/high), so High/XHigh/Max map to the same step there;
+  Gemini 3 exposes three thinking levels for the same reason; Gemini
+  models unknown to the capability table still receive no thinking
+  config rather than an optimistic request that may 400.
+
 ## 4.10.2 — Second external-review fix pass
 
 Fixes from a second independent review of 4.10.1 (14 findings; each

@@ -1,6 +1,7 @@
 package com.anvex.core.android.runtime.pi
 
 import android.content.Context
+import com.anvex.core.model.ThinkingLevel
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,6 +40,7 @@ class PiChatBridge(
         prompt: String,
         providerName: String?,
         modelId: String?,
+        thinkingLevel: ThinkingLevel = ThinkingLevel.NORMAL,
         apiKey: String?,
         modelsJson: JSONObject?,
         approvalPrompt: PiEngine.ApprovalPrompt,
@@ -51,6 +53,7 @@ class PiChatBridge(
             config = PiEngine.RunConfig(
                 providerName = providerName,
                 modelId = modelId,
+                thinkingLevel = thinkingLevel.toPiLevel(),
                 apiKey = apiKey,
                 modelsJson = modelsJson,
                 sessionFile = sessionFileFor(chatKey),

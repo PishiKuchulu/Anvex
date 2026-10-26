@@ -600,6 +600,7 @@ class ChatViewModel(
                     prompt = text + attachNote,
                     providerName = mapped.providerName,
                     modelId = mapped.modelId,
+                    thinkingLevel = thinkingLevel.value,
                     apiKey = runtime.apiKey,
                     modelsJson = mapped.modelsJson,
                     approvalPrompt = PiEngine.ApprovalPrompt { ask ->
@@ -776,6 +777,7 @@ class ChatViewModel(
                     com.anvex.core.ai.ChatRequest(
                         systemPrompt = "You are a helpful assistant.",
                         turns = listOf(com.anvex.core.ai.ChatTurn(MessageRole.USER, question.content)),
+                        thinkingLevel = _session.value?.thinkingLevel ?: thinkingLevel.value,
                     )
                 ).collect { event ->
                     when (event) {

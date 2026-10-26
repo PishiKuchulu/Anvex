@@ -3,6 +3,8 @@ package com.anvex.core.android.runtime.pi
 import com.anvex.core.android.reliability.DurableTaskEngine
 import com.anvex.core.android.repo.ProjectRepository
 import com.anvex.core.android.repo.ProviderRepository
+import com.anvex.core.android.repo.SettingsRepository
+import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 
 /**
@@ -24,6 +26,7 @@ class PiTaskBridge(
     private val piEngine: PiEngine,
     private val providers: ProviderRepository,
     private val projects: ProjectRepository,
+    private val settings: SettingsRepository,
 ) {
 
     init {
@@ -49,11 +52,13 @@ class PiTaskBridge(
                     "Provider kind ${runtime.config.kind} is not supported by the Pi engine yet",
                 )
             task.checkpoint("pi-boot", mapped.providerName + "/" + mapped.modelId)
+            val thinking = settings.settings.first().thinkingLevel
             val result = piEngine.run(
                 projectRoot = root,
                 config = PiEngine.RunConfig(
                     providerName = mapped.providerName,
                     modelId = mapped.modelId,
+                    thinkingLevel = thinking.toPiLevel(),
                     apiKey = runtime.apiKey,
                     modelsJson = mapped.modelsJson,
                     sessionFile = payload.optString("sessionFile").ifBlank { null },
