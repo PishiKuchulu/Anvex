@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import com.anvex.core.android.db.AnvexDatabase
 import com.anvex.core.android.repo.ChatRepository
+import com.anvex.core.android.repo.ConversationMetaStore
 import com.anvex.core.android.repo.MutationRepository
 import com.anvex.core.android.repo.ProjectRepository
 import com.anvex.core.android.repo.ProviderRepository
