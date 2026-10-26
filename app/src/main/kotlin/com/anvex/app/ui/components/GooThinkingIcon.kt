@@ -46,6 +46,9 @@ fun GooThinkingIcon(
     modifier: Modifier = Modifier,
     iconSize: Dp = 32.dp,
 ) {
+    // tr() is @Composable, so it cannot be called inside the semantics
+    // lambda below (a plain SemanticsPropertyReceiver scope) — resolve it here.
+    val stopLabel = tr("Stop")
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val ink = if (dark) Color(0xFFF5F5F7) else Color(0xFF131316)
     val transition = rememberInfiniteTransition(label = "gooThinking")
@@ -86,7 +89,7 @@ fun GooThinkingIcon(
     Canvas(
         modifier
             .size(iconSize)
-            .semantics { contentDescription = tr("Stop") },
+            .semantics { contentDescription = stopLabel },
     ) {
         // this.size is the DrawScope pixel size (the Dp param is iconSize).
         val u = this.size.minDimension / 64f

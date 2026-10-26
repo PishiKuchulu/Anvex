@@ -16,6 +16,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Add
@@ -656,8 +658,11 @@ private fun ModelPicker(
                         testResults.containsKey(model.id) -> {
                             val ok = testResults[model.id] == true
                             androidx.compose.material3.Icon(
-                                if (ok) androidx.compose.material.icons.Icons.Filled.CheckCircle
-                                else androidx.compose.material.icons.Icons.Filled.Error,
+                                // Icons are extension properties: each one needs
+                                // its own import (a fully-qualified path alone
+                                // does not resolve them — that was the CI error).
+                                if (ok) Icons.Filled.CheckCircle
+                                else Icons.Filled.Error,
                                 null,
                                 tint = if (ok) androidx.compose.ui.graphics.Color(0xFF2E9E5B)
                                 else MaterialTheme.colorScheme.error,
