@@ -256,6 +256,10 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
     val testing by vm.testing.collectAsState()
     val models by vm.models.collectAsState()
     val loadingModels by vm.loadingModels.collectAsState()
+    val modelTestResults by vm.modelTestResults.collectAsState()
+    val testingModels by vm.testingModels.collectAsState()
+    val modelTestProgress by vm.modelTestProgress.collectAsState()
+    val modelTestingId by vm.modelTestingId.collectAsState()
     val saveMessage by vm.saveMessage.collectAsState()
     val credentialWarning by vm.credentialWarning.collectAsState()
     var showKey by remember { mutableStateOf(false) }
@@ -389,7 +393,15 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
             }
 
             if (models.isNotEmpty()) {
-                ModelPicker(models = models, current = ui.model) { model ->
+                ModelPicker(
+                    models = models,
+                    current = ui.model,
+                    testResults = modelTestResults,
+                    testingModels = testingModels,
+                    testProgress = modelTestProgress,
+                    testingModelId = modelTestingId,
+                    onTestModels = { vm.testModels() },
+                ) { model ->
                     vm.update { copy(model = model) }
                 }
             }
@@ -566,14 +578,47 @@ private fun KindSelector(current: ProviderKind, onSelect: (ProviderKind) -> Unit
 }
 
 @Composable
-private fun ModelPicker(models: List<com.anvex.core.model.ModelInfo>, current: String, onPick: (String) -> Unit) {
+private fun ModelPicker(
+    models: List<com.anvex.core.model.ModelInfo>,
+    current: String,
+    testResults: Map<String, Boolean> = emptyMap(),
+    testingModels: Boolean = false,
+    testProgress: Pair<Int, Int> = 0 to 0,
+    testingModelId: String? = null,
+    onTestModels: () -> Unit = {},
+    onPick: (String) -> Unit,
+) {
     var query by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     val shown = androidx.compose.runtime.remember(models, query) {
         val q = query.trim().lowercase()
         if (q.isEmpty()) models else models.filter { it.id.lowercase().contains(q) || it.displayName.lowercase().contains(q) }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Models from endpoint (${models.size})", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text(
+                "Models from endpoint (${models.size})",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            androidx.compose.material3.TextButton(onClick = onTestModels) {
+                Text(if (testingModels) tr("Cancel test") else tr("Test models"))
+            }
+        }
+        if (testingModels) {
+            Text(
+                "Testing ${testProgress.first}/${testProgress.second}…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (testResults.isNotEmpty()) {
+            val okCount = testResults.values.count { it }
+            Text(
+                "$okCount of ${testResults.size} models work with this key",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         androidx.compose.material3.OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -604,8 +649,29 @@ private fun ModelPicker(models: List<com.anvex.core.model.ModelInfo>, current: S
                             Text(model.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                         }
                     }
-                    if (selected) {
-                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
+                    // Key-test status wins over the selected check: green =
+                    // a minimal request with this model succeeded, red = it
+                    // failed for this key, spinner = currently being probed.
+                    when {
+                        testResults.containsKey(model.id) -> {
+                            val ok = testResults[model.id] == true
+                            androidx.compose.material3.Icon(
+                                if (ok) androidx.compose.material.icons.Icons.Filled.CheckCircle
+                                else androidx.compose.material.icons.Icons.Filled.Error,
+                                null,
+                                tint = if (ok) androidx.compose.ui.graphics.Color(0xFF2E9E5B)
+                                else MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        testingModelId == model.id -> {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        }
+                        selected -> {
+                            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
             }

@@ -64,4 +64,25 @@ object ChatTranscriptExporter {
         }
         context.startActivity(Intent.createChooser(intent, title))
     }
+
+    /**
+     * Shares a conversation, preferring the Markdown file route and falling
+     * back to sharing the rendered text itself when the file route fails
+     * (previously the file failure was swallowed and the share button
+     * silently did nothing — the reported "share doesn't work" bug).
+     */
+    fun shareTranscript(context: Context, title: String, messages: List<ChatMessage>) {
+        if (messages.isEmpty()) return
+        val uri = writeToCache(context, title, messages)
+        if (uri != null) {
+            share(context, uri, title)
+            return
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, toMarkdown(title, messages))
+        }
+        context.startActivity(Intent.createChooser(intent, title))
+    }
 }

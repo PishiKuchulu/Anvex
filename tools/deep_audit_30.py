@@ -94,7 +94,7 @@ check('v4 build engine streams logs', 'onLine' in engine and 'destroyForcibly' i
 text='\n'.join(p.read_text(encoding='utf-8', errors='ignore') for p in root.rglob('*.kt'))
 check('no duplicate approval authority', 'class ApprovalEngine' not in text and 'object ApprovalEngine' not in text, 'single durable approval repository/facade')
 db=(root/'core/android/src/main/kotlin/com/anvex/core/android/db/Database.kt').read_text(encoding="utf-8")
-check('room version 13 migration', 'version = 13' in db and 'MIGRATION_12_13' in db and 'MIGRATION_11_12' in db, 'v13 + 11->12->13 present')
+check('room version 14 migration', 'version = 14' in db and 'MIGRATION_13_14' in db and 'MIGRATION_12_13' in db, 'v14 + 12->13->14 present')
 check('retry due query', "state = 'RETRYING'" in db and 'nextRunAt' in db, 'RETRYING participates in queue claim')
 check('fgs lifecycle compliance', 'START_STICKY' in (root/'app/src/main/kotlin/com/anvex/app/runtime/AgentForegroundService.kt').read_text(encoding="utf-8") and 'setInexactRepeating' not in (root/'app/src/main/kotlin/com/anvex/app/runtime/AgentServiceController.kt').read_text(encoding="utf-8"), 'no repeating alarm-to-FGS watchdog on Android 12+')
 check('boot recovery', 'BOOT_COMPLETED' in (root/'app/src/main/kotlin/com/anvex/app/runtime/RuntimeBootReceiver.kt').read_text(encoding="utf-8") and 'BackupScheduler.schedule' in (root/'app/src/main/kotlin/com/anvex/app/runtime/RuntimeBootReceiver.kt').read_text(encoding="utf-8"), 'backup scheduling restored after reboot; Agent FGS is not silently started')

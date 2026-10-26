@@ -52,6 +52,14 @@ class ProvidersViewModel : ViewModel() {
     val testing = MutableStateFlow(false)
     val models = MutableStateFlow<List<ModelInfo>>(emptyList())
     val loadingModels = MutableStateFlow(false)
+
+    /** Per-model key test: model id -> true when a minimal request with it succeeded. */
+    val modelTestResults = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val testingModels = MutableStateFlow(false)
+    /** (tested, total) while a model test run is in flight. */
+    val modelTestProgress = MutableStateFlow(0 to 0)
+    val modelTestingId = MutableStateFlow<String?>(null)
+    private var modelTestJob: kotlinx.coroutines.Job? = null
     val saveMessage = MutableStateFlow<String?>(null)
     val credentialWarning = MutableStateFlow<String?>(null)
 
@@ -123,6 +131,46 @@ class ProvidersViewModel : ViewModel() {
                 models.value = emptyList()
             }
             loadingModels.value = false
+        }
+    }
+
+    /**
+     * Tests every fetched model against the form's API key: one minimal
+     * request per model (the client's validateConnection with that model id),
+     * run sequentially so provider rate limits are not tripped. Results land
+     * incrementally in [modelTestResults]; tapping again cancels the run and
+     * keeps the partial results. Listing a model proves nothing about key
+     * entitlement — only a real request per model does. (OpenCode free-tier
+     * clients validate connectivity rather than per-model entitlement, so
+     * their results mean "reachable", not "this model is enabled".)
+     */
+    fun testModels() {
+        val running = modelTestJob
+        if (running?.isActive == true) {
+            running.cancel()
+            return
+        }
+        val ids = models.value.map { it.id }
+        if (ids.isEmpty()) return
+        val ui = edit.value
+        testingModels.value = true
+        modelTestProgress.value = 0 to ids.size
+        modelTestResults.value = emptyMap()
+        modelTestJob = viewModelScope.launch {
+            try {
+                for ((index, id) in ids.withIndex()) {
+                    modelTestingId.value = id
+                    val ok = runCatching {
+                        val runtime = buildRuntime(ui.copy(model = id)) ?: return@runCatching false
+                        ProviderClientFactory.create(runtime).validateConnection().ok
+                    }.getOrDefault(false)
+                    modelTestResults.value = modelTestResults.value + (id to ok)
+                    modelTestProgress.value = index + 1 to ids.size
+                }
+            } finally {
+                modelTestingId.value = null
+                testingModels.value = false
+            }
         }
     }
 

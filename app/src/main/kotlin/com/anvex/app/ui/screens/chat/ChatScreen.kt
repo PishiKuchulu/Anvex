@@ -337,14 +337,13 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     Icon(Icons.Filled.StopCircle, contentDescription = "Stop generation")
                 }
             }
-            // v4.4.6: export the conversation as a Markdown transcript.
+            // v4.4.6: export the conversation as a Markdown transcript
+            // (file route with plain-text fallback, so the button never silently dies).
             IconButton(
                 onClick = {
                     val title = project?.name ?: "Chat"
-                    val uri = com.anvex.app.ui.components.ChatTranscriptExporter
-                        .writeToCache(context, title, messages)
-                    if (uri != null) com.anvex.app.ui.components.ChatTranscriptExporter
-                        .share(context, uri, title)
+                    com.anvex.app.ui.components.ChatTranscriptExporter
+                        .shareTranscript(context, title, messages)
                 },
                 enabled = messages.isNotEmpty(),
             ) {

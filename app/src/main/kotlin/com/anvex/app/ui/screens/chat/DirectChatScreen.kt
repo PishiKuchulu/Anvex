@@ -31,15 +31,19 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -85,6 +89,7 @@ import com.anvex.app.ui.components.AnvexIconTile
 import com.anvex.app.ui.components.BidiText
 import com.anvex.app.ui.components.ChatTranscriptExporter
 import com.anvex.app.ui.components.ConfirmDialog
+import com.anvex.app.ui.components.GooThinkingIcon
 import com.anvex.app.ui.components.MarkdownText
 import com.anvex.app.ui.components.MessageActionSheet
 import com.anvex.app.ui.components.directionalTextStyle
@@ -109,6 +114,7 @@ import java.util.Date
 fun DirectChatScreen(nav: NavController) {
     val vm: DirectChatViewModel = viewModel()
     val conversations by vm.conversations.collectAsState()
+    val archivedConversations by vm.archivedConversations.collectAsState()
     val activeId by vm.activeId.collectAsState()
     val messages by vm.messages.collectAsState()
     val sessionState by vm.sessionState.collectAsState()
@@ -130,10 +136,13 @@ fun DirectChatScreen(nav: NavController) {
     var replyTo by remember { mutableStateOf<ChatMessage?>(null) }
     var attachSheet by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<DirectChatViewModel.Conversation?>(null) }
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    var renameTarget by remember { mutableStateOf<DirectChatViewModel.Conversation?>(null) }
+    var renameText by remember { mutableStateOf("") }
     val sheetState = rememberModalBottomSheetState()
     val listState = rememberLazyListState()
 
-    val activeTitle = conversations.firstOrNull { it.id == activeId }?.title ?: tr("Chat")
+    val activeTitle = (conversations + archivedConversations).firstOrNull { it.id == activeId }?.title ?: tr("Chat")
 
     // v4.4.5 (smoothness): follow the tail only when already at the bottom.
     // v4.6: edge-based pinned check (isPinnedToBottom, shared with the project
@@ -202,37 +211,19 @@ fun DirectChatScreen(nav: NavController) {
                         .verticalScroll(rememberScrollState()),
                 ) {
                 conversations.forEach { conv ->
-                    NavigationDrawerItem(
-                        label = {
-                            Column {
-                                Text(conv.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-                                        .format(Date(conv.lastAt)),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        },
-                        icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
-                        badge = {
-                            IconButton(
-                                onClick = { deleteTarget = conv },
-                                modifier = Modifier.size(32.dp),
-                            ) {
-                                Icon(
-                                    Icons.Filled.Delete,
-                                    contentDescription = tr("Delete"),
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        },
+                    ConversationDrawerRow(
+                        conv = conv,
                         selected = conv.id == activeId,
-                        onClick = {
+                        menuOpen = menuFor == conv.id,
+                        onMenuOpenChange = { open -> menuFor = if (open) conv.id else null },
+                        onSelect = {
                             vm.selectConversation(conv.id)
                             scope.launch { drawerState.close() }
                         },
-                        modifier = Modifier.padding(horizontal = 8.dp),
+                        onPin = { vm.setPinned(conv.id, !conv.pinned) },
+                        onRename = { renameText = conv.title; renameTarget = conv },
+                        onArchive = { vm.setArchived(conv.id, true) },
+                        onDelete = { deleteTarget = conv },
                     )
                 }
                 if (conversations.isEmpty()) {
@@ -242,6 +233,30 @@ fun DirectChatScreen(nav: NavController) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(16.dp),
                     )
+                }
+                if (archivedConversations.isNotEmpty()) {
+                    Text(
+                        tr("Archived"),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                    )
+                    archivedConversations.forEach { conv ->
+                        ConversationDrawerRow(
+                            conv = conv,
+                            selected = conv.id == activeId,
+                            menuOpen = menuFor == conv.id,
+                            onMenuOpenChange = { open -> menuFor = if (open) conv.id else null },
+                            onSelect = {
+                                vm.selectConversation(conv.id)
+                                scope.launch { drawerState.close() }
+                            },
+                            onPin = { vm.setPinned(conv.id, !conv.pinned) },
+                            onRename = { renameText = conv.title; renameTarget = conv },
+                            onArchive = { vm.setArchived(conv.id, false) },
+                            onDelete = { deleteTarget = conv },
+                        )
+                    }
                 }
             }
         }
@@ -272,11 +287,11 @@ fun DirectChatScreen(nav: NavController) {
                             )
                             Spacer(Modifier.width(4.dp))
                         }
-                        // v4.4.6: export transcript as Markdown.
+                        // v4.4.6: export transcript as Markdown (file route with
+                        // plain-text fallback, so the button never silently dies).
                         IconButton(
                             onClick = {
-                                val uri = ChatTranscriptExporter.writeToCache(context, activeTitle, messages)
-                                if (uri != null) ChatTranscriptExporter.share(context, uri, activeTitle)
+                                ChatTranscriptExporter.shareTranscript(context, activeTitle, messages)
                             },
                             enabled = messages.isNotEmpty(),
                         ) {
@@ -526,8 +541,9 @@ fun DirectChatScreen(nav: NavController) {
                         }
                         Spacer(Modifier.width(8.dp))
                         if (sessionState.streaming) {
+                            // Thinking state shows the goo loader (tap still cancels).
                             IconButton(onClick = { vm.cancel() }) {
-                                Icon(Icons.Filled.Stop, contentDescription = tr("Stop"))
+                                GooThinkingIcon(modifier = Modifier.size(32.dp))
                             }
                         } else {
                             IconButton(
@@ -560,6 +576,31 @@ fun DirectChatScreen(nav: NavController) {
                 deleteTarget = null
             },
             onDismiss = { deleteTarget = null },
+        )
+    }
+
+    if (renameTarget != null) {
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text(tr("Rename conversation")) },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    label = { Text(tr("Conversation title")) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.renameConversation(renameTarget!!.id, renameText)
+                    renameTarget = null
+                }) { Text(tr("Save")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) { Text(tr("Cancel")) }
+            },
         )
     }
 
@@ -710,4 +751,92 @@ private fun AttachRow(icon: androidx.compose.ui.graphics.vector.ImageVector, lab
         Spacer(Modifier.width(12.dp))
         Text(label, style = MaterialTheme.typography.bodyMedium)
     }
+}
+
+/**
+ * One drawer row for a direct-chat conversation. The trailing overflow menu
+ * holds pin / rename / archive / delete — delete moved here from the old
+ * always-visible trash badge so the row stays readable. Pinned rows show a
+ * pin glyph next to the title; archived rows reuse the same row with the
+ * archive action flipped to unarchive.
+ */
+@Composable
+private fun ConversationDrawerRow(
+    conv: DirectChatViewModel.Conversation,
+    selected: Boolean,
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
+    onSelect: () -> Unit,
+    onPin: () -> Unit,
+    onRename: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    NavigationDrawerItem(
+        label = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        conv.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (conv.pinned) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            Icons.Filled.PushPin,
+                            contentDescription = tr("Pinned"),
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+                Text(
+                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                        .format(Date(conv.lastAt)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
+        badge = {
+            Box {
+                IconButton(
+                    onClick = { onMenuOpenChange(true) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = tr("Conversation options"),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { onMenuOpenChange(false) },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(tr(if (conv.pinned) "Unpin" else "Pin")) },
+                        onClick = { onMenuOpenChange(false); onPin() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(tr("Rename")) },
+                        onClick = { onMenuOpenChange(false); onRename() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(tr(if (conv.archived) "Unarchive" else "Archive")) },
+                        onClick = { onMenuOpenChange(false); onArchive() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(tr("Delete")) },
+                        onClick = { onMenuOpenChange(false); onDelete() },
+                    )
+                }
+            }
+        },
+        selected = selected,
+        onClick = onSelect,
+        modifier = Modifier.padding(horizontal = 8.dp),
+    )
 }

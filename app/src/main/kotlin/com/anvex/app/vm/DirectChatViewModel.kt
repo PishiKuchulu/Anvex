@@ -49,6 +49,8 @@ class DirectChatViewModel : ViewModel() {
         val title: String,
         val lastAt: Long,
         val count: Int,
+        val pinned: Boolean = false,
+        val archived: Boolean = false,
     )
 
     data class PreparedAttachments(
@@ -78,6 +80,8 @@ class DirectChatViewModel : ViewModel() {
 
     private val _conversations = MutableStateFlow<List<Conversation>>(emptyList())
     val conversations: StateFlow<List<Conversation>> = _conversations.asStateFlow()
+    private val _archivedConversations = MutableStateFlow<List<Conversation>>(emptyList())
+    val archivedConversations: StateFlow<List<Conversation>> = _archivedConversations.asStateFlow()
 
     val messages: StateFlow<List<ChatMessage>> = _activeId
         .flatMapLatest { id ->
@@ -179,21 +183,55 @@ class DirectChatViewModel : ViewModel() {
 
     private suspend fun refreshConversations() {
         val ids = graph.chat.directConversationIds()
+        val metas = graph.chat.conversationMetas()
         val rows = ids.mapNotNull { id ->
             runCatching {
                 val (first, count) = graph.chat.conversationSummary(id)
                 val lastAt = graph.chat.lastMessageTime(id)
-                val title = first
+                val meta = metas[id]
+                val derived = first
                     ?.takeIf { it.role == com.anvex.core.model.MessageRole.USER }
                     ?.content?.trim()?.take(42)
                     ?.ifBlank { null }
                     ?: first?.content?.trim()?.take(42)?.ifBlank { null }
                     ?: "New chat"
-                Conversation(id, title, lastAt, count)
+                Conversation(
+                    id,
+                    meta?.title?.takeIf { it.isNotBlank() } ?: derived,
+                    lastAt,
+                    count,
+                    pinned = meta?.pinned == true,
+                    archived = meta?.archived == true,
+                )
             }.getOrNull()
-        }.sortedByDescending { it.lastAt }
-        _conversations.value = rows
+        }.sortedWith(compareByDescending<Conversation> { it.pinned }.thenByDescending { it.lastAt })
+        _conversations.value = rows.filter { !it.archived }
+        _archivedConversations.value = rows.filter { it.archived }
     }
+
+    /**
+     * Updates one conversation's list metadata, preserving the other flags.
+     * Plain (non-receiver) transform: a receiver lambda would let the meta's
+     * own pinned/archived/title properties shadow the caller's arguments.
+     */
+    private fun updateMeta(id: String, transform: (com.anvex.core.android.repo.ConversationMeta) -> com.anvex.core.android.repo.ConversationMeta) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = graph.chat.conversationMetas()[id]
+                ?: com.anvex.core.android.repo.ConversationMeta(id, null, false, false)
+            graph.chat.upsertConversationMeta(transform(current))
+            withContext(Dispatchers.Main) { refreshConversations() }
+        }
+    }
+
+    fun setPinned(id: String, pinned: Boolean) =
+        updateMeta(id) { it.copy(pinned = pinned) }
+
+    fun setArchived(id: String, archived: Boolean) =
+        updateMeta(id) { it.copy(archived = archived) }
+
+    /** Blank renames clear the override, restoring the derived first-message title. */
+    fun renameConversation(id: String, title: String) =
+        updateMeta(id) { it.copy(title = title.trim().takeIf { it.isNotBlank() }) }
 
     fun selectConversation(id: String) {
         if (_activeId.value == id && _session.value != null) return
@@ -218,6 +256,7 @@ class DirectChatViewModel : ViewModel() {
     fun deleteConversation(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             graph.chat.deleteForProject(id)
+            graph.chat.deleteConversationMeta(id)
             runCatching { conversationDir(id).deleteRecursively() }
             withContext(Dispatchers.Main) {
                 refreshConversations()

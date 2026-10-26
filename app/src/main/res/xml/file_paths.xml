@@ -14,4 +14,6 @@
     <files-path name="generated" path="generated/" />
     <cache-path name="shared" path="shared/" />
     <cache-path name="camera" path="camera/" />
+    <!-- Chat transcript exports (ChatTranscriptExporter writes cacheDir/transcripts/). -->
+    <cache-path name="transcripts" path="transcripts/" />
 </paths>
