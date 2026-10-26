@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Thinking level works on every API
+## 4.10.3 — Thinking on every API, direct-chat upgrades, themed update dialog
 
 - The Thinking menu (Low / Normal / High / XHigh / Max) previously only
   affected some providers: the Pi engine ignored it entirely, the
@@ -27,6 +27,19 @@
   Gemini 3 exposes three thinking levels for the same reason; Gemini
   models unknown to the capability table still receive no thinking
   config rather than an optimistic request that may 400.
+- Direct chat: the top-bar share button works again (the transcript
+  FileProvider path was unmapped, so export silently died; now the file
+  route with a plain-text fallback); the conversations drawer gains
+  pin/unpin, rename and archive/unarchive via an overflow menu plus an
+  Archived section (metadata in DataStore, no schema change); while the
+  agent is thinking, the send button shows an animated goo loader
+  instead of a plain stop square (tap still cancels); providers gain a
+  "Test models" button that probes every fetched model with one minimal
+  request against the form's key and marks each row pass/fail.
+- Update dialog: the app's own update popup is redesigned to a dark
+  glassy purple theme with animated colors — breathing glow and border,
+  a shimmer band sweeping the progress bar, and a pulsing halo — while
+  the controller, state and strings are untouched.
 
 ## 4.10.2 — Second external-review fix pass
 
