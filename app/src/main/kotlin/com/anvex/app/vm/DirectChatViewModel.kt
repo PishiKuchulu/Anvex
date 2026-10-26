@@ -183,7 +183,7 @@ class DirectChatViewModel : ViewModel() {
 
     private suspend fun refreshConversations() {
         val ids = graph.chat.directConversationIds()
-        val metas = graph.chat.conversationMetas()
+        val metas = graph.conversationMeta.all()
         val rows = ids.mapNotNull { id ->
             runCatching {
                 val (first, count) = graph.chat.conversationSummary(id)
@@ -216,9 +216,9 @@ class DirectChatViewModel : ViewModel() {
      */
     private fun updateMeta(id: String, transform: (com.anvex.core.android.repo.ConversationMeta) -> com.anvex.core.android.repo.ConversationMeta) {
         viewModelScope.launch(Dispatchers.IO) {
-            val current = graph.chat.conversationMetas()[id]
+            val current = graph.conversationMeta.all()[id]
                 ?: com.anvex.core.android.repo.ConversationMeta(id, null, false, false)
-            graph.chat.upsertConversationMeta(transform(current))
+            graph.conversationMeta.upsert(transform(current))
             withContext(Dispatchers.Main) { refreshConversations() }
         }
     }
@@ -256,7 +256,7 @@ class DirectChatViewModel : ViewModel() {
     fun deleteConversation(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             graph.chat.deleteForProject(id)
-            graph.chat.deleteConversationMeta(id)
+            graph.conversationMeta.delete(id)
             runCatching { conversationDir(id).deleteRecursively() }
             withContext(Dispatchers.Main) {
                 refreshConversations()

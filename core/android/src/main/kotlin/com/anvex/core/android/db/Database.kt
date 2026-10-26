@@ -46,19 +46,6 @@ data class MessageEntity(
     val reasoning: String? = null,
 )
 
-/**
- * Per-conversation list metadata for project-less direct chats. Titles are
- * derived from the first message by default; a rename stores an override
- * here. Pin/archive are list-only flags — they never touch the messages.
- */
-@Entity(tableName = "direct_conversation_meta")
-data class ConversationMetaEntity(
-    @PrimaryKey val conversationId: String,
-    val title: String?,
-    val pinned: Boolean,
-    val archived: Boolean,
-)
-
 @Entity(tableName = "providers")
 data class ProviderEntity(
     @PrimaryKey val id: String,
@@ -257,18 +244,6 @@ interface MessageDao {
 }
 
 @Dao
-interface ConversationMetaDao {
-    @Query("SELECT * FROM direct_conversation_meta")
-    suspend fun all(): List<ConversationMetaEntity>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(meta: ConversationMetaEntity)
-
-    @Query("DELETE FROM direct_conversation_meta WHERE conversationId = :id")
-    suspend fun delete(id: String)
-}
-
-@Dao
 interface ProviderDao {
     @Query("SELECT * FROM providers ORDER BY createdAt ASC")
     fun observeAll(): Flow<List<ProviderEntity>>
@@ -427,14 +402,12 @@ interface QuarantineDao {
         ProjectEntity::class, MessageEntity::class, ProviderEntity::class,
         MutationEntity::class, DiagnosticEventEntity::class, TaskRunEntity::class,
         BackupRecordEntity::class, PluginEntity::class, QuarantineEntity::class, ApprovalGrantEntity::class,
-        ConversationMetaEntity::class,
     ],
-    version = 14,
+    version = 13,
     exportSchema = true,
 )
 abstract class AnvexDatabase : RoomDatabase() {
     abstract fun projectDao(): ProjectDao
-    abstract fun conversationMetaDao(): ConversationMetaDao
     abstract fun messageDao(): MessageDao
     abstract fun providerDao(): ProviderDao
     abstract fun mutationDao(): MutationDao
@@ -580,13 +553,6 @@ abstract class AnvexDatabase : RoomDatabase() {
             }
         }
 
-        /** v13 -> v14: direct-chat list metadata (pin / rename / archive). New table only — no existing data touched. */
-        val MIGRATION_13_14 = object : Migration(13, 14) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS `direct_conversation_meta` (`conversationId` TEXT NOT NULL, `title` TEXT, `pinned` INTEGER NOT NULL, `archived` INTEGER NOT NULL, PRIMARY KEY(`conversationId`))")
-            }
-        }
-
-        val ALL_MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+        val ALL_MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
     }
 }

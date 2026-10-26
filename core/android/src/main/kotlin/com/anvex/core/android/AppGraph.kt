@@ -49,7 +49,10 @@ class AppGraph private constructor(private val app: Application) {
         database.mutationDao(),
     )
 
-    val chat: ChatRepository = ChatRepository(database.messageDao(), database.conversationMetaDao())
+    val chat: ChatRepository = ChatRepository(database.messageDao())
+
+    /** Direct-chat list metadata (pin / rename / archive), DataStore-backed. */
+    val conversationMeta: ConversationMetaStore = ConversationMetaStore(app)
 
     /** v1.1 §24: persisted change journal (action results) per project. */
     val mutations: MutationRepository = MutationRepository(database.mutationDao())

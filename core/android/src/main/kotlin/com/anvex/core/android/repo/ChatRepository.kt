@@ -1,7 +1,5 @@
 package com.anvex.core.android.repo
 
-import com.anvex.core.android.db.ConversationMetaDao
-import com.anvex.core.android.db.ConversationMetaEntity
 import com.anvex.core.android.db.MessageDao
 import com.anvex.core.android.db.MessageEntity
 import com.anvex.core.model.ArtifactSummary
@@ -15,19 +13,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-/** List metadata for one direct-chat conversation (pin / rename / archive). */
-data class ConversationMeta(
-    val conversationId: String,
-    val title: String?,
-    val pinned: Boolean,
-    val archived: Boolean,
-)
-
-class ChatRepository(
-    private val dao: MessageDao,
-    // Null in unit tests that only exercise message flows; production always passes the real DAO.
-    private val metaDao: ConversationMetaDao? = null,
-) {
+class ChatRepository(private val dao: MessageDao) {
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -83,22 +69,6 @@ class ChatRepository(
     /** v4.4.6: newest message timestamp of a conversation (0 when empty). */
     suspend fun lastMessageTime(projectId: String): Long =
         dao.lastMessageTime(projectId) ?: 0L
-
-    /** Direct-chat list metadata, keyed by conversation id (empty when no DAO was supplied). */
-    suspend fun conversationMetas(): Map<String, ConversationMeta> =
-        metaDao?.all()?.associate {
-            it.conversationId to ConversationMeta(it.conversationId, it.title, it.pinned, it.archived)
-        } ?: emptyMap()
-
-    suspend fun upsertConversationMeta(meta: ConversationMeta) {
-        metaDao?.upsert(
-            ConversationMetaEntity(meta.conversationId, meta.title, meta.pinned, meta.archived),
-        )
-    }
-
-    suspend fun deleteConversationMeta(conversationId: String) {
-        metaDao?.delete(conversationId)
-    }
 
     suspend fun usageSummary(): List<ChatMessage> = dao.allAssistantUsage().mapNotNull { it.toDomain() }
 
