@@ -78,7 +78,7 @@ class ProviderClientTest {
     }
 
     @Test
-    fun `custom openai endpoint does not receive reasoning_effort`() = runTest {
+    fun `custom openai endpoint receives mapped reasoning_effort`() = runTest {
         server.enqueue(
             MockResponse()
                 .setResponseCode(200)
@@ -88,7 +88,11 @@ class ProviderClientTest {
         val client = OpenAiCompatibleClient(openAiConfig())
         client.streamChat(ChatRequest("s", emptyList())).toList()
         val body = server.takeRequest().body.readUtf8()
-        assertTrue(!body.contains("reasoning_effort"))
+        // The old gate dropped the knob for arbitrary endpoints; it is now
+        // sent mapped (default NORMAL -> "medium") and stripped only when
+        // the endpoint rejects it with HTTP 400 (see OpenAiEffortTest),
+        // so an unsupported knob can never break a chat.
+        assertTrue(body.contains("\"reasoning_effort\":\"medium\""))
     }
 
     @Test
