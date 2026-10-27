@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.10.5 — Agent fixes: composer loader, full-width messages, zip reading, Pi on cloud projects
+
+- Agent composer: while streaming, the send key now shows the goo
+  loader (tap cancels) — the same treatment direct chat already had;
+  it previously kept a dimmed Send icon.
+- Project-chat messages: the text now uses the full bubble width.
+  The copy / read-aloud / ask-another-model / regenerate / edit
+  actions moved from beside the text into a footer row below it;
+  they had squeezed replies into ~55% of the bubble.
+- Attached ZIP archives are now extracted into the project
+  (.anvex/attachments/<digest>-extracted/) so the agent can read
+  them with ls/cat — its shell whitelist has no unzip/find and it
+  could never open an archive before.
+- Pi now works on SAF/cloud projects: a bounded local staging
+  mirror is created for the turn and Pi's edits are synced back
+  afterwards (cloud files are never deleted). Previously Pi failed
+  outright with "needs a local workspace".
+
 ## 4.10.4 — Fix local-project crash (NPE)
 
 - Fixed a crash (NullPointerException inside ConcurrentHashMap.put) when
