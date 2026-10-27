@@ -193,7 +193,11 @@ class ProjectRepository(
                 workspaceOwnedByApp = false,
             )
             dao.upsert(project.toEntity())
-            workspaceUris[project.id] = project.workspaceUri
+            // Project.workspaceUri is typed String? (set from uri.toString()
+            // just above, so non-null at runtime), but the map is now
+            // <String, String>: same guard as the other writes, or the
+            // compiler rejects this assignment.
+            project.workspaceUri?.let { workspaceUris[project.id] = it } ?: workspaceUris.remove(project.id)
             RepoResult.Ok(project)
         } catch (e: SecurityException) {
             RepoResult.Err(
