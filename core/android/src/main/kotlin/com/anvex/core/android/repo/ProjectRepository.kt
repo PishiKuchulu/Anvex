@@ -37,7 +37,10 @@ class ProjectRepository(
     private val mutationDao: com.anvex.core.android.db.MutationDao? = null,
 ) {
     private val projectsRoot: File = File(context.filesDir, "projects").apply { mkdirs() }
-    private val workspaceUris = java.util.concurrent.ConcurrentHashMap<String, String?>()
+    // Values are never null: ConcurrentHashMap rejects null values with an NPE
+    // at put time, and a local (non-SAF) project legitimately has no workspace
+    // URI. Absence of an entry means "local project", same as a null value did.
+    private val workspaceUris = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     fun observeAll(): Flow<List<Project>> = dao.observeAll().map { list ->
         list.map { it.toDomain() }
@@ -78,7 +81,9 @@ class ProjectRepository(
 
     suspend fun fileSystemForAsync(projectId: String): ProjectFileSystem {
         val entity = dao.get(projectId) ?: throw IllegalArgumentException("Project not found: $projectId")
-        workspaceUris[projectId] = entity.workspaceUri
+        // Never put a null: ConcurrentHashMap.put(null) throws NPE (local
+        // projects have a null workspaceUri). Absence == local project.
+        entity.workspaceUri?.let { workspaceUris[projectId] = it } ?: workspaceUris.remove(projectId)
         return fileSystemFor(projectId)
     }
 
@@ -127,7 +132,9 @@ class ProjectRepository(
                     workspaceOwnedByApp = false,
                 )
                 dao.upsert(project.toEntity())
-                workspaceUris[id] = selectedWorkspaceUri
+                // selectedWorkspaceUri is null for a plain local project
+                // (no folder picked); same null-put NPE guard as above.
+                selectedWorkspaceUri?.let { workspaceUris[id] = it } ?: workspaceUris.remove(id)
                 committed = true
                 RepoResult.Ok(project)
             } catch (e: SecurityException) {
@@ -164,7 +171,9 @@ class ProjectRepository(
             DocumentsContract.buildDocumentUriUsingTree(uri, rootId)
 
             dao.findByWorkspaceUri(uri.toString())?.let { existing ->
-                workspaceUris[existing.id] = existing.workspaceUri
+                // Non-null in practice (matched by this URI), guarded anyway
+                // so the map's non-null invariant holds everywhere.
+                existing.workspaceUri?.let { workspaceUris[existing.id] = it } ?: workspaceUris.remove(existing.id)
                 return@withContext RepoResult.Ok(existing.toDomain())
             }
 
