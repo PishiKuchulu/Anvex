@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.10.4 — Fix local-project crash (NPE)
+
+- Fixed a crash (NullPointerException inside ConcurrentHashMap.put) when
+  opening or creating a local project: a project without a user-picked
+  folder has a null workspace URI, and the project cache stored that null
+  directly into a map that rejects null values. The cache now stores only
+  non-null workspace URIs (a missing entry means a local project, with
+  unchanged read behavior), and its type is non-null so the compiler
+  rejects any future null write.
+
 ## 4.10.3 — Thinking on every API, direct-chat upgrades, themed update dialog
 
 - The Thinking menu (Low / Normal / High / XHigh / Max) previously only
