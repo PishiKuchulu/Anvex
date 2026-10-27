@@ -30,6 +30,12 @@ sealed class RepoResult<out T> {
     data class Err(val title: String, val detail: String) : RepoResult<Nothing>()
 }
 
+// v4.10.5: bounds for Pi staging of cloud projects (fail-closed: over
+// bounds aborts staging so Pi never sees a partial tree).
+private const val MAX_STAGE_FILES = 2000
+private const val MAX_STAGE_FILE_BYTES = 20L * 1024 * 1024
+private const val MAX_STAGE_BYTES = 100L * 1024 * 1024
+
 class ProjectRepository(
     private val context: Context,
     private val dao: com.anvex.core.android.db.ProjectDao,
@@ -77,6 +83,105 @@ class ProjectRepository(
             return File(context.filesDir, "direct-chat/$name").apply { mkdirs() }
         }
         return localRootOrNull(projectId)
+    }
+
+    /**
+     * v4.10.5: Pi staging for SAF/cloud projects. The Pi engine's Node
+     * process needs a real local directory as cwd, which a SAF workspace
+     * cannot provide — Pi used to fail closed here ("needs a local
+     * workspace"). Stage a bounded local mirror, run Pi against it, and
+     * sync edits back with [syncBackStagedCopy]. Fail-closed: any skipped
+     * file (over bounds, unreadable, suspicious path) aborts staging
+     * entirely, so Pi never sees a partial tree.
+     */
+    data class StageResult(val dir: File?, val error: String?)
+    data class SyncReport(val written: Int, val unchanged: Int, val skipped: Int)
+
+    suspend fun stageLocalCopy(projectId: String): StageResult = withContext(Dispatchers.IO) {
+        val entity = dao.get(projectId) ?: return@withContext StageResult(null, "Project not found.")
+        if (entity.workspaceUri == null) return@withContext StageResult(null, "Project is not a cloud project.")
+        val fs = runCatching { fileSystemForAsync(projectId) }.getOrNull()
+            ?: return@withContext StageResult(null, "Cannot access the project workspace.")
+        val staging = File(context.filesDir, "pi-staging/$projectId")
+        try {
+            if (staging.exists()) staging.deleteRecursively()
+            staging.mkdirs()
+            var files = 0
+            var bytes = 0L
+            var failure: String? = null
+            for (path in fs.walk()) {
+                if (failure != null) break
+                if (path.split('/').any { it == ".." }) {
+                    failure = "Unsafe path in the cloud project: $path."
+                    break
+                }
+                if (fs.isDirectory(path)) continue
+                if (files >= MAX_STAGE_FILES) {
+                    failure = "Project is too large to stage for Pi ($MAX_STAGE_FILES files)."
+                    break
+                }
+                val data = fs.readFileBytes(path)
+                if (data == null) {
+                    failure = "Cannot read $path from the cloud project."
+                    break
+                }
+                if (data.size > MAX_STAGE_FILE_BYTES || bytes + data.size > MAX_STAGE_BYTES) {
+                    failure = "Project is too large to stage for Pi."
+                    break
+                }
+                val target = File(staging, path)
+                target.parentFile?.mkdirs()
+                target.writeBytes(data)
+                files++
+                bytes += data.size
+            }
+            if (failure != null) {
+                staging.deleteRecursively()
+                StageResult(null, failure)
+            } else {
+                StageResult(staging, null)
+            }
+        } catch (e: Exception) {
+            runCatching { staging.deleteRecursively() }
+            StageResult(null, "Could not stage the project locally: ${e.message}")
+        }
+    }
+
+    /**
+     * Copies Pi's edits from a staging copy back into the cloud project.
+     * Only new/changed files are written; files deleted from the staging
+     * copy are NEVER deleted from the cloud project (fail-closed).
+     */
+    suspend fun syncBackStagedCopy(projectId: String, staging: File): SyncReport = withContext(Dispatchers.IO) {
+        val fs = runCatching { fileSystemForAsync(projectId) }.getOrNull()
+            ?: return@withContext SyncReport(0, 0, 0)
+        var written = 0
+        var unchanged = 0
+        var skipped = 0
+        val base = staging.absolutePath
+        staging.walkTopDown().filter { it.isFile }.forEach { file ->
+            val rel = file.absolutePath.removePrefix(base).trimStart('/')
+            if (rel.isEmpty() || rel.split('/').any { it == ".." }) {
+                skipped++
+                return@forEach
+            }
+            val data = runCatching { file.readBytes() }.getOrNull() ?: run {
+                skipped++
+                return@forEach
+            }
+            val existing = runCatching { fs.readFileBytes(rel) }.getOrNull()
+            if (existing != null && existing.contentEquals(data)) {
+                unchanged++
+                return@forEach
+            }
+            val parent = rel.substringBeforeLast('/', "")
+            val ok = runCatching {
+                if (parent.isNotEmpty()) fs.mkdirs(parent)
+                fs.writeFileBytes(rel, data)
+            }.isSuccess
+            if (ok) written++ else skipped++
+        }
+        SyncReport(written, unchanged, skipped)
     }
 
     suspend fun fileSystemForAsync(projectId: String): ProjectFileSystem {

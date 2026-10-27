@@ -121,6 +121,7 @@ import com.anvex.app.ui.Routes
 import com.anvex.app.ui.components.ArtifactCard
 import com.anvex.app.ui.components.BidiText
 import com.anvex.app.ui.components.MarkdownText
+import com.anvex.app.ui.components.GooThinkingIcon
 import com.anvex.app.ui.components.ThinkingCard
 import androidx.compose.material.icons.filled.Refresh
 import com.anvex.app.ui.components.DeliverableCard
@@ -360,7 +361,9 @@ fun ChatScreen(nav: NavController, projectId: String) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = AnvexDimens.page, vertical = 4.dp),
+                // v4.10.5: bottom breathing room so the last line never
+                // ends flush against the composer.
+                contentPadding = PaddingValues(start = AnvexDimens.page, end = AnvexDimens.page, top = 4.dp, bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (noProvider) {
@@ -478,6 +481,8 @@ fun ChatScreen(nav: NavController, projectId: String) {
             Composer(
                 value = input,
                 enabled = !streamUi.streaming,
+                streaming = streamUi.streaming,
+                onCancel = vm::cancel,
                 onValueChange = { input = it },
                 onAttach = { filePicker.launch(arrayOf("*/*")) },
                 onImage = { imagePicker.launch(arrayOf("image/*")) },
@@ -753,6 +758,11 @@ private fun Composer(
     onAttach: () -> Unit,
     onImage: () -> Unit,
     onSend: () -> Unit,
+    // v4.10.5: while streaming, the send key becomes the goo loader (tap
+    // cancels) — the same treatment DirectChat already had. Before this,
+    // the Agent composer kept a dimmed Send icon during streaming.
+    streaming: Boolean = false,
+    onCancel: () -> Unit = {},
     canSend: Boolean,
     thinkingLevel: ThinkingLevel,
     onThinkingLevel: (ThinkingLevel) -> Unit,
@@ -859,23 +869,30 @@ private fun Composer(
                     ),
                     label = "sendReady",
                 )
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .graphicsLayer { scaleX = sendScale; scaleY = sendScale }
-                        .clip(RoundedCornerShape(AnvexDimens.radiusMedium))
-                        .background(
-                            if (sendReady) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceVariant,
+                if (streaming) {
+                    // Thinking state shows the goo loader (tap still cancels).
+                    IconButton(onClick = onCancel) {
+                        GooThinkingIcon(modifier = Modifier.size(32.dp))
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .graphicsLayer { scaleX = sendScale; scaleY = sendScale }
+                            .clip(RoundedCornerShape(AnvexDimens.radiusMedium))
+                            .background(
+                                if (sendReady) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            .clickable(enabled = sendReady, role = androidx.compose.ui.semantics.Role.Button, onClick = onSend),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Send",
+                            tint = if (sendReady) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        .clickable(enabled = sendReady, role = androidx.compose.ui.semantics.Role.Button, onClick = onSend),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = if (sendReady) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    }
                 }
             }
         }
@@ -1026,24 +1043,34 @@ private fun MessageBubble(
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
                 if (message.content.isNotBlank()) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        if (isUser) {
-                            BidiText(
-                                message.content,
-                                // v4.4.5 (UX): onPrimaryContainer pairs with the
-                                // bubble fill by design — hardcoded White was
-                                // unreadable on light-theme fills.
-                                style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onPrimaryContainer),
-                                modifier = Modifier.weight(1f),
-                            )
-                        } else {
-                            MarkdownText(
-                                message.content,
-                                modifier = Modifier.weight(1f),
-                                textColor = MaterialTheme.colorScheme.onSurface,
-                                onRunPython = onRunPython,
-                            )
-                        }
+                    // v4.10.5 (readability): the text takes the FULL bubble
+                    // width. Before this, the action buttons sat beside the
+                    // text in the same Row, squeezing every assistant reply
+                    // into ~55% of the bubble and making long (esp. Persian)
+                    // messages wrap into a tall, cramped column. The actions
+                    // now live in a footer row below the text instead.
+                    if (isUser) {
+                        BidiText(
+                            message.content,
+                            // v4.4.5 (UX): onPrimaryContainer pairs with the
+                            // bubble fill by design — hardcoded White was
+                            // unreadable on light-theme fills.
+                            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onPrimaryContainer),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        MarkdownText(
+                            message.content,
+                            modifier = Modifier.fillMaxWidth(),
+                            textColor = MaterialTheme.colorScheme.onSurface,
+                            onRunPython = onRunPython,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         if (isUser) {
                             // v4.4 (architect feature 8): edit this user message → branch turn.
                             IconButton(onClick = onEditUser, modifier = Modifier.size(48.dp)) {

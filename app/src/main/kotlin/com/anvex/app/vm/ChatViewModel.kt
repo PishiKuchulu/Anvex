@@ -400,12 +400,17 @@ class ChatViewModel(
                         ?: return@withContext PreparedAttachments(emptyList(), emptyList(),
                             "Cannot save $name to the project workspace.")
                     val inspection = inspectZip(bytes)
+                    val extractedDir = extractZipToWorkspace(fs, bytes, safeName)
                     payloads += com.anvex.core.ai.ChatAttachment(
                         name = name,
                         mimeType = mime,
                         text = buildString {
                             append("The user attached a binary ZIP archive named ").append(name).append(".\n")
                             append("The original archive was saved in the project at: ").append(workspacePath).append("\n")
+                            if (extractedDir != null) {
+                                append("The archive was also extracted into the project at: ").append(extractedDir).append(".\n")
+                                append("Read the extracted files from there with ls/cat; do not try to unzip the archive (no unzip tool exists).\n")
+                            }
                             append(inspection)
                         }.take(MAX_ATTACHMENT_CONTEXT_CHARS),
                         isImage = false,
@@ -450,18 +455,61 @@ class ChatViewModel(
         return out.toByteArray()
     }
 
-    private fun persistAttachment(fs: com.anvex.core.engine.ProjectFileSystem, safeName: String, bytes: ByteArray): String? {
-        // Content-addressed storage prevents retrying the same attachment from creating
-        // an unbounded number of duplicate copies in the workspace.
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
+    private fun attachmentDigest(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256")
             .digest(bytes)
             .joinToString("") { "%02x".format(it) }
             .take(16)
+
+    private fun persistAttachment(fs: com.anvex.core.engine.ProjectFileSystem, safeName: String, bytes: ByteArray): String? {
+        // Content-addressed storage prevents retrying the same attachment from creating
+        // an unbounded number of duplicate copies in the workspace.
+        val digest = attachmentDigest(bytes)
         val path = ".anvex/attachments/$digest-$safeName"
         return runCatching {
             fs.mkdirs(".anvex/attachments")
             if (!fs.exists(path)) fs.writeFileBytes(path, bytes)
             path
+        }.getOrNull()
+    }
+
+    /**
+     * v4.10.5: attached ZIPs used to reach the agent only as a manifest +
+     * excerpts — and the agent's shell whitelist has no `unzip` or `find`,
+     * so it could never actually open the archive (it reported exactly
+     * that). Extract the text entries into the project so ls/cat work.
+     * Bounded like inspectZip, zip-slip-guarded via PathSanitizer;
+     * non-text entries stay in the archive only. Null on any failure —
+     * the manifest/excerpts path still applies then.
+     */
+    private fun extractZipToWorkspace(
+        fs: com.anvex.core.engine.ProjectFileSystem,
+        bytes: ByteArray,
+        safeName: String,
+    ): String? {
+        val dir = ".anvex/attachments/${attachmentDigest(bytes)}-extracted"
+        return runCatching {
+            fs.mkdirs(dir)
+            var entries = 0
+            var extracted = 0L
+            java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes)).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null && entries < MAX_ZIP_ENTRIES && extracted < MAX_ZIP_EXTRACTED_BYTES) {
+                    entries++
+                    val safe = runCatching { com.anvex.core.engine.PathSanitizer.sanitize(entry.name) }.getOrNull()
+                    if (safe != null && !entry.isDirectory && isTextExtension(safe)) {
+                        val parent = safe.substringBeforeLast('/', "")
+                        if (parent.isNotEmpty()) fs.mkdirs("$dir/$parent")
+                        val remaining = (MAX_ZIP_EXTRACTED_BYTES - extracted).coerceAtMost(512 * 1024L)
+                        val data = readBounded(zip, remaining)
+                        extracted += data.size
+                        if (data.isNotEmpty()) fs.writeFileBytes("$dir/$safe", data)
+                    }
+                    zip.closeEntry()
+                    entry = zip.nextEntry
+                }
+            }
+            dir
         }.getOrNull()
     }
 
@@ -535,6 +583,9 @@ class ChatViewModel(
         private const val MAX_TOTAL_ATTACHMENT_BYTES = 20L * 1024 * 1024
         private const val MAX_TEXT_CHARS = 1_000_000
         private const val MAX_ATTACHMENT_CONTEXT_CHARS = 120_000
+        // v4.10.5: bounds for zip extraction (same as inspectZip's).
+        private const val MAX_ZIP_ENTRIES = 200
+        private const val MAX_ZIP_EXTRACTED_BYTES = 2L * 1024 * 1024
     }
 
     fun cancel() {
@@ -570,12 +621,28 @@ class ChatViewModel(
                 )
                 return@launch
             }
-            val root = graph.projects.chatRootOrNull(projectId)
-            if (root == null) {
-                _piUi.value = ChatSession.UiState(
-                    error = AiError(AiError.Kind.UNKNOWN, "The Pi engine needs a local workspace (this project is in cloud storage)."),
-                )
-                return@launch
+            // v4.10.5: SAF/cloud projects have no local root. Stage a
+            // bounded local mirror for Pi and sync its edits back after
+            // the turn, instead of failing closed. (Attachments were
+            // already saved into the workspace above, so staging picks
+            // them up too.)
+            val localRoot = graph.projects.chatRootOrNull(projectId)
+            val staged: java.io.File?
+            val root: java.io.File
+            if (localRoot != null) {
+                root = localRoot
+                staged = null
+            } else {
+                val stage = graph.projects.stageLocalCopy(projectId)
+                if (stage.dir == null) {
+                    _piUi.value = ChatSession.UiState(
+                        error = AiError(AiError.Kind.UNKNOWN, stage.error
+                            ?: "The Pi engine needs a local workspace and this project could not be staged locally."),
+                    )
+                    return@launch
+                }
+                root = stage.dir
+                staged = stage.dir
             }
             graph.chat.upsert(
                 ChatMessage(
@@ -617,14 +684,31 @@ class ChatViewModel(
                         )
                     },
                 )
+                // v4.10.5: Pi on a staged copy (cloud projects) — sync
+                // its edits back. Never deletes cloud files; a sync note
+                // rides along so the user sees what landed.
+                val syncNote = if (staged != null) {
+                    val report = graph.projects.syncBackStagedCopy(projectId, staged)
+                    if (report.written > 0 || report.skipped > 0) {
+                        "Pi sync: ${report.written} file(s) written back to the cloud project, " +
+                            "${report.unchanged} unchanged, ${report.skipped} skipped."
+                    } else null
+                } else null
                 if (outcome.success) {
-                    if (outcome.finalText.isNotBlank()) {
+                    val finalContent = buildString {
+                        append(outcome.finalText)
+                        if (syncNote != null) {
+                            if (isNotEmpty()) append("\n\n")
+                            append("[").append(syncNote).append("]")
+                        }
+                    }
+                    if (finalContent.isNotBlank()) {
                         graph.chat.upsert(
                             ChatMessage(
                                 id = UUID.randomUUID().toString(),
                                 projectId = projectId,
                                 role = MessageRole.ASSISTANT,
-                                content = outcome.finalText,
+                                content = finalContent,
                                 model = mapped.modelId,
                                 providerId = provider.id,
                             ),
@@ -633,8 +717,24 @@ class ChatViewModel(
                     _piUi.value = ChatSession.UiState()
                 } else {
                     _piUi.value = ChatSession.UiState(
-                        error = AiError(AiError.Kind.UNKNOWN, outcome.error ?: "Pi run failed."),
+                        error = AiError(AiError.Kind.UNKNOWN, (outcome.error ?: "Pi run failed.") + (syncNote?.let { " [$it]" } ?: "")),
                         engineError = outcome.error,
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Pi crashed mid-turn: still sync back any edits from the
+                // staging copy so work is not stranded, then report.
+                if (staged != null) {
+                    val report = graph.projects.syncBackStagedCopy(projectId, staged)
+                    _piUi.value = ChatSession.UiState(
+                        error = AiError(AiError.Kind.UNKNOWN, "Pi run failed: ${e.message ?: e.javaClass.simpleName}. " +
+                            "Pi sync: ${report.written} file(s) written back, ${report.unchanged} unchanged, ${report.skipped} skipped."),
+                    )
+                } else {
+                    _piUi.value = ChatSession.UiState(
+                        error = AiError(AiError.Kind.UNKNOWN, "Pi run failed: ${e.message ?: e.javaClass.simpleName}"),
                     )
                 }
             } finally {
