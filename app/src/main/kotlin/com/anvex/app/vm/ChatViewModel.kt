@@ -634,15 +634,20 @@ class ChatViewModel(
                 staged = null
             } else {
                 val stage = graph.projects.stageLocalCopy(projectId)
-                if (stage.dir == null) {
+                // v4.10.5 follow-up: capture into a plain local first —
+                // assigning stage.dir (declared File?) directly to the
+                // non-null root failed compilation (no smart cast on the
+                // property chain here).
+                val stageDir = stage.dir
+                if (stageDir == null) {
                     _piUi.value = ChatSession.UiState(
                         error = AiError(AiError.Kind.UNKNOWN, stage.error
                             ?: "The Pi engine needs a local workspace and this project could not be staged locally."),
                     )
                     return@launch
                 }
-                root = stage.dir
-                staged = stage.dir
+                root = stageDir
+                staged = stageDir
             }
             graph.chat.upsert(
                 ChatMessage(
