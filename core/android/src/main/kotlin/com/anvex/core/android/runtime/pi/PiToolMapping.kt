@@ -84,7 +84,7 @@ object PiToolMapping {
             "grep" -> pathDenied(input.optString("path"), projectRoot, sensitiveDenied = true)
             "find" -> {
                 val pattern = input.optString("pattern")
-                pattern.isNotBlank() && (SensitivePaths.isSensitive(pattern) || pathDenied(pattern, projectRoot, sensitiveDenied = false))
+                pattern.isNotBlank() && ((SensitivePaths.isSensitive(pattern) && !SensitivePaths.isReadableExtractedAttachment(pattern)) || pathDenied(pattern, projectRoot, sensitiveDenied = false))
             }
             "write", "edit" -> pathDenied(input.optString("path"), projectRoot, sensitiveDenied = false)
             "bash" -> bashDenied(input.optString("command"), projectRoot)
@@ -95,7 +95,9 @@ object PiToolMapping {
     /** True when [path] must not be touched: blank is not denied (Pi fails itself), otherwise sensitive or escaping. */
     private fun pathDenied(path: String, projectRoot: File?, sensitiveDenied: Boolean): Boolean {
         if (path.isBlank()) return false
-        if (sensitiveDenied && SensitivePaths.isSensitive(path)) return true
+        // v4.10.5 follow-up: extracted zip attachments are readable review
+        // sources (unless themselves secret files) — see SensitivePaths.
+        if (sensitiveDenied && SensitivePaths.isSensitive(path) && !SensitivePaths.isReadableExtractedAttachment(path)) return true
         if (path.startsWith("/") || path.matches(Regex("^[A-Za-z]:.*"))) {
             val root = projectRoot?.canonicalFile ?: return true
             val target = runCatching { File(path).canonicalFile }.getOrNull() ?: return true
@@ -108,7 +110,7 @@ object PiToolMapping {
 
     private fun bashDenied(command: String, projectRoot: File?): Boolean {
         if (command.isBlank()) return false
-        if (SensitivePaths.commandReferencesSensitive(command)) return true
+        if (SensitivePaths.commandReferencesSensitiveOutsideExtracted(command)) return true
         val root = projectRoot?.canonicalFile
         val tokens = command.split(Regex("\\s+")).filter { it.isNotEmpty() }
             .map { it.trim('\'', '"') }

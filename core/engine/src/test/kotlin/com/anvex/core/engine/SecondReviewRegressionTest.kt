@@ -126,6 +126,20 @@ class SecondReviewRegressionTest {
     }
 
     @Test
+    fun `extracted attachments are readable but secrets inside them stay refused`() {
+        val extracted = ".anvex/attachments/abc123def456-extracted/ui/theme/Spacing.kt"
+        assertTrue(SensitivePaths.isSensitive(extracted))
+        assertTrue(SensitivePaths.isExtractedAttachment(extracted))
+        assertTrue(SensitivePaths.isReadableExtractedAttachment(extracted))
+        assertFalse(SensitivePaths.isReadableExtractedAttachment(".anvex/attachments/abc123def456-extracted/credentials.json"))
+        assertFalse(SensitivePaths.isExtractedAttachment(".anvex/attachments/abc123def456.zip"))
+        assertFalse(SensitivePaths.isExtractedAttachment(".anvex/attachments/other.txt"))
+        assertFalse(SensitivePaths.commandReferencesSensitiveOutsideExtracted("cat .anvex/attachments/abc123def456-extracted/ui/theme/Spacing.kt"))
+        assertTrue(SensitivePaths.commandReferencesSensitiveOutsideExtracted("cat .anvex/attachments/abc123def456-extracted/credentials.json"))
+        assertTrue(SensitivePaths.commandReferencesSensitiveOutsideExtracted("cat .env"))
+    }
+
+    @Test
     fun `review 2 pi session dir never enters model context`() {
         val fs = FakeFs()
         fs.writeFile("src/app.txt", "hello")

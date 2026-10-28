@@ -721,10 +721,33 @@ class ChatViewModel(
                     }
                     _piUi.value = ChatSession.UiState()
                 } else {
-                    _piUi.value = ChatSession.UiState(
-                        error = AiError(AiError.Kind.UNKNOWN, (outcome.error ?: "Pi run failed.") + (syncNote?.let { " [$it]" } ?: "")),
-                        engineError = outcome.error,
-                    )
+                    val errText = outcome.error ?: "Pi run failed."
+                    if (outcome.finalText.isNotBlank()) {
+                        // v4.10.5 follow-up: a failed turn used to swallow
+                        // everything Pi had already done — the user saw only
+                        // "Connection error" while edits had already synced
+                        // back. Deliver the partial reply, marked, plus the
+                        // sync report; the error banner stays for Retry.
+                        graph.chat.upsert(
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                projectId = projectId,
+                                role = MessageRole.ASSISTANT,
+                                content = outcome.finalText + "\n\n[Pi stopped early: $errText${syncNote?.let { " $it" } ?: ""}]",
+                                model = mapped.modelId,
+                                providerId = provider.id,
+                            ),
+                        )
+                        _piUi.value = ChatSession.UiState(
+                            error = AiError(AiError.Kind.UNKNOWN, errText),
+                            engineError = outcome.error,
+                        )
+                    } else {
+                        _piUi.value = ChatSession.UiState(
+                            error = AiError(AiError.Kind.UNKNOWN, errText + (syncNote?.let { " [$it]" } ?: "")),
+                            engineError = outcome.error,
+                        )
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

@@ -22,6 +22,47 @@ object SensitivePaths {
         "secrets.json", "secret.json",
     )
 
+    /**
+     * v4.10.5 follow-up: reads of extracted zip attachments. 4.10.5 extracts
+     * attached zips into .anvex/attachments/<digest>-extracted/ so the agent
+     * can review them — but [isSensitive] blocks every path under .anvex/,
+     * so the agent's read tool (and Pi's mapped tools) refused the very
+     * files extraction exists to expose. This carve-out covers ONLY that
+     * subtree (text files from a user-supplied zip, bounded and
+     * zip-slip-guarded at extraction). Secret files stay refused: callers
+     * must still apply [isSecretFile] on top (see
+     * [isReadableExtractedAttachment]).
+     */
+    fun isExtractedAttachment(path: String): Boolean {
+        val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() }
+        val idx = parts.indexOf("attachments")
+        if (idx <= 0 || parts[idx - 1] != ".anvex") return false
+        if (parts.size <= idx + 1) return false
+        return parts[idx + 1].endsWith("-extracted")
+    }
+
+    /** True when a path is an extracted attachment AND not a secret file. */
+    fun isReadableExtractedAttachment(path: String): Boolean =
+        isExtractedAttachment(path) && !isSecretFile(path)
+
+    /**
+     * Like [commandReferencesSensitive], but extracted-attachment paths
+     * that are not secret files do not count. Used by Pi's bash gate so
+     * `cat` of an extracted review file is not hard-denied, while
+     * exfiltration of a secret file inside an extracted tree still is.
+     */
+    fun commandReferencesSensitiveOutsideExtracted(command: String): Boolean {
+        for (raw in command.split(Regex("\\s+"))) {
+            val token = raw.trim('\'', '"').trim(',', ';', ':')
+            if (token.isEmpty()) continue
+            for (piece in token.split('=', '@')) {
+                val p = piece.trim('\'', '"')
+                if (p.isNotEmpty() && isSensitive(p) && !isReadableExtractedAttachment(p)) return true
+            }
+        }
+        return false
+    }
+
     /** Full check: metadata directories (.git/.anvex/.anvex-pi) AND secret files. */
     fun isSensitive(path: String): Boolean {
         val normalized = path.replace('\\', '/').trim()

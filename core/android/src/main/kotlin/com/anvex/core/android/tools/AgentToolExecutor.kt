@@ -66,7 +66,12 @@ class AgentToolExecutor(
         // secret files, but this tool did not — a prompt-injected page could
         // have the model read .env and exfiltrate it via fetch. One shared
         // list (SensitivePaths) now guards every read surface.
-        if (com.anvex.core.engine.SensitivePaths.isSensitive(path)) {
+        // v4.10.5 follow-up: extracted zip attachments are the exception —
+        // they are user-supplied review sources, not app metadata. Secret
+        // files inside an extracted tree stay refused.
+        if (com.anvex.core.engine.SensitivePaths.isSensitive(path) &&
+            !com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(path)
+        ) {
             return ToolResult(false, "Refused: '$path' is a protected file (secrets/app metadata are never exposed to tools).")
         }
         val text = fs.readFile(path) ?: return ToolResult(false, "File not found: $path")
