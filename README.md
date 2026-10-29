@@ -95,7 +95,7 @@ Or open the project in Android Studio and press **Run ▶**.
 | Google Gemini | Cloud |
 | OpenRouter | Cloud (multi-model gateway) |
 | DeepSeek · Mistral · Groq | Cloud |
-| Custom endpoint | Any OpenAI-compatible API (cloud or a local server) |
+| Custom endpoint | Any OpenAI-compatible API (cloud, or a local server over loopback `http://` / any `https://` — Android blocks cleartext `http://` to LAN addresses, so a PC Ollama instance needs an `https://` URL or a tunnel) |
 
 ## 🛡️ Security & Privacy
 

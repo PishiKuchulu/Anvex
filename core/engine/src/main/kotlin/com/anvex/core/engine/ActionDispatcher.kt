@@ -154,12 +154,22 @@ class ActionDispatcher(
      * app's own per-project state directory. Reads stay allowed (the agent
      * legitimately reads `.anvex/attachments/...`); writes/deletes/renames
      * through this dispatcher are refused.
+     * H-03/H-07: `.anvex-pi` (the Pi extension code the agent must not
+     * rewrite) and `.github/workflows/**` (workflows run with the signing
+     * secrets) join the protected set.
      */
-    private fun isProtectedPath(path: String): Boolean =
-        path.split('/').any { it == ".git" || it == ".anvex" }
+    private fun isProtectedPath(path: String): Boolean {
+        val parts = path.split('/')
+        if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" }) return true
+        return parts.size >= 2 && parts[0] == ".github" && parts[1] == "workflows"
+    }
 
     private fun protectedFailure(path: String, t0: Long): ActionResult =
         ActionResult(false, null, "Protected path (app/VCS metadata): '$path'", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+
+    /** H-03: renaming/copying a secret file is a read bypass by another name. */
+    private fun secretFailure(path: String, t0: Long): ActionResult =
+        ActionResult(false, null, "Refused: secret file '$path' cannot be renamed or copied (that would expose its contents).", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
 
     fun writeFile(
         path: String,
@@ -212,6 +222,7 @@ class ActionDispatcher(
             return ActionResult(false, null, "Invalid rename path", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
         }
         if (isProtectedPath(safeFrom) || isProtectedPath(safeTo)) return protectedFailure(safeTo, t0)
+        if (SensitivePaths.isSecretFile(safeFrom) || SensitivePaths.isSecretFile(safeTo)) return secretFailure(safeFrom, t0)
         val before = fs.readFile(safeFrom)
         val existed = fs.exists(safeFrom)
         val ok = fs.move(safeFrom, safeTo)
@@ -236,7 +247,10 @@ class ActionDispatcher(
         if (safeFrom == null || safeTo == null) {
             return ActionResult(false, null, "Invalid copy path", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
         }
-        if (isProtectedPath(safeTo)) return protectedFailure(safeTo, t0)
+        // H-03: the old code checked the destination only, so copying
+        // FROM a protected/secret file (`.git/config`, `.env`) was open.
+        if (isProtectedPath(safeFrom) || isProtectedPath(safeTo)) return protectedFailure(safeTo, t0)
+        if (SensitivePaths.isSecretFile(safeFrom) || SensitivePaths.isSecretFile(safeTo)) return secretFailure(safeFrom, t0)
         val before = fs.readFile(safeTo) // destination's previous content
         val ok = fs.copy(safeFrom, safeTo)
         return if (ok) {
@@ -254,6 +268,7 @@ class ActionDispatcher(
         val t0 = System.nanoTime()
         val safe = PathSanitizer.sanitizeOrNull(path)
             ?: return ActionResult(false, null, "Invalid path: '$path'", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+        if (isProtectedPath(safe)) return protectedFailure(safe, t0)
         fs.mkdirs(safe)
         return ActionResult(true, "Created directory $safe", null, emptyList(), elapsed(t0))
     }
@@ -262,6 +277,7 @@ class ActionDispatcher(
         val t0 = System.nanoTime()
         val safe = PathSanitizer.sanitizeOrNull(path)
             ?: return ActionResult(false, null, "Invalid path: '$path'", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+        if (isProtectedPath(safe)) return protectedFailure(safe, t0)
         if (!fs.exists(safe)) {
             return mutate(safe, MutationOp.CREATE, "", source, messageId).copy(durationMs = elapsed(t0))
         }
@@ -272,6 +288,12 @@ class ActionDispatcher(
         val t0 = System.nanoTime()
         val safe = PathSanitizer.sanitizeOrNull(path)
             ?: return ActionResult(false, null, "Invalid path: '$path'", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+        // H-02/H-03: same refusal as the translated `cat` branch — a
+        // public read entry point must not become a second way to read
+        // secrets. Extracted attachments keep their carve-out.
+        if (SensitivePaths.isSensitive(safe) && !SensitivePaths.isReadableExtractedAttachment(safe)) {
+            return ActionResult(false, null, "Refused: '$safe' is a protected file (secrets/app metadata are never exposed to tools).", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+        }
         val content = fs.readFile(safe)
             ?: return ActionResult(false, null, "File not found: $safe", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
         return ActionResult(true, content, null, emptyList(), elapsed(t0))
@@ -386,6 +408,17 @@ class ActionDispatcher(
                 })
             }
             is CommandTranslator.Effect.ReadFile -> {
+                // H-02/H-03: the translated `cat` path had NO sensitivity
+                // check at all (the agent read tool refuses secrets, but
+                // `cat .env` through a shell action sailed through). Refuse
+                // here, with the same extracted-attachment carve-out as
+                // the read tool, so every read surface agrees.
+                val safe = PathSanitizer.sanitizeOrNull(effect.path)
+                if (safe != null && SensitivePaths.isSensitive(safe) &&
+                    !SensitivePaths.isReadableExtractedAttachment(safe)
+                ) {
+                    throw IllegalStateException("Refused: '$safe' is a protected file (secrets/app metadata are never exposed to tools).")
+                }
                 output.append(fs.readFile(effect.path) ?: "(file not found)")
             }
             is CommandTranslator.Effect.RecordDependencies -> {

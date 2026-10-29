@@ -56,14 +56,19 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
         return json.decodeFromString(String(cipher.doFinal(ciphertext), Charsets.UTF_8))
     }
 
-    /** Transaction-like restore across Room + DataStore with in-memory rollback. */
-    suspend fun restore(payload: Payload) {
+    /**
+     * Transaction-like restore across Room + DataStore with in-memory rollback.
+     * Returns the providers skipped during restore (M-08: per-item restore) so
+     * the UI can tell the user exactly which providers need re-adding.
+     */
+    suspend fun restore(payload: Payload): List<String> {
         require(payload.version in 1..2) { "Unsupported backup payload version." }
         val oldSettings = json.encodeToString(settings.settings.first())
         val oldProviders = providers.snapshotEntities()
         try {
-            providers.replaceAllForRestore(payload.providers)
+            val skipped = providers.replaceAllForRestore(payload.providers)
             settings.restoreFromBackup(payload.settings)
+            return skipped
         } catch (t: Throwable) {
             runCatching { providers.restoreEntities(oldProviders) }
             runCatching { settings.restoreFromBackup(oldSettings) }

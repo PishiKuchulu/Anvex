@@ -67,6 +67,34 @@ class SseProtocolTest {
     }
 
     @Test
+    fun `non-sse json body surfaces the provider error`() = runTest {
+        val body = "{\"error\":{\"message\":\"credits exhausted\"}}"
+        val (events, err) = collectSse(body)
+        assertEquals(0, events.size)
+        assertTrue(err != null)
+        assertTrue(err!!.message.contains("credits exhausted"))
+        assertEquals(AiError.Kind.PROTOCOL, err.kind)
+    }
+
+    @Test
+    fun `http 402 maps to rate limit and retry-after is kept`() {
+        val err = Sse.mapHttpError(402, "", 30L)
+        assertEquals(AiError.Kind.RATE_LIMIT, err.kind)
+        assertEquals(30L, err.retryAfterSeconds)
+        assertEquals(AiError.Kind.NETWORK, Sse.mapHttpError(408, "").kind)
+        assertEquals(AiError.Kind.PROTOCOL, Sse.mapHttpError(413, "").kind)
+    }
+
+    @Test
+    fun `overlong sse line is rejected instead of buffered unbounded`() = runTest {
+        val body = "data: " + "x".repeat(1_100_000) + "\n\n"
+        val (events, err) = collectSse(body)
+        assertEquals(0, events.size)
+        assertTrue(err != null)
+        assertTrue(err!!.message.contains("exceeds"))
+    }
+
+    @Test
     fun `event name is attached and reset per frame`() = runTest {
         val body = "event: message_start\ndata: {\"x\":1}\n\nevent: message_stop\ndata: {\"y\":2}\n\ndata: {\"z\":3}\n\n"
         val (events, _) = collectSse(body)

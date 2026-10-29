@@ -30,7 +30,14 @@ class McpClient(
     private val client: OkHttpClient = defaultClient(),
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
-    private var nextId = 1L
+    // M-12: request ids must be unique even when initialize/list/call race
+    // on different coroutines — a plain var lost increments.
+    private val nextId = java.util.concurrent.atomic.AtomicLong(1L)
+    // M-12: streamable-HTTP session state. The server returns
+    // `Mcp-Session-Id` on initialize; later requests must echo it (plus
+    // the negotiated protocol version) or stateful servers reject them.
+    private var sessionId: String? = null
+    private var protocolVersion: String = "2025-03-26"
 
     @Serializable
     data class McpServerInfo(val name: String = "", val version: String = "")
@@ -51,6 +58,12 @@ class McpClient(
 
     private var session: Session? = null
 
+    /** M-12: handshake once per client; later calls reuse the session. */
+    suspend fun ensureInitialized(): Result<Session> {
+        session?.let { return Result.success(it) }
+        return initialize()
+    }
+
     suspend fun initialize(): Result<Session> = withContext(Dispatchers.IO) {
         runCatching {
             val response = rpc(
@@ -69,6 +82,7 @@ class McpClient(
             val name = (serverInfoJson?.get("name") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
             val version = (serverInfoJson?.get("version") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
             val protocol = ((result as? JsonObject)?.get("protocolVersion") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "2025-03-26"
+            protocolVersion = protocol
             // Initialized notification is sent once, right after a successful handshake.
             notify("notifications/initialized")
             Session(McpServerInfo(name, version), protocol).also { session = it }
@@ -127,8 +141,15 @@ class McpClient(
     @Serializable
     internal data class JsonRpcError(val code: Int = 0, val message: String = "")
 
+    private fun Request.Builder.withSessionHeaders(): Request.Builder {
+        header("MCP-Protocol-Version", protocolVersion)
+        sessionId?.let { header("Mcp-Session-Id", it) }
+        apiKey?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
+        return this
+    }
+
     private suspend fun rpc(method: String, params: JsonObject): JsonRpcResponse {
-        val id = nextId++
+        val id = nextId.getAndIncrement()
         val body = buildJsonObject {
             put("jsonrpc", "2.0")
             put("id", id)
@@ -139,9 +160,11 @@ class McpClient(
             .url(serverUrl)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .header("Accept", "application/json, text/event-stream")
-            .apply { apiKey?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") } }
+            .withSessionHeaders()
             .build()
         client.newCall(request).execute().use { resp ->
+            // The server may rotate the session id on any response.
+            resp.header("Mcp-Session-Id")?.takeIf { it.isNotBlank() }?.let { sessionId = it }
             val contentType = resp.header("Content-Type") ?: "application/json"
             val text = resp.body?.string() ?: ""
             if (!resp.isSuccessful) return JsonRpcResponse(id = id, error = buildJsonObject {
@@ -161,14 +184,18 @@ class McpClient(
             .url(serverUrl)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .header("Accept", "application/json, text/event-stream")
-            .apply { apiKey?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") } }
+            .withSessionHeaders()
             .build()
         runCatching { client.newCall(request).execute().close() }
     }
 
-    /** Handles plain-JSON and NDJSON/SSE-style responses. Prefers the message whose
-     * id matches the request; falls back to the last response with any id (some
-     * servers assign their own ids) before giving up. */
+    /**
+     * Handles plain-JSON and NDJSON/SSE-style responses. Returns ONLY the
+     * message whose id matches the request. M-12: the old fallback returned
+     * another request's response on mismatch — with concurrent calls that
+     * attributes one tool's result to another tool. A server that does not
+     * echo the id is violating JSON-RPC and gets an error, not a wrong answer.
+     */
     private fun parseFrame(text: String, contentType: String, id: Long): JsonRpcResponse {
         val candidates = ArrayList<String>()
         if (contentType.contains("event-stream")) {
@@ -180,15 +207,13 @@ class McpClient(
             }
             if (candidates.isEmpty()) candidates += text
         }
-        var fallback: JsonRpcResponse? = null
         for (raw in candidates) {
             if (raw.isBlank()) continue
             val parsed = runCatching { json.decodeFromString(JsonRpcResponse.serializer(), raw) }.getOrNull() ?: continue
             if (parsed.id == null) continue // notification without id — never a response
             if (parsed.id == id) return parsed
-            fallback = parsed
         }
-        return fallback ?: JsonRpcResponse(id = id, error = buildJsonObject {
+        return JsonRpcResponse(id = id, error = buildJsonObject {
             put("code", -32603)
             put("message", "No JSON-RPC response was returned for request id $id")
         })
@@ -218,11 +243,53 @@ data class McpServerConfig(
     val allowCalls: Boolean = false,
     /** Tools from the last successful connection test. */
     val tools: List<McpToolInfo> = emptyList(),
+    /**
+     * H-05: the stored key exists but could not be decrypted (Keystore
+     * key rotated, backup restored on a new device). The key itself is
+     * NOT in this object (apiKey is null); the flag only tells the UI
+     * to ask for re-entry and tells saves to preserve the stored blob
+     * instead of overwriting it with null.
+     */
+    val keyUndecryptable: Boolean = false,
 ) {
     init {
         require(url.startsWith("https://") || url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) {
             "MCP server URLs must be HTTPS (loopback HTTP is allowed for local testing)."
         }
         require(name.length <= 120 && url.length <= 500)
+    }
+}
+
+/**
+ * H-05: pure merge for MCP config saves (unit-tested; the bridge only
+ * supplies the lists and the encrypt function).
+ *
+ * [view] is the decrypted view: plaintext keys, except entries whose
+ * stored key failed to decrypt, which carry `keyUndecryptable = true`
+ * and a null key. [storedEncrypted] maps server id to the encrypted key
+ * currently on disk. Returns the list to persist (encrypted keys).
+ *
+ * The old code re-encrypted the decrypted view and wrote it back, so
+ * one undecryptable key silently became null on the next save of ANY
+ * server — and one failed encryption silently dropped the key being
+ * saved. Here an undecryptable key's stored blob is carried over
+ * untouched, and a failed encryption throws instead of storing null.
+ */
+fun mergeMcpConfigsForSave(
+    view: List<McpServerConfig>,
+    storedEncrypted: Map<String, String?>,
+    encrypt: (String) -> String?,
+): List<McpServerConfig> = view.map { cfg ->
+    when {
+        cfg.keyUndecryptable && cfg.apiKey == null -> {
+            val kept = storedEncrypted[cfg.id]?.takeIf { it.isNotBlank() }
+            if (kept != null) cfg.copy(apiKey = kept) else cfg.copy(keyUndecryptable = false)
+        }
+        cfg.apiKey.isNullOrBlank() -> cfg.copy(apiKey = null, keyUndecryptable = false)
+        else -> {
+            val enc = encrypt(cfg.apiKey)
+                ?: throw IllegalStateException("Could not encrypt API key for MCP server '${cfg.id}'")
+            cfg.copy(apiKey = enc, keyUndecryptable = false)
+        }
     }
 }

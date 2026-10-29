@@ -53,6 +53,34 @@ class GitLiteTest {
     }
 
     @Test
+    fun `addAll tracks gitignore and github files but never secrets or junk`() {
+        val root = tmp.newFolder()
+        val repo = GitLite.init(root)
+        File(root, ".gitignore").writeText("ignored.txt\n*.log\n")
+        File(root, ".gitattributes").writeText("*.kt text\n")
+        File(root, ".github/workflows").mkdirs()
+        File(root, ".github/workflows/ci.yml").writeText("name: ci\n")
+        File(root, "ignored.txt").writeText("skip me\n")
+        File(root, "debug.log").writeText("logs\n")
+        File(root, ".env").writeText("K=1\n")
+        File(root, "node_modules").mkdirs()
+        File(root, "node_modules/x.js").writeText("junk\n")
+        File(root, "src").mkdirs()
+        File(root, "src/Main.kt").writeText("fun main()\n")
+        val staged = repo.addAll()
+        assertTrue("staged=$staged", staged >= 3)
+        val paths = repo.status().staged.map { it.path }.toSet()
+        assertTrue(".gitignore" in paths)
+        assertTrue(".gitattributes" in paths)
+        assertTrue(".github/workflows/ci.yml" in paths)
+        assertTrue("src/Main.kt" in paths)
+        assertFalse("ignored.txt" in paths)
+        assertFalse("debug.log" in paths)
+        assertFalse(".env" in paths)
+        assertFalse("node_modules/x.js" in paths)
+    }
+
+    @Test
     fun `add and commit produce a readable history`() {
         val root = tmp.newFolder()
         val repo = GitLite.init(root)

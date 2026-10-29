@@ -14,7 +14,11 @@ class ProjectBackupService {
     fun export(fs: ProjectFileSystem, password: CharArray): String {
         require(password.size >= 8) { "Backup password must be at least 8 characters." }
         val zip = java.io.ByteArrayOutputStream()
-        ZipCodec.export(fs, zip)
+        // M-06: the whole archive is encrypted with the user's password,
+        // so secrets stay in the backup (dropping `.env` would restore a
+        // broken project). The unencrypted SAF share path keeps the
+        // default excludeSecrets=true.
+        ZipCodec.export(fs, zip, excludeSecrets = false)
         require(zip.size() <= MAX_BACKUP_BYTES) { "Project backup exceeds the safety limit." }
         return PortableBackup.encryptBytes(zip.toByteArray(), password)
     }

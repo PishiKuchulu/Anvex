@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import com.anvex.core.android.fs.RealProjectFileSystem
 import com.anvex.core.engine.PathSanitizer
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
@@ -133,13 +134,28 @@ class NodeCompatRuntime(
 
     /** Sandboxed filesystem bridge. All paths are re-sanitized here (JS input is untrusted). */
     private inner class FsBridge {
+        // M-10: writes go through the real filesystem (atomic publish,
+        // canonical containment) instead of raw File writes.
+        private val fs: RealProjectFileSystem by lazy { RealProjectFileSystem(projectRoot) }
+
         @JavascriptInterface
         fun invoke(op: String, path: String, arg: String?): String {
-            val safe = PathSanitizer.sanitize(path)
-                ?: return err("path escapes the workspace: $path")
-            val target = File(projectRoot, safe)
             fun ok(data: JSONObject.() -> Unit = {}) = JSONObject().apply { put("ok", true); data(); }.toString()
             return try {
+                // M-10: the old code called the THROWING sanitize() outside
+                // the try, so `../x` escaped this @JavascriptInterface
+                // method as an uncaught IllegalArgumentException (the `?:`
+                // branch was dead code). Sanitize-or-null, inside the try,
+                // plus a canonical containment check and a symlink refusal.
+                val safe = PathSanitizer.sanitizeOrNull(path)
+                    ?: return err("path escapes the workspace: $path")
+                val target = File(projectRoot, safe)
+                if (!target.canonicalFile.toPath().startsWith(projectRoot.canonicalFile.toPath())) {
+                    return err("path escapes the workspace: $path")
+                }
+                if (java.nio.file.Files.isSymbolicLink(target.toPath())) {
+                    return err("symlinks are not followed here: $path")
+                }
                 when (op) {
                     "read" -> when {
                         !target.isFile -> err("no such file: $path")
@@ -148,14 +164,12 @@ class NodeCompatRuntime(
                     }
                     "write" -> {
                         if (arg == null || arg.length > MAX_RW_CHARS) return err("write payload missing or too large")
-                        target.parentFile?.mkdirs()
-                        target.writeText(arg)
+                        fs.writeFile(safe, arg)
                         ok()
                     }
                     "append" -> {
                         if (arg == null || arg.length > MAX_RW_CHARS) return err("append payload missing or too large")
-                        target.parentFile?.mkdirs()
-                        target.appendText(arg)
+                        fs.appendFile(safe, arg)
                         ok()
                     }
                     "exists" -> ok { put("data", target.exists()) }

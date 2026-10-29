@@ -1,5 +1,6 @@
 package com.anvex.core.engine.vcs
 
+import com.anvex.core.engine.SensitivePaths
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
@@ -310,17 +311,110 @@ object GitLite {
 
         private fun readIndex(): List<IndexEntry> = readIndexFrom(gitDir)
 
+        /**
+         * M-05: the old `rel.startsWith(".git")` also excluded `.gitignore`,
+         * `.gitattributes` and `.github/` (workflows) from version control
+         * entirely, and `addAll` staged everything else — `node_modules/`,
+         * `build/`, `.anvex/`, `.env`, keystores. Now: only the `.git`
+         * directory itself is skipped (first-segment match), symlinks are
+         * never followed, secrets are never staged, and `.gitignore` /
+         * `.anvexignore` patterns plus a junk-dir default apply.
+         */
         private fun workingTreeFiles(): MutableSet<String> {
             val out = mutableSetOf<String>()
-            root.walkTopDown().forEach { file ->
-                if (file == root || file.startsWith(gitDir)) return@forEach
-                if (file.isFile) {
+            val ignores = loadIgnores()
+            root.walkTopDown()
+                .onEnter { dir -> dir == root || !java.nio.file.Files.isSymbolicLink(dir.toPath()) }
+                .forEach { file ->
+                    if (file == root || file.startsWith(gitDir)) return@forEach
+                    if (!file.isFile || java.nio.file.Files.isSymbolicLink(file.toPath())) return@forEach
                     val rel = file.relativeTo(root).path.replace(File.separatorChar, '/')
-                    if (rel.startsWith(".git")) return@forEach
+                    if (rel.split('/').first() == ".git") return@forEach
+                    if (SensitivePaths.isSensitive(rel)) return@forEach
+                    if (isIgnored(rel, ignores)) return@forEach
                     out.add(rel)
                 }
-            }
             return out
+        }
+
+        /** Default junk dirs (any level) that are never staged. */
+        private val DEFAULT_IGNORED_DIRS = setOf("node_modules", "build", ".gradle", ".idea")
+
+        /**
+         * Minimal `.gitignore` subset, shared by `.gitignore` and
+         * `.anvexignore` (root files, applied in order, last match wins):
+         * blank lines and `#` comments skipped; `!` negates; a trailing
+         * `/` matches directories; `*`/`?` globs (no `/` crossing);
+         * `**` crosses directories; a pattern containing a `/` is
+         * root-anchored, otherwise it matches any level's basename.
+         */
+        private data class IgnoreRule(val negated: Boolean, val dirOnly: Boolean, val anchored: Boolean, val regex: Regex)
+
+        private fun loadIgnores(): List<IgnoreRule> {
+            val rules = mutableListOf<IgnoreRule>()
+            for (name in listOf(".gitignore", ".anvexignore")) {
+                val file = File(root, name)
+                if (!file.isFile) continue
+                runCatching {
+                    file.readLines(Charsets.UTF_8).forEach { raw ->
+                        var line = raw.trim()
+                        if (line.isEmpty() || line.startsWith("#")) return@forEach
+                        var negated = false
+                        if (line.startsWith("!")) { negated = true; line = line.drop(1) }
+                        if (line.isEmpty()) return@forEach
+                        var dirOnly = false
+                        if (line.endsWith("/")) { dirOnly = true; line = line.dropLast(1) }
+                        var anchored = false
+                        if (line.startsWith("/")) { anchored = true; line = line.drop(1) }
+                        if (line.contains('/')) anchored = true
+                        val regex = globToRegex(line)
+                        rules.add(IgnoreRule(negated, dirOnly, anchored, regex))
+                    }
+                }
+            }
+            return rules
+        }
+
+        private fun globToRegex(glob: String): Regex {
+            val sb = StringBuilder()
+            var i = 0
+            while (i < glob.length) {
+                when {
+                    glob.startsWith("**", i) -> { sb.append(".*"); i += 2 }
+                    glob[i] == '*' -> { sb.append("[^/]*"); i++ }
+                    glob[i] == '?' -> { sb.append("[^/]"); i++ }
+                    glob[i] in ".+()|^$[]{}" -> { sb.append('\\'); sb.append(glob[i]); i++ }
+                    else -> { sb.append(glob[i]); i++ }
+                }
+            }
+            return Regex(sb.toString())
+        }
+
+        private fun isIgnored(rel: String, rules: List<IgnoreRule>): Boolean {
+            val parts = rel.split('/')
+            // Same carve-out as ZipCodec: a `build` dir under `src/` is
+            // source (e.g. generated sources), not build output.
+            val buildIndex = parts.indexOfFirst { it == "build" }
+            if (buildIndex >= 0 && parts.take(buildIndex).none { it == "src" }) return true
+            if (parts.any { it in DEFAULT_IGNORED_DIRS - "build" }) return true
+            var ignored = false
+            val isDir = false // workingTreeFiles only stages files
+            for (rule in rules) {
+                val matched = when {
+                    rule.anchored -> rule.regex.matches(rel) ||
+                        (!isDir && rule.dirOnly && parts.dropLast(1).indices.any { k ->
+                            rule.regex.matches(parts.take(k + 1).joinToString("/"))
+                        })
+                    else -> {
+                        // Unanchored: match the basename, or any parent dir
+                        // (for dir-only rules) at any depth.
+                        rule.regex.matches(parts.last()) ||
+                            (rule.dirOnly && parts.dropLast(1).any { rule.regex.matches(it) })
+                    }
+                }
+                if (matched) ignored = !rule.negated
+            }
+            return ignored
         }
 
         private fun modeFor(file: File): Int = if (file.canExecute()) MODE_EXECUTABLE else MODE_REGULAR

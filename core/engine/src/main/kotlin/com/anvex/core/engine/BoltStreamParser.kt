@@ -200,6 +200,21 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
 
     fun reset() = messages.clear()
 
+    /**
+     * H-06: returns the still-open action at end-of-stream WITHOUT applying
+     * it, and clears it. Callers use this when the stream ended truncated
+     * or failed: a half-written file must never be applied as complete.
+     * Only the file path is needed by callers (for the user-facing note).
+     */
+    fun takeOpenAction(messageId: String): BoltAction? {
+        val st = messages[messageId] ?: return null
+        if (!st.insideArtifact || !st.insideAction) return null
+        val action = st.currentAction
+        st.insideAction = false
+        st.currentAction = BoltAction.ShellAction("")
+        return action
+    }
+
     /** Flush any pending action at end-of-stream (upstream relies on </boltAction>). */
     fun flush(messageId: String) {
         val st = messages[messageId] ?: return

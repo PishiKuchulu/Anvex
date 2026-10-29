@@ -187,11 +187,18 @@ class GitHubRepository(private val context: android.content.Context) {
             }
             // Carry over remote files the sync does not manage (excluded by the
             // hygiene policy): they are never deleted by a push. Managed files
-            // missing locally ARE dropped from the tree — deletions propagate.
+            // missing locally must be deleted EXPLICITLY: with `base_tree`,
+            // merely omitting an entry KEEPS it (the old code's comment
+            // claimed deletions propagate, but they did not — renames left
+            // both copies on the remote).
             val localPaths = allLocal.toSet()
             for ((path, mode, sha) in baseEntries) {
                 if (path in localPaths) continue // included above, or excluded locally (kept below via the same branch)
-                if (ArtifactHygienePolicy.include(path)) continue // managed but deleted locally
+                if (ArtifactHygienePolicy.include(path)) {
+                    // M-04: managed but deleted locally — explicit null sha.
+                    treeEntries.put(JSONObject().put("path", path).put("mode", mode).put("type", "blob").put("sha", JSONObject.NULL))
+                    continue
+                }
                 treeEntries.put(JSONObject().put("path", path).put("mode", mode).put("type", "blob").put("sha", sha))
             }
             // Excluded local files that also exist remotely stay untouched.
@@ -277,7 +284,16 @@ class GitHubRepository(private val context: android.content.Context) {
         }
         return http.newCall(builder.build()).execute().use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("GitHub request failed (HTTP ${response.code}).")
+            if (!response.isSuccessful) {
+                // M-04: the bare HTTP code told the user nothing (a 403
+                // could be rate-limit, SSO, or scope). Surface GitHub's
+                // own message plus the rate-limit state.
+                val msg = runCatching { JSONObject(text).optString("message") }.getOrNull()
+                    ?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+                val rate = response.header("X-RateLimit-Remaining")
+                    ?.let { " (rate limit remaining: $it)" }.orEmpty()
+                error("GitHub request failed (HTTP ${response.code}$msg)$rate.")
+            }
             JSONObject(text)
         }
     }

@@ -252,6 +252,15 @@ class ChatSession(
                     fs,
                     openFilePath = openFilePath,
                     diffNote = runCatching { recentChangesNote(runner) }.getOrDefault(""),
+                    // M-17: scale the context budget with the model's window
+                    // (chars ≈ tokens, conservative); unknown window keeps 48k.
+                    maxTotalChars = provider.contextWindow
+                        ?.let { it.coerceIn(8_000L, 96_000L).toInt() }
+                        ?: ContextBuilder.MAX_TOTAL_CHARS,
+                    // 15.2: files named in the user's message get priority
+                    // contents (pure text scan — no fs access here; build()
+                    // checks membership against its own walk).
+                    mentionedFiles = mentionedFilesIn(userText),
                 )
                 memoryOn = runCatching { extras.memoryEnabled() }.getOrDefault(false)
                 webAllowed = runCatching { extras.webTools() }.getOrDefault(false)
@@ -294,6 +303,9 @@ class ChatSession(
                 var round = 0
                 var exportRetried = false
                 var mediaRetried = false
+                // 15.1: length-truncation continuations, capped per turn.
+                var lengthContinuations = 0
+                var suppressRoundSeparator = false
                 while (true) {
                     val roundId = if (round == 0) assistantId else "$assistantId-r$round"
                     observations.clear()
@@ -350,10 +362,17 @@ class ChatSession(
                     }
 
                     val streamParser = BoltStreamParser(callbacks)
+                    // H-06: finish reason of THIS round (reset per round; the
+                    // Completed event used to be dropped, so truncation was silent).
+                    var roundFinishReason: String? = null
+                    var lengthCutProse = false
                     val roundText = StringBuilder()
                     val roundReasoning = StringBuilder()
                     var lastUiEmit = 0L
-                    if (round > 0 && prose.isNotEmpty() && !prose.endsWith("\n")) prose.append("\n\n")
+                    // A length-continuation resumes mid-sentence: no blank
+                    // line between the cut text and its continuation.
+                    if (round > 0 && !suppressRoundSeparator && prose.isNotEmpty() && !prose.endsWith("\n")) prose.append("\n\n")
+                    suppressRoundSeparator = false
 
                     val request = ChatRequest(
                         systemPrompt = systemPrompt,
@@ -388,7 +407,10 @@ class ChatSession(
                                         streamReasoning = MemoryTags.stripForDisplay(allReasoning.toString().takeLast(20_000))
                                     )
                                 }
-                                is com.anvex.core.ai.StreamEvent.Completed -> usage = usage.plus(event.usage)
+                                is com.anvex.core.ai.StreamEvent.Completed -> {
+                                    usage = usage.plus(event.usage)
+                                    roundFinishReason = event.finishReason
+                                }
                                 is com.anvex.core.ai.StreamEvent.Failed -> failure = event.error
                                 com.anvex.core.ai.StreamEvent.Started -> Unit
                                 is com.anvex.core.ai.StreamEvent.Sources -> event.sources.forEach {
@@ -398,7 +420,33 @@ class ChatSession(
                         }
                         // flush may emit a final prose delta (pending action content)
                         prose.append(streamParser.parse(roundId, roundText.toString()))
-                        streamParser.flush(roundId)
+                        // H-06: only a clean "stop" may flush a still-open action
+                        // (the common case of a missing </boltAction> at the very
+                        // end). A failed turn or a non-stop finish reason
+                        // (length/max_tokens/…) means the file is INCOMPLETE:
+                        // drop it and say so instead of writing half a file
+                        // as if it were complete.
+                        val truncated = failure != null ||
+                            (roundFinishReason != null && roundFinishReason != "stop")
+                        if (truncated) {
+                            val open = streamParser.takeOpenAction(roundId)
+                            if (open != null) {
+                                incompleteFileNote(open, failure?.message ?: "finish_reason=$roundFinishReason")
+                                    ?.let { prose.append(it) }
+                            } else if (failure == null &&
+                                roundFinishReason?.lowercase() in setOf("length", "max_tokens") &&
+                                lengthContinuations < 2
+                            ) {
+                                // 15.1: prose cut by the output limit, no file
+                                // action open — the next round continues it.
+                                // (A cut FILE action cannot auto-resume: its
+                                // beginning was never written, so it keeps
+                                // the H-06 note above instead.)
+                                lengthCutProse = true
+                            }
+                        } else {
+                            streamParser.flush(roundId)
+                        }
                     } catch (e: CancellationException) {
                         canceled = true
                         streamParser.flush(roundId)
@@ -412,7 +460,12 @@ class ChatSession(
                             kind = AiError.Kind.UNKNOWN,
                             message = e.message?.take(500).orEmpty().ifBlank { "Unexpected provider failure" },
                         )
-                        runCatching { streamParser.flush(roundId) }
+                        // H-06: same rule as the normal path — a failed turn
+                        // never applies its still-open action.
+                        streamParser.takeOpenAction(roundId)?.let { open ->
+                            incompleteFileNote(open, e.message?.take(200) ?: "provider failure")
+                                ?.let { prose.append(it) }
+                        }
                     }
 
                     // Signal end-of-stream; the consumer drains remaining queued actions.
@@ -426,6 +479,18 @@ class ChatSession(
                     rawAll.append(roundText).append('\n')
 
                     val gathered = synchronized(observations) { observations.toList() }
+                    // 15.1: length-continuation runs before the export/media
+                    // corrections (those are once-only and still apply on
+                    // the next round if the file is still missing).
+                    if (lengthCutProse && round < MAX_TOOL_ROUNDS) {
+                        lengthContinuations++
+                        suppressRoundSeparator = true
+                        turns.add(ChatTurn(MessageRole.ASSISTANT, roundText.toString()))
+                        turns.add(ChatTurn(MessageRole.USER, LENGTH_CONTINUE_PROMPT))
+                        round++
+                        _state.value = _state.value.copy(statusLine = "Output was cut off — continuing where it stopped…")
+                        continue
+                    }
                     // Export contract: if the user asked for a file and this answer delivered none
                     // (typically an HTML page), ask once more with an explicit correction.
                     val fileDelivered = generatedRecords.any { it.type == "artifact" && it.status == ActionStatus.COMPLETE.name }
@@ -488,6 +553,29 @@ class ChatSession(
                 )
             }
         }
+    }
+
+    /** H-06: note appended to the reply when a file action is dropped because the stream ended mid-file. */
+    private fun incompleteFileNote(action: BoltAction, reason: String): String? {
+        val path = (action as? BoltAction.FileAction)?.filePath ?: return null
+        return "\n\n[Output stopped early ($reason): file '$path' was NOT written because the model output was cut off. Send the message again to continue it.]"
+    }
+
+    /**
+     * 15.2: file paths named in the user's message. Backtick spans first
+     * (the exact form users paste paths in), then bare path-like tokens
+     * (`src/foo/Bar.kt`). Candidates only — ContextBuilder.build checks
+     * each against the real file walk, so nonexistent or sensitive paths
+     * never enter context from here.
+     */
+    private fun mentionedFilesIn(userText: String): List<String> {
+        val candidates = LinkedHashSet<String>()
+        Regex("`([^`\n]{1,200})`").findAll(userText).forEach {
+            candidates += it.groupValues[1].trim().trimStart('/')
+        }
+        Regex("[A-Za-z0-9_.\\-]+(?:/[A-Za-z0-9_.\\-]+)+\\.[A-Za-z0-9]{1,10}")
+            .findAll(userText).forEach { candidates += it.value.trimStart('/') }
+        return candidates.filter { it.isNotBlank() && !it.contains("..") }.distinct().take(10)
     }
 
     /** Execute one action — lifecycle policy (timeout/abort) belongs to the consumer. */
@@ -662,6 +750,16 @@ class ChatSession(
         val allActions = summary.actions + generatedRecords.toList()
         val finalSummary = if (generatedRecords.isEmpty()) summary else summary.copy(actions = allActions)
 
+        // 15.5: cost = prompt × input price + completion × output price,
+        // from the provider row's own prices. Null prices stay null — the
+        // dashboard shows no cost rather than a fabricated one.
+        val finalUsage = usage?.let { u ->
+            val input = provider.inputPricePerMillion
+            val output = provider.outputPricePerMillion
+            if (input == null && output == null) u
+            else u.copy(costUsd = (u.promptTokens * (input ?: 0.0) + u.completionTokens * (output ?: 0.0)) / 1_000_000.0)
+        }
+
         val assistantMessage = ChatMessage(
             id = assistantId,
             projectId = projectId,
@@ -669,7 +767,7 @@ class ChatSession(
             content = MemoryTags.strip(prose) + sourcesFooter(),
             model = provider.model,
             providerId = provider.id,
-            usage = usage,
+            usage = finalUsage,
             artifact = if (finalSummary.actions.isNotEmpty()) finalSummary else null,
             thinkingLevel = thinkingLevel.name,
             reasoning = reasoning.takeIf { it.isNotBlank() }?.take(20_000),
@@ -835,6 +933,15 @@ class ChatSession(
             "<boltAction type=\"artifact\" format=\"mp4\" source=\"render.html\" duration=\"15\" fps=\"30\" " +
             "width=\"1280\" height=\"720\" outputName=\"video.mp4\"/> as the LAST action. Do not deliver an " +
             "index.html preview page as the result."
+
+        /**
+         * 15.1: auto-continue prompt for a length-truncated round. It is
+         * only used for PROSE truncation (no open file action): a cut file
+         * action cannot resume, because its beginning was never written.
+         */
+        const val LENGTH_CONTINUE_PROMPT =
+            "Your previous reply was cut off by the output limit. Continue exactly where you stopped. " +
+            "Do not repeat anything already written and do not summarize — output only the remaining part."
         private const val MAX_TOOL_RESULT_CHARS = 60_000
     }
 }

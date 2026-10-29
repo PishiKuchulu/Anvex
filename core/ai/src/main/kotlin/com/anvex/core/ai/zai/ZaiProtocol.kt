@@ -49,7 +49,13 @@ object ZaiProtocol {
         val data = dataOf(root) ?: return null
         val flowId = data["flow_id"]?.jsonPrimitiveOrNull?.contentOrNull ?: return null
         val authorizeUrl = data["authorize_url"]?.jsonPrimitiveOrNull?.contentOrNull ?: return null
-        if (!authorizeUrl.startsWith("https://")) return null
+        // L-14: the old check accepted ANY https URL — a tampered init
+        // response could send the user to an attacker site to "authorize".
+        // The authorize page must live on Z.ai itself.
+        val authorizeHost = runCatching { java.net.URI(authorizeUrl).host?.lowercase() }.getOrNull()
+        if (!authorizeUrl.startsWith("https://") ||
+            !(authorizeHost == "z.ai" || (authorizeHost?.endsWith(".z.ai") == true))
+        ) return null
         val interval = (data["poll_interval_sec"]?.jsonPrimitiveOrNull?.longOrNull ?: 3L).coerceAtLeast(1L)
         val expiresRaw = data["expires_at"]?.jsonPrimitiveOrNull?.longOrNull
         val expiresMs = expiresRaw?.let { raw ->

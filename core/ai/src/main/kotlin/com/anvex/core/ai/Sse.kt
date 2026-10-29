@@ -56,7 +56,9 @@ internal object Sse {
                 response.use { resp ->
                     if (!resp.isSuccessful) {
                         val body = try { resp.body?.string() ?: "" } catch (_: Exception) { "" }
-                        onError(mapHttpError(resp.code, body))
+                        // M-16: surface Retry-After so failover can back off instead of hammering.
+                        val retryAfter = resp.header("Retry-After")?.toLongOrNull()
+                        onError(mapHttpError(resp.code, body, retryAfter))
                         close()
                         return@launch
                     }
@@ -66,9 +68,19 @@ internal object Sse {
                     var lastId: String? = null
                     val data = StringBuilder()
                     var hasDataField = false
+                    // M-16: a 200 with a non-SSE JSON body (gateway/proxy error)
+                    // used to yield only "Stream ended without content". Collect
+                    // non-SSE lines (capped) so the real error can be surfaced.
+                    var sentEvents = 0
+                    val nonSseBody = StringBuilder()
                     while (true) {
                         val line = try {
-                            source.readUtf8Line() ?: break
+                            readLineCapped(source) ?: break
+                        } catch (e: LineTooLongException) {
+                            if (call.isCanceled()) return@launch
+                            onError(AiError(AiError.Kind.PROTOCOL, e.message ?: "SSE line too long"))
+                            close()
+                            return@launch
                         } catch (e: IOException) {
                             if (call.isCanceled()) return@launch
                             onError(AiError(AiError.Kind.NETWORK, e.message ?: "connection lost"))
@@ -78,7 +90,7 @@ internal object Sse {
                         when {
                             line.isEmpty() -> {
                                 // Blank line = event boundary. An explicit empty data field is still a valid SSE event.
-                                if (hasDataField) send(SseEvent(event, data.toString(), lastId))
+                                if (hasDataField) { send(SseEvent(event, data.toString(), lastId)); sentEvents++ }
                                 event = null
                                 data.setLength(0)
                                 hasDataField = false
@@ -98,11 +110,27 @@ internal object Sse {
                                 // Reconnection hint — deliberately ignored: chat streams are
                                 // one-shot requests; auto-retry would duplicate prompts.
                             }
-                            else -> Unit // unknown field per spec: ignore
+                            else -> {
+                                // Unknown field per spec — but a body made only of
+                                // such lines is not SSE at all (gateway error JSON).
+                                if (nonSseBody.length < NON_SSE_BODY_CAP) {
+                                    nonSseBody.append(line).append('\n')
+                                }
+                            }
                         }
                     }
                     // EOF without trailing blank line: flush any pending event.
-                    if (hasDataField) send(SseEvent(event, data.toString(), lastId))
+                    if (hasDataField) { send(SseEvent(event, data.toString(), lastId)); sentEvents++ }
+                    if (sentEvents == 0 && nonSseBody.isNotBlank()) {
+                        val raw = nonSseBody.toString()
+                        onError(
+                            AiError(
+                                AiError.Kind.PROTOCOL,
+                                extractErrorMessage(raw)
+                                    ?: "Provider returned a non-streaming response: ${raw.take(500)}",
+                            )
+                        )
+                    }
                     close()
                 }
             } catch (e: IOException) {
@@ -120,19 +148,26 @@ internal object Sse {
         awaitClose { call.cancel() }
     }
 
-    fun mapHttpError(code: Int, body: String): AiError {
+    fun mapHttpError(code: Int, body: String, retryAfterSeconds: Long? = null): AiError {
         val kind = when (code) {
             // v4.4.1: 401 and 403 split — a bad/missing key is AUTH; a policy refusal
             // (e.g. OpenCode FreeTierError) is ACCESS_RESTRICTED. Different user actions.
             401 -> AiError.Kind.AUTH
+            // M-16: 402 is quota/credits exhausted, not a generic protocol error.
+            402 -> AiError.Kind.RATE_LIMIT
             403 -> AiError.Kind.ACCESS_RESTRICTED
             404 -> AiError.Kind.NOT_FOUND
+            // M-16: 408 is a network timeout; 413/422 stay PROTOCOL but keep
+            // their explicit HTTP code in the message below.
+            408 -> AiError.Kind.NETWORK
             429 -> AiError.Kind.RATE_LIMIT
             in 500..599 -> AiError.Kind.NETWORK
             else -> AiError.Kind.PROTOCOL
         }
         val detail = extractErrorMessage(body)
-        return AiError(kind, detail ?: "HTTP $code", code)
+        val base = detail ?: "HTTP $code"
+        val message = if (retryAfterSeconds != null) "$base (retry after ${retryAfterSeconds}s)" else base
+        return AiError(kind, message, code, retryAfterSeconds)
     }
 
     /** Pull `error.message` from common provider error bodies, defensively. */
@@ -149,6 +184,32 @@ internal object Sse {
             null
         }
     }
+    /** Cap for the collected non-SSE body (M-16): enough for a gateway error JSON, never unbounded. */
+    private const val NON_SSE_BODY_CAP = 8_192
+
+    /** M-16: `readUtf8Line()` is unbounded (a malicious server can OOM the app with one line). */
+    private class LineTooLongException : IOException("SSE line exceeds 1 MB cap")
+
+    /**
+     * Reads one SSE line (LF or CRLF terminated) with a byte cap, decoding
+     * UTF-8 only at the line boundary so multi-byte characters split across
+     * reads stay intact. Returns null at EOF with nothing buffered.
+     */
+    private fun readLineCapped(source: okio.BufferedSource, limit: Int = 1_048_576): String? {
+        val out = java.io.ByteArrayOutputStream()
+        while (true) {
+            if (out.size() > limit) throw LineTooLongException()
+            val b = try {
+                source.readByte()
+            } catch (e: java.io.EOFException) {
+                return if (out.size() == 0) null else String(out.toByteArray(), Charsets.UTF_8)
+            }
+            if (b == '\n'.code.toByte()) break
+            if (b != '\r'.code.toByte()) out.write(b.toInt())
+        }
+        return String(out.toByteArray(), Charsets.UTF_8)
+    }
+
     /**
      * SSE field value: strip the field prefix then EXACTLY ONE leading space
      * (spec: "If the field value starts with a U+0020 SPACE, remove it"). `.trim()`

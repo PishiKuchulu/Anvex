@@ -93,6 +93,23 @@ class AppUpdateController(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var downloadJob: Job? = null
 
+    init {
+        // M-03: a 60–160 MB APK used to sit in cache/shared forever after
+        // installation (the installer reads it via FileProvider, so it
+        // cannot be deleted at install time). Sweep files older than a
+        // day plus any leftover `.part` files on controller creation.
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val dir = File(context.cacheDir, "shared")
+                val cutoff = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+                dir.listFiles()?.forEach { f ->
+                    if (f.name.startsWith("anvex-update-") && f.lastModified() < cutoff) f.delete()
+                    if (f.name.endsWith(".part")) f.delete()
+                }
+            }
+        }
+    }
+
     fun check() {
         if (state is State.Checking || state is State.Downloading) return
         state = State.Checking
@@ -135,6 +152,13 @@ class AppUpdateController(private val context: Context) {
 
     /** Opens the system installer; routes to the unknown-apps consent first when needed. */
     fun install(file: File) {
+        // M-03: never hand the installer an APK signed with a different
+        // key than the running app (the debug-key `latest` builds are the
+        // reason this check exists).
+        if (!AppUpdateChecker.verifySameSigner(context, file)) {
+            state = State.Failed("The downloaded APK is not signed with this app's key — refusing to install.")
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {

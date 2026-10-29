@@ -64,6 +64,7 @@ class AndroidShellRuntime(
 
     private fun isAiSafeCommand(command: String): Boolean {
         val normalized = command.trim()
+        if (isStdinHangingCommand(normalized)) return false
         if (ActionSafetyPolicy.assess(normalized).requiresApproval) return false
         if (normalized.contains("..")) return false
         if (containsSensitivePath(normalized)) return false
@@ -104,6 +105,30 @@ class AndroidShellRuntime(
         }
         val text = String(bytes, StandardCharsets.UTF_8)
         return if (text.length <= MAX_OUTPUT_CHARS) text else text.take(MAX_OUTPUT_CHARS) + "\n[output truncated]"
+    }
+}
+
+/**
+ * L-04: commands that read stdin or follow forever hang the AI terminal
+ * until timeout — the AI path has no stdin to give them. Bare `cat` /
+ * `head` read stdin; bare `grep` with only a pattern reads stdin;
+ * `tail -f` never terminates. Shared by the shell runtime and the
+ * interactive terminal session so the two gates cannot drift apart.
+ */
+internal fun isStdinHangingCommand(normalized: String): Boolean {
+    val parts = normalized.split(Regex("\\s+"))
+    if (parts.isEmpty()) return false
+    val head = parts.first().lowercase()
+    val args = parts.drop(1)
+    val operands = args.filter { !it.startsWith("-") }
+    return when (head) {
+        "cat", "head" -> operands.isEmpty()
+        "grep" -> operands.size < 2 // pattern + at least one file
+        "tail" -> args.any {
+            it == "-f" || it == "--follow" ||
+                (it.startsWith("-") && !it.startsWith("--") && 'f' in it)
+        }
+        else -> false
     }
 }
 

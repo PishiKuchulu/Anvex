@@ -245,7 +245,13 @@ class HarnessWebServer(
         }
         // v4.10.1 (SEC-01): secrets and VCS internals are never downloadable
         // (.anvex/attachments stays allowed — it is this route's purpose).
-        if (com.anvex.core.engine.SensitivePaths.isSecretFile(relative)) {
+        // L-01: the old check used isSecretFile only, so .anvex/ state,
+        // .anvex-pi/ and .git/ internals were downloadable — the Preview
+        // server already blocks all of isSensitive. Deny everything
+        // sensitive except the attachments subtree this route exists for.
+        if (com.anvex.core.engine.SensitivePaths.isSensitive(relative) &&
+            !relative.startsWith(".anvex/attachments/")
+        ) {
             fail(404, "File not found")
             return
         }

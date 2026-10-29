@@ -70,6 +70,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 fun ProvidersScreen(nav: NavController) {
     val vm: ProvidersViewModel = viewModel { ProvidersViewModel() }
     val providers by vm.providers.collectAsState()
+    val brokenProviders by vm.brokenProviders.collectAsState()
 
     Scaffold(
         topBar = { TopAppBar(title = { Text(tr("AI providers")) }) },
@@ -88,6 +89,38 @@ fun ProvidersScreen(nav: NavController) {
         ) {
             // v4.4: Z.ai account hero card (login flow) — always first.
             item { ZaiAccountCard(vm) }
+            // M-08: providers that exist in the database but cannot be
+            // loaded (undecryptable key, corrupt row) — visible with a
+            // reason and a Remove action, never silently dropped.
+            if (brokenProviders.isNotEmpty()) {
+                item {
+                    Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                tr("Some saved providers could not be loaded. Re-add them, or remove the broken entries:"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            brokenProviders.forEach { broken ->
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        "${broken.name} (${broken.reason})",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(onClick = { vm.removeBroken(broken.id) }) {
+                                        Text(tr("Remove"))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (providers.isEmpty()) {
                 item {
                     Text(

@@ -118,9 +118,15 @@ fun BackupScreen(nav: NavController) {
                     scope.launch(Dispatchers.IO) {
                         busy = true
                         status = runCatching {
-                            graph.backup.restore(payload)
+                            val skipped = graph.backup.restore(payload)
                             inspected = null
-                            "Restore committed successfully after pre-restore inspection with rollback protection."
+                            // M-08: a partial restore is not a silent success —
+                            // skipped providers are named so the user re-adds them.
+                            if (skipped.isEmpty()) {
+                                "Restore committed successfully after pre-restore inspection with rollback protection."
+                            } else {
+                                "Restore committed, but ${skipped.size} provider(s) were skipped and need re-adding: ${skipped.joinToString("; ")}"
+                            }
                         }.getOrElse { "Restore failed: ${it.message ?: "unknown error"}" }
                         busy = false
                     }

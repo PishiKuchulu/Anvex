@@ -23,10 +23,8 @@ object ZipCodec {
     /**
      * Paths that never belong in an export/backup archive (v4.10.1, BUG-11):
      * dependency/VCS/build junk that made exports of real projects blow the
-     * entry/size caps and fail outright, plus runtime log files. This is
-     * deliberately NOT the secret sweep — a backup must keep the user's own
-     * files (including `.anvex/attachments`); secrets are the sync/packaging
-     * policy's job, not the backup's.
+     * entry/size caps and fail outright, plus runtime log files and crash
+     * residue (`.<name>.tmp-<uuid>` atomic-write leftovers).
      */
     fun isExportable(path: String): Boolean {
         val parts = path.replace('\\', '/').split('/')
@@ -35,17 +33,41 @@ object ZipCodec {
         if (buildIndex >= 0 && parts.take(buildIndex).none { it == "src" }) return false
         val name = parts.last()
         if (name.startsWith(".anvex-shell-") || name.startsWith(".anvex-node-")) return false
+        if (name.startsWith(".") && name.contains(".tmp-")) return false
         if (path.startsWith(".anvex/logs/")) return false
         return true
     }
 
-    fun export(fs: ProjectFileSystem, out: OutputStream, onEntry: (String) -> Unit = {}) {
+    /**
+     * M-06: secrets never leave the device in a shared archive.
+     * [excludeSecrets] is true by default (the SAF share/export path);
+     * the password-encrypted backup path passes false deliberately —
+     * a backup that silently drops `.env` restores a broken project,
+     * and its whole archive is encrypted with the user's password.
+     * Skipped files are reported through [onSkipped] (reason included)
+     * instead of vanishing silently, as the old `?: continue` did.
+     */
+    fun export(
+        fs: ProjectFileSystem,
+        out: OutputStream,
+        onEntry: (String) -> Unit = {},
+        excludeSecrets: Boolean = true,
+        onSkipped: (String, String) -> Unit = { _, _ -> },
+    ) {
         ZipOutputStream(out.buffered()).use { zip ->
             val files = fs.walk().filter { isExportable(it) }
             if (files.size > MAX_ENTRIES) throw ZipSecurityException("Project exceeds $MAX_ENTRIES files")
             var total = 0L
             for (path in files) {
-                val bytes = fs.readFileBytes(path) ?: continue
+                if (excludeSecrets && SensitivePaths.isSecretFile(path)) {
+                    onSkipped(path, "secret file")
+                    continue
+                }
+                val bytes = fs.readFileBytes(path)
+                if (bytes == null) {
+                    onSkipped(path, "unreadable")
+                    continue
+                }
                 if (bytes.size.toLong() > MAX_ENTRY_BYTES) throw ZipSecurityException("Entry '$path' exceeds size cap")
                 total += bytes.size
                 if (total > MAX_TOTAL_BYTES) throw ZipSecurityException("Project exceeds total archive size cap")

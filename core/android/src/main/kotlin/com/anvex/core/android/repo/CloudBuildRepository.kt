@@ -534,6 +534,10 @@ class CloudBuildRepository(private val tokenProvider: () -> String?) {
          * the executable bit that the Contents API cannot set on push.
          * `${'$'}` escapes are literal `$` for the GitHub expression / shell.
          */
+        // H-07/L-13 hardening: least-privilege token (checkout needs
+        // contents:read, artifact upload needs actions:write — nothing
+        // else), a job timeout, a concurrency group, and actions pinned
+        // by commit SHA (same v4 code, no longer floating on a tag).
         const val WORKFLOW_TEMPLATE = """name: Anvex Cloud Build
 on:
   workflow_dispatch:
@@ -541,12 +545,19 @@ on:
       variant:
         description: "Build variant (debug or release)"
         default: "debug"
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: anvex-cloud-build-${'$'}{{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: "17"
@@ -555,7 +566,7 @@ jobs:
           VARIANT: ${'$'}{{ inputs.variant }}
         run: sh gradlew "assemble${'$'}(printf '%s' "${'$'}VARIANT" | sed 's/^./\U&/')" --no-daemon
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: anvex-apk
           path: '**/build/outputs/apk/**/*.apk'

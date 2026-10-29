@@ -19,10 +19,13 @@ import java.util.zip.ZipInputStream
  * Anvex Thinking setting as pi's `--thinking` flag; the versioned
  * install dir changes with it, so existing installs re-extract
  * instead of keeping a stale driver.
+ * The `-auth1` suffix marks the H-01 control-socket token handshake
+ * (driver sends the per-run token first; the host verifies it before
+ * sending the config with the API key). Same re-extract rule applies.
  */
 object PiRuntime {
 
-    const val RUNTIME_VERSION = "pi-1.4.0-thinking1"
+    const val RUNTIME_VERSION = "pi-1.4.0-thinking1-auth1"
     private const val ASSET_NAME = "pi-runtime.zip"
     private const val MARKER = ".anvex-pi-runtime.ok"
 

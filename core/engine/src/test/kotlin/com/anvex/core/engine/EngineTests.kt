@@ -194,6 +194,25 @@ class ZipCodecTest {
     }
 
     @Test
+    fun `shared export excludes secrets and crash residue, reports skips`() {
+        val fs = FakeFs()
+        fs.writeFile("index.html", "<html></html>")
+        fs.writeFile(".env", "K=1")
+        fs.writeFile("id_rsa", "private")
+        fs.writeFile(".foo.tmp-1234", "residue")
+        val skipped = mutableListOf<String>()
+        val out = ByteArrayOutputStream()
+        ZipCodec.export(fs, out, onSkipped = { path, _ -> skipped.add(path) })
+        val target = FakeFs()
+        ZipCodec.import(ByteArrayInputStream(out.toByteArray()), target)
+        assertEquals("<html></html>", target.readFile("index.html"))
+        assertNull(target.readFile(".env"))
+        assertNull(target.readFile("id_rsa"))
+        assertNull(target.readFile(".foo.tmp-1234"))
+        assertTrue(skipped.contains(".env"))
+    }
+
+    @Test
     fun `zip slip rejected`() {
         val bytes = zipOf("../evil.txt" to "bad", "ok.txt" to "good")
         val fs = FakeFs()

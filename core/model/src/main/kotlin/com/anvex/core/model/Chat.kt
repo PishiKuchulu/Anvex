@@ -48,6 +48,14 @@ data class Usage(
     val promptTokens: Long = 0,
     val completionTokens: Long = 0,
     val totalTokens: Long = 0,
+    /**
+     * 15.5: estimated cost in USD for this response, computed at finalize
+     * time from the provider's per-million-token prices. Null when the
+     * provider has no prices configured — never a guessed number.
+     * Schema-safe: usage persists as a JSON column, so old rows decode
+     * with null here.
+     */
+    val costUsd: Double? = null,
 )
 
 @Serializable

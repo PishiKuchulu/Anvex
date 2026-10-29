@@ -26,6 +26,61 @@ class ProviderRepository(private val dao: ProviderDao) {
         list.mapNotNull { it.toDomain() }
     }
 
+    /**
+     * M-08: rows [observeAll] silently drops (decrypt failure, bad enum,
+     * corrupt JSON). They are still in the database — the UI shows them
+     * as broken instead of pretending they do not exist.
+     */
+    data class BrokenProvider(val id: String, val name: String, val reason: String)
+
+    fun observeBroken(): Flow<List<BrokenProvider>> = dao.observeAll().map { list ->
+        list.mapNotNull { entity ->
+            if (entity.toDomain() != null) null else BrokenProvider(
+                id = entity.id,
+                name = entity.name,
+                reason = brokenReason(entity),
+            )
+        }
+    }
+
+    private fun ProviderEntity.brokenReason(): String {
+        if (runCatching { ProviderKind.valueOf(kind) }.isFailure) return "unknown provider kind"
+        if (!extraHeadersEnc.isNullOrBlank() && runCatching {
+                decryptHeaders(extraHeadersEnc, id)
+            }.isFailure) return "headers cannot be decrypted"
+        if (!extraHeadersJson.isNullOrBlank() && extraHeadersJson != "{}" &&
+            runCatching { json.decodeFromString<Map<String, String>>(extraHeadersJson) }.isFailure
+        ) return "corrupt stored data"
+        return "stored data cannot be read"
+    }
+
+    /**
+     * M-15: GCM AAD binding a provider key to its row. If an attacker (or
+     * a corrupt sync) swaps baseUrl/model/id in the database, decryption
+     * fails instead of sending the real key to the attacker's endpoint.
+     * Version-tagged so the format can evolve without breaking old rows.
+     */
+    private fun providerKeyAad(id: String, baseUrl: String, model: String): ByteArray =
+        "anvex-provider-v1|$id|$baseUrl|$model".toByteArray(Charsets.UTF_8)
+
+    /** Headers are bound to the provider id only (they carry no URL/model). */
+    private fun providerHeadersAad(id: String): ByteArray =
+        "anvex-provider-headers-v1|$id".toByteArray(Charsets.UTF_8)
+
+    /** AAD form first, legacy no-AAD form second (transparent migration). */
+    private fun decryptHeaders(encoded: String, providerId: String): String = try {
+        KeystoreCrypto.decrypt(encoded, providerHeadersAad(providerId))
+    } catch (_: KeystoreCrypto.CryptoException) {
+        KeystoreCrypto.decrypt(encoded)
+    }
+
+    /** AAD form first, legacy form second. Throws when neither works. */
+    private fun decryptApiKey(encoded: String, id: String, baseUrl: String, model: String): String = try {
+        KeystoreCrypto.decrypt(encoded, providerKeyAad(id, baseUrl, model))
+    } catch (_: KeystoreCrypto.CryptoException) {
+        KeystoreCrypto.decrypt(encoded)
+    }
+
     suspend fun get(id: String): ProviderConfig? = dao.get(id)?.toDomain()
 
     suspend fun getDefault(): ProviderConfig? {
@@ -50,15 +105,41 @@ class ProviderRepository(private val dao: ProviderDao) {
         validateBaseUrl(config.baseUrl)?.let {
             return RepoResult.Err("Invalid base URL", it)
         }
+        // 15.7: same allow-list at save time, so a tampered restore or a
+        // manual edit cannot even store an off-list Z.ai endpoint.
+        if (config.kind == ProviderKind.ZAI_ACCOUNT && config.baseUrl.isNotBlank()) {
+            val host = runCatching { URI(config.baseUrl.trim()).host?.lowercase() }.getOrNull()
+            if (host != "api.z.ai") {
+                return RepoResult.Err(
+                    "Invalid base URL",
+                    "Z.ai account providers may only use https://api.z.ai — the account token is not valid anywhere else.",
+                )
+            }
+        }
+        val stored = dao.get(config.id)
         val enc = when {
             apiKeyPlain != null && apiKeyPlain.isNotBlank() -> try {
-                KeystoreCrypto.encrypt(apiKeyPlain.trim())
+                KeystoreCrypto.encrypt(apiKeyPlain.trim(), providerKeyAad(config.id, config.baseUrl, config.model))
             } catch (e: KeystoreCrypto.CryptoException) {
                 return RepoResult.Err("Secure storage failed", e.message ?: "Android Keystore unavailable.")
             }
-            else -> config.apiKeyEnc ?: dao.get(config.id)?.apiKeyEnc
+            else -> config.apiKeyEnc ?: stored?.apiKeyEnc
         }
-        val final = config.copy(apiKeyEnc = enc)
+        // AAD re-bind on edit-without-key-change: a ciphertext bound to the
+        // OLD baseUrl/model would fail authentication after the user edits
+        // those fields without re-entering the key. Re-encrypt the kept key
+        // under the new AAD when it decrypts; on failure keep the stored
+        // ciphertext untouched (the provider then surfaces its usual
+        // decrypt warning instead of silently losing the key).
+        val finalEnc = if (apiKeyPlain.isNullOrBlank() && !enc.isNullOrBlank() && stored != null &&
+            (stored.baseUrl != config.baseUrl || stored.model != config.model)
+        ) {
+            runCatching {
+                val plain = decryptApiKey(enc, stored.id, stored.baseUrl, stored.model)
+                KeystoreCrypto.encrypt(plain, providerKeyAad(config.id, config.baseUrl, config.model))
+            }.getOrDefault(enc)
+        } else enc
+        val final = config.copy(apiKeyEnc = finalEnc)
         val entity = try { final.toEntity() } catch (e: Exception) {
             return RepoResult.Err("Secure storage failed", e.message ?: "Provider headers could not be encrypted.")
         }
@@ -127,7 +208,7 @@ class ProviderRepository(private val dao: ProviderDao) {
         var migrated = 0
         dao.observeAll().firstOrNull().orEmpty().forEach { entity ->
             if (entity.extraHeadersEnc.isNullOrBlank() && entity.extraHeadersJson.isNotBlank() && entity.extraHeadersJson != "{}") {
-                val encoded = try { KeystoreCrypto.encrypt(entity.extraHeadersJson) } catch (_: Exception) { return@forEach }
+                val encoded = try { KeystoreCrypto.encrypt(entity.extraHeadersJson, providerHeadersAad(entity.id)) } catch (_: Exception) { return@forEach }
                 dao.update(entity.copy(extraHeadersJson = "{}", extraHeadersEnc = encoded))
                 migrated++
             }
@@ -149,20 +230,35 @@ class ProviderRepository(private val dao: ProviderDao) {
         snapshot.forEach { dao.upsert(it) }
     }
 
-    /** Replace all providers as one logical restore operation; plaintext keys exist only in memory. */
-    suspend fun replaceAllForRestore(items: List<com.anvex.core.android.PortableBackup.BackupProvider>) {
+    /**
+     * M-08: restore is per-item, not all-or-nothing. One legacy URL that
+     * current validation rejects (e.g. cleartext http://192.168.x.x from
+     * an older backup) used to fail the WHOLE restore. Now valid
+     * providers are saved and the rest are reported by name; only a
+     * total failure (nothing restorable) still rolls back and throws,
+     * so a bad backup can never wipe the working set.
+     * Returns "name: reason" lines for every skipped provider.
+     */
+    suspend fun replaceAllForRestore(items: List<com.anvex.core.android.PortableBackup.BackupProvider>): List<String> {
         require(items.size <= MAX_RESTORE_PROVIDERS) { "Backup contains too many providers." }
         val previous = snapshotEntities()
-        try {
-            dao.clearAll()
-            items.forEach { item ->
-                val result = save(item.config.copy(apiKeyEnc = null), item.apiKey)
-                if (result is RepoResult.Err) error("Provider restore failed: ${result.detail}")
+        dao.clearAll()
+        val skipped = ArrayList<String>()
+        var saved = 0
+        items.forEach { item ->
+            val result = runCatching { save(item.config.copy(apiKeyEnc = null), item.apiKey) }
+                .getOrElse { RepoResult.Err("Restore failed", it.message ?: "Unknown error.") }
+            if (result is RepoResult.Err) {
+                skipped += "${item.config.name}: ${result.detail}"
+            } else {
+                saved++
             }
-        } catch (t: Throwable) {
-            runCatching { restoreEntities(previous) }
-            throw t
         }
+        if (items.isNotEmpty() && saved == 0) {
+            runCatching { restoreEntities(previous) }
+            error("Provider restore failed for all ${items.size} provider(s): ${skipped.joinToString("; ")}")
+        }
+        return skipped
     }
 
     companion object { private const val MAX_RESTORE_PROVIDERS = 100 }
@@ -179,9 +275,24 @@ class ProviderRepository(private val dao: ProviderDao) {
             ""
         } else {
             try {
-                KeystoreCrypto.decrypt(encoded)
+                decryptApiKey(encoded, config.id, config.baseUrl, config.model)
             } catch (_: KeystoreCrypto.CryptoException) {
                 return null
+            }
+        }
+        // Transparent AAD migration: a legacy (no-AAD) ciphertext that
+        // still decrypts is re-encrypted bound to this row, so the next
+        // read uses the AAD form. Best-effort — a failed rewrite never
+        // blocks the chat; the legacy form still works next time.
+        if (!encoded.isNullOrBlank()) {
+            val aadWorks = runCatching {
+                KeystoreCrypto.decrypt(encoded, providerKeyAad(config.id, config.baseUrl, config.model)); true
+            }.getOrDefault(false)
+            if (!aadWorks) {
+                runCatching {
+                    val reEnc = KeystoreCrypto.encrypt(key, providerKeyAad(config.id, config.baseUrl, config.model))
+                    dao.get(id)?.let { dao.update(it.copy(apiKeyEnc = reEnc)) }
+                }
             }
         }
         return ProviderRuntimeConfig(config, key)
@@ -189,9 +300,10 @@ class ProviderRepository(private val dao: ProviderDao) {
 
     /** Returns true when a persisted API-key ciphertext exists but cannot be decrypted. */
     suspend fun hasCredentialDecryptionFailure(id: String): Boolean {
-        val encoded = dao.get(id)?.apiKeyEnc
+        val entity = dao.get(id) ?: return false
+        val encoded = entity.apiKeyEnc
         if (encoded.isNullOrBlank()) return false
-        return runCatching { KeystoreCrypto.decrypt(encoded); false }
+        return runCatching { decryptApiKey(encoded, entity.id, entity.baseUrl, entity.model); false }
             .getOrElse { true }
     }
 
@@ -209,7 +321,7 @@ class ProviderRepository(private val dao: ProviderDao) {
                 // migration must encrypt them first; otherwise the provider is treated
                 // as unavailable instead of rehydrating credentials from plaintext DB data.
                 require(!encoded.isNullOrBlank() || extraHeadersJson == "{}") { "Legacy plaintext provider headers require secure migration." }
-                val raw = if (!encoded.isNullOrBlank()) KeystoreCrypto.decrypt(encoded) else "{}"
+                val raw = if (!encoded.isNullOrBlank()) decryptHeaders(encoded, id) else "{}"
                 json.decodeFromString<Map<String, String>>(raw.ifBlank { "{}" })
             }.getOrElse { return null },
             temperature = temperature,
@@ -231,7 +343,7 @@ class ProviderRepository(private val dao: ProviderDao) {
         baseUrl = baseUrl,
         model = model,
         extraHeadersJson = "{}",
-        extraHeadersEnc = runCatching { KeystoreCrypto.encrypt(json.encodeToString(extraHeaders)) }.getOrElse { throw it },
+        extraHeadersEnc = runCatching { KeystoreCrypto.encrypt(json.encodeToString(extraHeaders), providerHeadersAad(id)) }.getOrElse { throw it },
         temperature = temperature,
         maxTokens = maxTokens,
         inputPricePerMillion = inputPricePerMillion,

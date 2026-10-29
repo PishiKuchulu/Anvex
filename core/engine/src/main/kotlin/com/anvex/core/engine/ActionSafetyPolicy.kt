@@ -60,6 +60,11 @@ object ActionSafetyPolicy {
             val (cmd, args) = commandWord(segment) ?: continue
             segmentRisk(cmd, args)?.let { return it }
         }
+        // M-01: this is a DENY-list verdict — "no known pattern matched",
+        // not a proof of safety. Callers must never present it as a
+        // guarantee (the Developer Center label says exactly this), and
+        // the AI shell path additionally allow-lists commands rather
+        // than trusting this verdict.
         return Assessment(Risk.SAFE, "No high-impact pattern detected.")
     }
 

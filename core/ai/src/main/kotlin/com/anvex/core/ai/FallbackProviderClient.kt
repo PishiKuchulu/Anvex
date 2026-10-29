@@ -17,15 +17,29 @@ class FallbackProviderClient(private val clients: List<ProviderClient>) : Provid
             var emittedToken = false
             var completed = false
             var failed: AiError? = null
+            // M-16: Reasoning/Sources from a FAILED attempt used to linger
+            // in the UI even after failover. Buffer them; they are only
+            // emitted once a Token proves this attempt is the live one.
+            val pending = mutableListOf<StreamEvent>()
             try {
                 client.streamChat(request).collect { event ->
                     when (event) {
-                        is StreamEvent.Token -> { emittedToken = true; emit(event) }
-                        is StreamEvent.Reasoning -> emit(event)
-                        is StreamEvent.Completed -> { completed = true; emit(event) }
+                        is StreamEvent.Token -> {
+                            emittedToken = true
+                            pending.forEach { emit(it) }
+                            pending.clear()
+                            emit(event)
+                        }
+                        is StreamEvent.Reasoning -> pending.add(event)
+                        is StreamEvent.Completed -> {
+                            completed = true
+                            pending.forEach { emit(it) }
+                            pending.clear()
+                            emit(event)
+                        }
                         is StreamEvent.Failed -> failed = event.error
                         is StreamEvent.Started -> Unit
-                        is StreamEvent.Sources -> emit(event)
+                        is StreamEvent.Sources -> pending.add(event)
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -43,6 +57,11 @@ class FallbackProviderClient(private val clients: List<ProviderClient>) : Provid
                 emit(StreamEvent.Failed(failure))
                 return@flow
             }
+            // M-16: back off before failover instead of hammering the next
+            // provider immediately (honors Retry-After, capped at 10 s).
+            kotlinx.coroutines.delay(
+                minOf((failure.retryAfterSeconds ?: 1L) * 1_000L, 10_000L)
+            )
         }
     }
 

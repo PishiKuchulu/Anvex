@@ -92,6 +92,15 @@ class PiEngine(
         // The control socket is owned by THIS side (Kotlin listen, driver
         // connects out) — the direction this stack already proves with
         // NodeMobileRuntime's own manager socket and preload.js.
+        // H-01: the socket is authenticated. A 256-bit token is passed to
+        // the driver out-of-band (argv — same-UID process only, never on
+        // the socket); the driver must send it back as its first line
+        // before any config (and its API key) is sent. A squatter on the
+        // loopback port cannot know the token, so it never receives the
+        // key — the run just fails fast on mismatch.
+        val controlToken = ByteArray(32)
+            .also { java.security.SecureRandom().nextBytes(it) }
+            .joinToString("") { "%02x".format(it) }
         val controlServer = java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
         val runJob = async(Dispatchers.IO) {
             nodeRuntime.runCommand(
@@ -101,6 +110,7 @@ class PiEngine(
                     projectRoot.absolutePath,
                     runtimeDir.absolutePath,
                     controlServer.localPort.toString(),
+                    controlToken,
                 ),
                 timeoutMs = config.settleTimeoutMs + 120_000L,
             ) { line ->
@@ -141,6 +151,26 @@ class PiEngine(
 
             socket = connected
             val activeSocket = socket
+            // Only one peer ever: close the listener now so no second
+            // connection can be accepted mid-run (finally closes it too).
+            runCatching { controlServer.close() }
+            // H-01: authenticate BEFORE sending anything sensitive. The
+            // reader is created once here and reused by the reader job
+            // below — a second BufferedReader would swallow buffered
+            // lines the job must see.
+            val controlReader = BufferedReader(InputStreamReader(activeSocket.getInputStream(), Charsets.UTF_8))
+            val authed = withTimeoutOrNull(30_000L) {
+                withContext(Dispatchers.IO) {
+                    val first = runCatching { controlReader.readLine() }.getOrNull()
+                    first != null && java.security.MessageDigest.isEqual(
+                        first.toByteArray(Charsets.UTF_8),
+                        controlToken.toByteArray(Charsets.UTF_8),
+                    )
+                }
+            } == true
+            if (!authed) {
+                return@coroutineScope fail(runJob, "Pi driver authentication failed (unexpected peer on the control socket).")
+            }
             val writer = OutputStreamWriter(activeSocket.getOutputStream(), Charsets.UTF_8)
             val writeMutex = Mutex()
             suspend fun send(record: JSONObject) = withContext(Dispatchers.IO) {
@@ -152,6 +182,7 @@ class PiEngine(
 
             // Config line (consumed by the driver; carries the API key,
             // which then lives only in the :node process's environment).
+            // Sent only after the driver authenticated above.
             val configJson = JSONObject()
                 .put("extraExtensions", org.json.JSONArray(config.extraExtensions))
             if (config.providerName != null) configJson.put("providerName", config.providerName)
@@ -167,7 +198,7 @@ class PiEngine(
             val settled = CompletableDeferred<Unit>()
             var sessionFile: String? = config.sessionFile
             val readerJob = launch(Dispatchers.IO) {
-                val reader = BufferedReader(InputStreamReader(activeSocket.getInputStream(), Charsets.UTF_8))
+                val reader = controlReader
                 while (true) {
                     // Blocking socket read: teardown closes the socket
                     // under us, which surfaces as SocketException — that

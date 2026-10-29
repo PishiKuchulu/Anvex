@@ -20,10 +20,15 @@ fun UsageScreen(nav: androidx.navigation.NavController) {
     LaunchedEffect(Unit) { messages = graph.chat.usageSummary() }
     val totalPrompt = messages.sumOf { it.usage?.promptTokens ?: 0 }
     val totalCompletion = messages.sumOf { it.usage?.completionTokens ?: 0 }
+    // 15.5: cost totals cover only messages whose provider had prices —
+    // rows without prices contribute nothing, never a zero that pretends
+    // to be free.
+    val priced = messages.mapNotNull { it.usage?.costUsd }
+    val totalCost = priced.sum()
     Scaffold(topBar = { TopAppBar(title = { Text(tr("AI usage")) }, navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back")) } }) }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) { Text(tr("Total tokens"), style = MaterialTheme.typography.titleMedium); Text("${totalPrompt + totalCompletion}"); Text("Input: $totalPrompt • Output: $totalCompletion", style = MaterialTheme.typography.bodySmall) } } }
-            items(messages.take(200), key = { it.id }) { m -> ListItem(headlineContent = { Text(m.model ?: "Unknown model") }, supportingContent = { Text("${m.providerId ?: "unknown provider"} • ${m.usage?.totalTokens ?: 0} tokens") }) }
+            item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) { Text(tr("Total tokens"), style = MaterialTheme.typography.titleMedium); Text("${totalPrompt + totalCompletion}"); Text("Input: $totalPrompt • Output: $totalCompletion", style = MaterialTheme.typography.bodySmall); if (priced.isNotEmpty()) Text("Estimated cost: $${"%.4f".format(totalCost)} (over ${priced.size} priced responses)", style = MaterialTheme.typography.bodySmall) } } }
+            items(messages.take(200), key = { it.id }) { m -> ListItem(headlineContent = { Text(m.model ?: "Unknown model") }, supportingContent = { Text("${m.providerId ?: "unknown provider"} • ${m.usage?.totalTokens ?: 0} tokens" + (m.usage?.costUsd?.let { " • $${"%.4f".format(it)}" } ?: "")) }) }
         }
     }
 }

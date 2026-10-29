@@ -108,9 +108,35 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
         f.appendText(content, Charsets.UTF_8)
     }
 
+    /**
+     * M-07: `File.deleteRecursively()` follows directory symlinks, so
+     * deleting a project (or a recursive `rm`) could delete files
+     * OUTSIDE the project through a planted link. A symlink is always
+     * deleted as a link, never followed. Note the raw (non-canonical)
+     * construction for the link test: `resolve()` canonicalizes and
+     * throws for an escaping link before we could test it.
+     */
     override fun delete(relativePath: String, recursive: Boolean): Boolean {
+        val safe = PathSanitizer.sanitize(relativePath)
+        val raw = File(root, safe)
+        if (java.nio.file.Files.isSymbolicLink(raw.toPath())) return raw.delete()
         val f = resolve(relativePath)
-        return if (recursive) f.deleteRecursively() else f.delete()
+        return if (recursive) deleteRecursivelyNoFollow(f) else f.delete()
+    }
+
+    private fun deleteRecursivelyNoFollow(f: File): Boolean {
+        if (f.isDirectory) {
+            f.listFiles()?.forEach { child ->
+                if (java.nio.file.Files.isSymbolicLink(child.toPath())) {
+                    child.delete()
+                } else if (child.isDirectory) {
+                    deleteRecursivelyNoFollow(child)
+                } else {
+                    child.delete()
+                }
+            }
+        }
+        return f.delete()
     }
 
     override fun list(relativePath: String): List<ProjectFileSystem.FileEntry> {
@@ -148,10 +174,18 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
         return true
     }
 
+    /**
+     * M-07: `walkTopDown()` follows directory symlinks, so a planted link
+     * made `walk()` yield paths `resolve()` then rejects with
+     * SecurityException — failing whole exports/searches — and could
+     * expose files outside the project. Symlinks are never descended
+     * into and never listed.
+     */
     override fun walk(): List<String> {
         if (!root.exists()) return emptyList()
         return root.walkTopDown()
-            .filter { it.isFile }
+            .onEnter { dir -> dir == root || !java.nio.file.Files.isSymbolicLink(dir.toPath()) }
+            .filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) }
             .map { it.relativeTo(root).invariantSeparatorsPath }
             .sorted()
             .toList()

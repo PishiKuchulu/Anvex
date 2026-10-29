@@ -12,6 +12,10 @@ import android.os.LocaleList
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +47,12 @@ class MainActivity : ComponentActivity() {
     /** The language actually applied to the platform for this instance (null = not yet). */
     private var lastAppliedLanguage: AppLanguage? = null
 
+    // M-11: the deprecated requestPermissions(int) path is replaced by the
+    // Activity Result API. The grant is best-effort (a denied notification
+    // permission only hides the agent notification), so no result handling.
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleShare(intent)
@@ -61,10 +71,10 @@ class MainActivity : ComponentActivity() {
             else @Suppress("DEPRECATION") intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
             listOfNotNull(single)
         }
-        Thread {
+        lifecycleScope.launch(Dispatchers.IO) {
             val copied = streams.mapNotNull { copyToCache(it) }
             IncomingShare.offer(IncomingShare.Payload(text, copied))
-        }.start()
+        }
     }
 
     private fun copyToCache(source: Uri): Uri? = runCatching {
@@ -74,15 +84,35 @@ class MainActivity : ComponentActivity() {
             ?: "shared-${System.currentTimeMillis()}"
         val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)
         val target = java.io.File(dir, "${java.util.UUID.randomUUID()}-$safeName")
-        contentResolver.openInputStream(source)?.use { input ->
-            target.outputStream().use { out -> input.copyTo(out, 64 * 1024) }
-        } ?: return@runCatching null
-        if (target.length() > MAX_SHARE_BYTES) {
+        // M-11: the old code copied the whole stream and only THEN checked
+        // the 20 MB cap — a hostile share could fill the cache/disk first.
+        // Bytes are counted DURING the copy; the cap aborts mid-stream and
+        // the partial file is deleted.
+        val input = contentResolver.openInputStream(source) ?: return@runCatching null
+        try {
+            input.use { inputStream ->
+                target.outputStream().use { out ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val read = inputStream.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > MAX_SHARE_BYTES) {
+                            throw ShareTooLargeException()
+                        }
+                        out.write(buffer, 0, read)
+                    }
+                }
+            }
+        } catch (e: ShareTooLargeException) {
             target.delete()
             return@runCatching null
         }
         FileProvider.getUriForFile(this, "$packageName.fileprovider", target)
     }.getOrNull()
+
+    private class ShareTooLargeException : Exception()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,7 +125,7 @@ class MainActivity : ComponentActivity() {
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
         val graph = AppGraph.get()
         setContent {
@@ -124,7 +154,11 @@ class MainActivity : ComponentActivity() {
                 },
             ) {
             AnvexTheme(
-                dark = when (settings?.themeMode ?: ThemeMode.SYSTEM) {
+                // M-11: the first frame (settings == null, DataStore not
+                // loaded yet) must match the stored default DARK, not
+                // SYSTEM — the old fallback flashed the system theme on
+                // every cold start before the real value arrived.
+                dark = when (settings?.themeMode ?: ThemeMode.DARK) {
                     ThemeMode.SYSTEM -> null
                     ThemeMode.LIGHT -> false
                     ThemeMode.DARK -> true

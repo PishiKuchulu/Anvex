@@ -1,7 +1,7 @@
 package com.anvex.core.android.reliability
 
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.PrintWriter
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -83,6 +83,37 @@ class LanAccessManager {
         }
     }
 
+    /**
+     * M-02: `BufferedReader.readLine()` is unbounded, and the old code
+     * truncated only AFTER the whole line was in memory — an unauthenticated
+     * client could fill memory by never sending `\n`. This reader caps
+     * every line at 8 KB and enforces an overall connection deadline, so
+     * a slow drip (which resets `soTimeout` on every byte) cannot hold
+     * one of the 8 client slots forever.
+     */
+    private class CappedLineReader(
+        private val input: java.io.InputStream,
+        private val deadlineMs: Long,
+    ) {
+        private val buffer = java.io.ByteArrayOutputStream()
+        fun readLine(): String? {
+            buffer.reset()
+            while (true) {
+                if (System.currentTimeMillis() > deadlineMs) {
+                    throw java.net.SocketTimeoutException("connection deadline exceeded")
+                }
+                val b = input.read()
+                if (b < 0) {
+                    return if (buffer.size() == 0) null else buffer.toString(Charsets.US_ASCII.name())
+                }
+                if (buffer.size() >= MAX_LINE_BYTES) throw java.io.IOException("request line exceeds cap")
+                if (b == '\n'.code) break
+                if (b != '\r'.code) buffer.write(b)
+            }
+            return buffer.toString(Charsets.US_ASCII.name())
+        }
+    }
+
     private fun handle(
         socket: Socket,
         statusProvider: () -> String,
@@ -92,23 +123,26 @@ class LanAccessManager {
     ) {
         socket.use { s ->
             s.soTimeout = 3_000
-            val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.US_ASCII))
-            val request = reader.readLine().orEmpty().take(2_000)
-            var line = reader.readLine()
-            var authorized = false
-            var headerCount = 0
-            while (!line.isNullOrEmpty() && ++headerCount <= 64) {
-                if (line.startsWith("Authorization:", ignoreCase = true)) {
-                    val value = line.substringAfter(':').trim()
-                    authorized = value.startsWith("Bearer ") && authenticate(value.removePrefix("Bearer ").trim())
+            try {
+                val reader = CappedLineReader(s.getInputStream(), System.currentTimeMillis() + CONNECTION_DEADLINE_MS)
+                val request = reader.readLine().orEmpty().take(2_000)
+                var line = reader.readLine()
+                var authorized = false
+                var headerCount = 0
+                while (!line.isNullOrEmpty() && ++headerCount <= 64) {
+                    if (line.startsWith("Authorization:", ignoreCase = true)) {
+                        val value = line.substringAfter(':').trim()
+                        authorized = value.startsWith("Bearer ") && authenticate(value.removePrefix("Bearer ").trim())
+                    }
+                    line = reader.readLine()
                 }
-                line = reader.readLine()
-            }
-            val out = PrintWriter(s.getOutputStream(), true)
-            if (!authorized) {
-                writeResponse(out, 401, "application/json", "{\"error\":\"unauthorized\"}")
-            } else {
-                val path = request.substringAfter(' ').substringBefore(' ').take(256)
+                val out = PrintWriter(s.getOutputStream(), true)
+                if (!authorized) {
+                    writeResponse(out, 401, "application/json", "{\"error\":\"unauthorized\"}")
+                } else {
+                    // M-02: the query string used to be part of the route
+                    // (`/api/status?x=1` -> 404). Strip it before matching.
+                    val path = request.substringAfter(' ').substringBefore(' ').substringBefore('?').take(256)
                 when {
                     path == "/" -> {
                         val body = htmlProvider?.invoke() ?: defaultHtml()
@@ -129,7 +163,12 @@ class LanAccessManager {
                     else -> writeResponse(out, 404, "application/json", "{\"error\":\"not_found\"}")
                 }
             }
-            out.flush()
+                out.flush()
+            } catch (_: java.net.SocketTimeoutException) {
+                // Idle too long or deadline exceeded: just drop the client.
+            } catch (_: java.io.IOException) {
+                // Client went away mid-request: nothing to answer.
+            }
         }
     }
 
@@ -141,8 +180,18 @@ class LanAccessManager {
         out.flush()
     }
     private fun defaultHtml(): String = "<html><head><meta name='viewport' content='width=device-width'></head><body><h1>Anvex Agent</h1><p>Authenticated read-only Agent status.</p><p>Use /api/status, /api/tasks and /api/logs.</p></body></html>"
-    private fun quote(value: String): String = "\"" + jsonEscape(value) + "\""
-    private fun jsonEscape(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").take(500)
+    /**
+     * M-02: the hand-rolled escaper only handled `\`, `"` and `\n`
+     * (every other control character broke the JSON) and `take(500)`
+     * could cut mid-escape. kotlinx.serialization escapes correctly;
+     * the value is still capped at 500 chars, but BEFORE encoding.
+     */
+    private fun quote(value: String): String = Json.encodeToString(value.take(500))
 
-    companion object { const val DEFAULT_PORT = 8765; private const val MAX_CONCURRENT_CLIENTS = 8 }
+    companion object {
+        const val DEFAULT_PORT = 8765
+        private const val MAX_CONCURRENT_CLIENTS = 8
+        private const val MAX_LINE_BYTES = 8_192
+        private const val CONNECTION_DEADLINE_MS = 30_000L
+    }
 }

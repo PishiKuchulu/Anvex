@@ -30,6 +30,19 @@ class AnthropicClient(
     private val json = Sse.json
     private val base = runtime.config.baseUrl.trimEnd('/')
 
+    init {
+        // 15.7: a ZAI_ACCOUNT row carries the GLM Coding Plan JWT, which is
+        // only valid at api.z.ai. If the stored baseUrl ever points
+        // elsewhere (edited row, corrupt/tampered restore), fail here —
+        // before the token is sent to a host that must never receive it.
+        if (runtime.config.kind == com.anvex.core.model.ProviderKind.ZAI_ACCOUNT) {
+            val host = runCatching { java.net.URI(base).host?.lowercase() }.getOrNull()
+            require(host == "api.z.ai") {
+                "Z.ai account providers may only talk to api.z.ai, not '$host'."
+            }
+        }
+    }
+
     private fun requestBuilder(): Request.Builder {
         val b = Request.Builder()
             .header("x-api-key", runtime.apiKey)

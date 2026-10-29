@@ -34,7 +34,9 @@ class PluginPackageInstaller(
     )
     data class Result(val id: String, val version: String, val sha256: String, val packageDir: File)
 
-    private val json = Json { ignoreUnknownKeys = false; explicitNulls = false }
+    // L-05: ignoreUnknownKeys was false, so any new manifest field added
+    // by a plugin author broke installation of an otherwise valid package.
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val maxArchiveBytes = 20L * 1024 * 1024
     private val maxEntries = 256
     private val maxEntryBytes = 2L * 1024 * 1024
@@ -86,7 +88,13 @@ class PluginPackageInstaller(
             val pluginManifest = runtime.parseManifest(actualManifestFile.readText(Charsets.UTF_8))
             require(pluginManifest.id == manifest.id && pluginManifest.version == manifest.version)
             manifest.gitUrl?.let { validateGitUrl(it) }
-            if (expectedGitUrl != null) require(manifest.gitUrl == expectedGitUrl) { "Plugin manifest source mismatch." }
+            // L-05: exact string equality broke on a trailing slash or a
+            // `.git` suffix — both spellings of the same repository.
+            // Normalization is comparison-only; the stored URL is untouched.
+            if (expectedGitUrl != null) {
+                fun norm(url: String) = url.trim().trimEnd('/').removeSuffix(".git").lowercase()
+                require(manifest.gitUrl?.let { norm(it) } == norm(expectedGitUrl)) { "Plugin manifest source mismatch." }
+            }
             manifest.skillInstructions?.let { require(it.length <= 32_000) }
             val destination = File(root, "${manifest.id}/${manifest.version}").canonicalFile
             require(destination.path.startsWith(root.canonicalFile.path + File.separator))

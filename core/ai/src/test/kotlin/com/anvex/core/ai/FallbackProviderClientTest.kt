@@ -41,6 +41,22 @@ class FallbackProviderClientTest {
         }
     }
 
+    @Test fun `reasoning from a failed attempt does not linger after failover`() = runTest {
+        val request = ChatRequest("sys", emptyList(), thinkingLevel = ThinkingLevel.NORMAL)
+        val reasoningThenFail = object : ProviderClient {
+            override val kind = ProviderKind.OPENAI
+            override fun streamChat(request: ChatRequest) = flow {
+                emit(StreamEvent.Reasoning("thinking..."))
+                emit(StreamEvent.Failed(AiError(AiError.Kind.NETWORK, "down")))
+            }
+            override suspend fun listModels() = emptyList<com.anvex.core.model.ModelInfo>()
+            override suspend fun validateConnection() = ValidationResult(false, 0, "down")
+        }
+        val events = FallbackProviderClient(listOf(reasoningThenFail, Healthy())).streamChat(request).toList()
+        assertTrue(events.none { it is StreamEvent.Reasoning })
+        assertTrue(events.any { it is StreamEvent.Token && it.text == "ok" })
+    }
+
     @Test fun `thrown first provider falls back before emitting tokens`() = runTest {
         val request = ChatRequest("sys", emptyList(), thinkingLevel = ThinkingLevel.NORMAL)
         val events = FallbackProviderClient(listOf(Throwing(), Healthy())).streamChat(request).toList()

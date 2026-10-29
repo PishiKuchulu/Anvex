@@ -51,12 +51,23 @@ object SensitivePaths {
      * `cat` of an extracted review file is not hard-denied, while
      * exfiltration of a secret file inside an extracted tree still is.
      */
+    /**
+     * H-02: the shell reassembles quoted/escaped fragments before it
+     * resolves a path (`.e''nv`, `.e"n"v`, `.e\nv` all become `.env`),
+     * so matching must see the string the shell will execute — not the
+     * raw token. Trimming quotes only at the edges missed quotes in
+     * the middle, which made `cat .e''nv` read as harmless everywhere
+     * this check is used (terminal, shell runtime, Pi bash gate).
+     */
+    private fun shellNormalized(piece: String): String =
+        piece.replace("'", "").replace("\"", "").replace("\\", "")
+
     fun commandReferencesSensitiveOutsideExtracted(command: String): Boolean {
         for (raw in command.split(Regex("\\s+"))) {
             val token = raw.trim('\'', '"').trim(',', ';', ':')
             if (token.isEmpty()) continue
             for (piece in token.split('=', '@')) {
-                val p = piece.trim('\'', '"')
+                val p = shellNormalized(piece.trim(',', ';', ':'))
                 if (p.isNotEmpty() && isSensitive(p) && !isReadableExtractedAttachment(p)) return true
             }
         }
@@ -88,7 +99,7 @@ object SensitivePaths {
             val token = raw.trim('\'', '"').trim(',', ';', ':')
             if (token.isEmpty()) continue
             for (piece in token.split('=', '@')) {
-                val p = piece.trim('\'', '"')
+                val p = shellNormalized(piece.trim(',', ';', ':'))
                 if (p.isNotEmpty() && isSensitive(p)) return true
             }
         }

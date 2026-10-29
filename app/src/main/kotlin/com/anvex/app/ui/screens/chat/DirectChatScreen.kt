@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -551,7 +551,10 @@ fun DirectChatScreen(nav: NavController) {
                                 enabled = input.isNotBlank() || attachments.isNotEmpty() || replyTo != null,
                             ) {
                                 Icon(
-                                    Icons.Filled.Send,
+                                    // L-08: the filled Send arrow is not
+                                    // mirrored — in RTL it pointed the wrong
+                                    // way. ChatScreen already uses AutoMirrored.
+                                    Icons.AutoMirrored.Filled.Send,
                                     contentDescription = tr("Send"),
                                     tint = if (input.isNotBlank() || attachments.isNotEmpty() || replyTo != null)
                                         MaterialTheme.colorScheme.primary

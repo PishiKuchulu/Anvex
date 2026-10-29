@@ -39,7 +39,10 @@ class ProviderAgentPlanner(private val provider: suspend () -> ProviderClient?) 
             }
         }
         parser.parse(messageId, fullText.toString())
-        parser.flush(messageId)
+        // H-06: on a failed turn the still-open action is dropped, not
+        // kept as a plan step (the error below discards the plan anyway;
+        // this keeps the invariant explicit).
+        if (failed == null) parser.flush(messageId) else parser.takeOpenAction(messageId)
         val failure = failed
         if (failure != null) error(failure)
         val steps = actions.mapIndexed { i, action -> AgentStep("step-$i", "Agent action ${i + 1}", action, ActionSafetyPolicy.assess(action).requiresApproval) }

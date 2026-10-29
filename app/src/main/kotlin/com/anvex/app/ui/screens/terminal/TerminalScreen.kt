@@ -8,7 +8,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -256,7 +256,7 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
                     placeholder = { Text(tr("ls -la")) },
                 )
                 FilledIconButton(onClick = ::send, enabled = command.isNotBlank() && session != null && !starting, modifier = Modifier.padding(top = 4.dp).size(AnvexDimens.control)) {
-                    Icon(Icons.Filled.Send, contentDescription = "Run command")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Run command")
                 }
             }
             if (history.isNotEmpty()) {

@@ -149,7 +149,7 @@ private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capa
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text(tr("Dangerous Action Approval"), style = MaterialTheme.typography.headlineSmall); Text(tr("The UI is only an approval front-end. Actual execution must still pass the runtime safety gate and durable grant check."), style = MaterialTheme.typography.bodySmall) }
         item { OutlinedTextField(command, onCommandChange, label = { Text(tr("Command to classify")) }, modifier = Modifier.fillMaxWidth(), minLines = 2) }
-        if (command.isNotBlank()) item { val a = ActionSafetyPolicy.assess(command); Card { ListItem(headlineContent = { Text(if (a.risk == ActionSafetyPolicy.Risk.REQUIRES_APPROVAL) "Approval required" else "Safe classification") }, supportingContent = { Text(a.reason) }) } }
+        if (command.isNotBlank()) item { val a = ActionSafetyPolicy.assess(command); Card { ListItem(headlineContent = { Text(if (a.risk == ActionSafetyPolicy.Risk.REQUIRES_APPROVAL) "Approval required" else "No known danger pattern") }, supportingContent = { Text(a.reason) }) } }
         item { Text(tr("Capability grant"), style = MaterialTheme.typography.titleMedium) }
         // v4.4.5 (UX): FlowRow — the 6 capability chips overflowed a plain
         // Row and chips 4-6 were unreachable.

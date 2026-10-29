@@ -52,9 +52,11 @@ object SigningKeyManager {
     private val jsonType = "application/json".toMediaType()
 
     /**
-     * Generates a 2048-bit RSA keypair with a self-signed certificate valid for
+     * Generates a 3072-bit RSA keypair with a self-signed certificate valid for
      * [validityYears] and returns the PKCS12 bytes. Passwords are NOT stored;
      * the caller must zero them after use.
+     * L-16: new keys are 3072-bit (was 2048) with a 12-character minimum
+     * password (was 6) — existing keystores are untouched.
      */
     fun generate(
         alias: String,
@@ -63,13 +65,13 @@ object SigningKeyManager {
         validityYears: Int = 30,
     ): GeneratedKeystore {
         require(alias.matches(Regex("[A-Za-z0-9_.-]{1,64}"))) { "Invalid key alias." }
-        require(storePassword.size in 6..128) { "Store password must be 6–128 characters." }
-        require(keyPassword.size in 6..128) { "Key password must be 6–128 characters." }
+        require(storePassword.size in 12..128) { "Store password must be 12–128 characters." }
+        require(keyPassword.size in 12..128) { "Key password must be 12–128 characters." }
         require(validityYears in 1..100) { "Validity must be 1–100 years." }
 
         val random = SecureRandom()
         val keyGen = KeyPairGenerator.getInstance("RSA")
-        keyGen.initialize(2048, random)
+        keyGen.initialize(3072, random)
         val keyPair = keyGen.generateKeyPair()
 
         val dn = X500Name("CN=Anvex Signing Key, OU=Mobile, O=Anvex")
@@ -270,6 +272,10 @@ object SigningKeyManager {
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             require(name.matches(Regex("[A-Z0-9_]{1,64}"))) { "Invalid secret name." }
+            // L-16: owner/repo were interpolated into the URL unvalidated —
+            // same character set CloudBuildRepository.validateTarget uses.
+            require(owner.matches(Regex("[A-Za-z0-9_.-]{1,100}"))) { "Invalid repository owner." }
+            require(repo.matches(Regex("[A-Za-z0-9_.-]{1,100}"))) { "Invalid repository name." }
             val pub = repoPublicKey(owner, repo, githubToken)
             val sealed = sealedBox(plaintext, Base64.decode(pub.keyBase64, Base64.DEFAULT))
             val body = JSONObject()

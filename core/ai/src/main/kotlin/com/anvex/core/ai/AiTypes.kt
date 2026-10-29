@@ -60,6 +60,8 @@ data class AiError(
     val kind: Kind,
     val message: String,
     val httpStatus: Int? = null,
+    /** M-16: seconds from the HTTP `Retry-After` header, when the provider sent one. */
+    val retryAfterSeconds: Long? = null,
 ) {
     enum class Kind {
         AUTH, ACCESS_RESTRICTED, RATE_LIMIT, NOT_FOUND, NETWORK, PROTOCOL, CANCELED, UNKNOWN

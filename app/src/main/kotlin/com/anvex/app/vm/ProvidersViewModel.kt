@@ -30,6 +30,15 @@ class ProvidersViewModel : ViewModel() {
     val providers: StateFlow<List<ProviderConfig>> = graph.providers.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** M-08: rows the list silently dropped before — shown as broken, not hidden. */
+    val brokenProviders: StateFlow<List<com.anvex.core.android.repo.ProviderRepository.BrokenProvider>> =
+        graph.providers.observeBroken()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun removeBroken(id: String) {
+        viewModelScope.launch { graph.providers.delete(id) }
+    }
+
     data class EditUi(
         val id: String = "new",
         val name: String = "",

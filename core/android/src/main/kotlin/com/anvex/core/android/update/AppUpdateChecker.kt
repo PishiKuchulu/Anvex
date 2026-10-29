@@ -1,5 +1,7 @@
 package com.anvex.core.android.update
 
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import com.anvex.core.engine.VersionNumbers
 import kotlinx.coroutines.Dispatchers
@@ -94,6 +96,12 @@ object AppUpdateChecker {
      * reporting (downloaded, total) progress. Cancellation lands between
      * chunks; a cancelled or failed attempt only leaves the `.part` file,
      * which the caller removes.
+     *
+     * M-03: the checksum is now MANDATORY (a release without a published
+     * `.sha256` asset is refused — every published Anvex release ships
+     * one), both URLs must be Anvex release-download URLs, and the hash
+     * is computed in the same pass as the download (the old code read
+     * the 60–160 MB file three times: write, length recount, hash).
      */
     suspend fun download(
         url: String,
@@ -101,6 +109,9 @@ object AppUpdateChecker {
         sha256Url: String? = null,
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ) {
+        requireAnvexReleaseUrl(url)
+        require(!sha256Url.isNullOrBlank()) { "Update has no published checksum — refusing to install." }
+        requireAnvexReleaseUrl(sha256Url)
         withContext(Dispatchers.IO) {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true
@@ -112,9 +123,16 @@ object AppUpdateChecker {
             try {
                 val code = conn.responseCode
                 check(code in 200..299) { "Download failed (HTTP $code)" }
+                // Redirects from github.com release downloads land on
+                // objects.githubusercontent.com; anything else is suspect.
+                val finalHost = conn.url.host
+                check(finalHost == "github.com" || finalHost == "objects.githubusercontent.com") {
+                    "Update download redirected to an unexpected host: $finalHost"
+                }
                 val total = conn.contentLengthLong
                 dest.parentFile?.mkdirs()
                 val part = File(dest.parentFile, dest.name + ".part")
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
                 conn.inputStream.use { input ->
                     part.outputStream().use { out ->
                         val buffer = ByteArray(64 * 1024)
@@ -124,50 +142,85 @@ object AppUpdateChecker {
                             val n = input.read(buffer)
                             if (n < 0) break
                             out.write(buffer, 0, n)
+                            digest.update(buffer, 0, n)
                             downloaded += n
                             onProgress(downloaded, if (total > 0) total else downloaded)
                         }
-                    }
-                }
-                // v4.10.1 (SEC-06): a truncated download used to be renamed
-                // into place and handed to the installer. Verify completeness
-                // against Content-Length, and the SHA-256 against the
-                // release's published .sha256 asset when one exists
-                // (Android's signature check remains the root of trust;
-                // this is defense in depth + corruption detection).
-                if (total > 0) {
-                    var downloadedTotal = 0L
-                    part.inputStream().use { input ->
-                        val buf = ByteArray(64 * 1024)
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            downloadedTotal += n
+                        // v4.10.1 (SEC-06): a truncated download used to be
+                        // renamed into place and handed to the installer.
+                        // Completeness comes from the same pass's counter.
+                        if (total > 0) {
+                            check(downloaded == total) { "Download incomplete ($downloaded of $total bytes)." }
                         }
                     }
-                    check(downloadedTotal == total) { "Download incomplete ($downloadedTotal of $total bytes)." }
                 }
-                if (sha256Url != null) {
-                    val expected = httpGet(sha256Url).trim().split(Regex("\\s+")).firstOrNull()?.lowercase()
-                    check(!expected.isNullOrBlank()) { "Could not read the update checksum." }
-                    val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    part.inputStream().use { input ->
-                        val buf = ByteArray(64 * 1024)
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            digest.update(buf, 0, n)
-                        }
-                    }
-                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
-                    check(actual == expected) { "Update checksum mismatch — refusing to install a corrupted or tampered file." }
-                }
+                val expected = httpGet(sha256Url).trim().split(Regex("\\s+")).firstOrNull()?.lowercase()
+                check(!expected.isNullOrBlank()) { "Could not read the update checksum." }
+                val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                check(actual == expected) { "Update checksum mismatch — refusing to install a corrupted or tampered file." }
                 if (dest.exists()) dest.delete()
                 check(part.renameTo(dest)) { "Could not finalize the downloaded update" }
             } finally {
                 conn.disconnect()
             }
         }
+    }
+
+    /**
+     * M-03: the download URL must be one of this app's own release
+     * assets. The release list comes from api.github.com, but its
+     * `browser_download_url` fields are data, not trust — a tampered or
+     * mirrored listing must not redirect the updater to an arbitrary host.
+     */
+    private fun requireAnvexReleaseUrl(url: String) {
+        val u = runCatching { URL(url) }.getOrNull()
+        require(u != null && u.protocol == "https" && u.host == "github.com" &&
+            u.path.startsWith("/PishiKuchulu/Anvex/releases/download/")) {
+            "Unexpected update URL host or path: $url"
+        }
+    }
+
+    /**
+     * M-03: Android itself verifies the installer signature, but only
+     * against the INSTALLED app's key at install time — and for a debug
+     * build that check is meaningless (public debug key). Compare the
+     * downloaded APK's signers with the running app's signers BEFORE
+     * firing the installer, so a mismatched APK never reaches it.
+     * Returns false (refuse) when either side's signers cannot be read.
+     */
+    fun verifySameSigner(context: Context, apkFile: File): Boolean {
+        return runCatching {
+            val pm = context.packageManager
+            // GET_SIGNING_CERTIFICATES exists only from API 28; older
+            // devices use the (deprecated) GET_SIGNATURES path.
+            @Suppress("DEPRECATION")
+            val flag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                PackageManager.GET_SIGNATURES
+            }
+            val archive = pm.getPackageArchiveInfo(apkFile.absolutePath, flag)
+                ?: return false
+            val archiveCerts = signerCertBytes(pm, archive, apkFile.absolutePath)
+            val installed = pm.getPackageInfo(context.packageName, flag)
+            val installedCerts = signerCertBytes(pm, installed, context.packageName)
+            archiveCerts.isNotEmpty() && archiveCerts == installedCerts
+        }.getOrDefault(false)
+    }
+
+    private fun signerCertBytes(
+        pm: PackageManager,
+        info: android.content.pm.PackageInfo,
+        label: String,
+    ): Set<List<Byte>> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signers = info.signingInfo?.apkContentsSigners
+            if (!signers.isNullOrEmpty()) return signers.map { it.toByteArray().toList() }.toSet()
+        }
+        @Suppress("DEPRECATION")
+        val legacy = info.signatures
+        if (!legacy.isNullOrEmpty()) return legacy.map { it.toByteArray().toList() }.toSet()
+        return emptySet()
     }
 
     private fun httpGet(url: String): String {

@@ -67,11 +67,12 @@ object SkillGitInstaller {
 
     internal fun parseOwnerRepo(url: String): Pair<String, String>? {
         val cleaned = url.removeSuffix("/").removeSuffix(".git")
-        val marker = "github.com/"
-        val idx = cleaned.indexOf(marker)
-        if (idx < 0) return null
-        val rest = cleaned.substring(idx + marker.length)
-        val parts = rest.split('/')
+        // L-05: the old code searched for the substring "github.com/"
+        // anywhere, so a URL like evil.com/?x=github.com/owner/repo
+        // parsed as a GitHub repo. The host itself must be GitHub.
+        val uri = runCatching { java.net.URI(cleaned) }.getOrNull() ?: return null
+        if (uri.scheme != "https" || (uri.host != "github.com" && uri.host != "www.github.com")) return null
+        val parts = uri.path.trim('/').split('/')
         if (parts.size < 2) return null
         // Owner/repo are interpolated into a URL path: accept only GitHub's own
         // character set so '?', '#', '%', '..' etc. cannot reshape the request.

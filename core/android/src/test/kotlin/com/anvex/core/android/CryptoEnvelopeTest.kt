@@ -95,4 +95,30 @@ class CryptoEnvelopeTest {
             assertEquals(secret, CryptoEnvelope.decrypt(enc, key))
         }
     }
+
+    // M-15: AAD binding — the ciphertext is authenticated against its
+    // context (provider id + baseUrl + model). A row whose URL was swapped
+    // must fail decryption, not hand the key to the new endpoint.
+    @Test
+    fun `aad-bound ciphertext decrypts only with the same aad`() {
+        val key = CryptoEnvelope.softwareKey()
+        val aad = "anvex-provider-v1|p1|https://api.example.com|model-x".toByteArray(Charsets.UTF_8)
+        val otherAad = "anvex-provider-v1|p1|https://evil.example.com|model-x".toByteArray(Charsets.UTF_8)
+        val enc = CryptoEnvelope.encrypt("sk-secret", key, aad)
+        assertEquals("sk-secret", CryptoEnvelope.decrypt(enc, key, aad))
+        assertThrows(CryptoEnvelope.EnvelopeException::class.java) {
+            CryptoEnvelope.decrypt(enc, key, otherAad)
+        }
+        // Legacy (no-AAD) decryption of an AAD-bound ciphertext also fails.
+        assertThrows(CryptoEnvelope.EnvelopeException::class.java) {
+            CryptoEnvelope.decrypt(enc, key)
+        }
+    }
+
+    @Test
+    fun `legacy ciphertext without aad still decrypts`() {
+        val key = CryptoEnvelope.softwareKey()
+        val enc = CryptoEnvelope.encrypt("sk-legacy", key)
+        assertEquals("sk-legacy", CryptoEnvelope.decrypt(enc, key))
+    }
 }

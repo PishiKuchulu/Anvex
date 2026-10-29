@@ -532,11 +532,13 @@ class ProjectRepository(
     suspend fun exportZip(projectId: String, uri: Uri): RepoResult<Int> = withContext(Dispatchers.IO) {
         try {
             val fs = fileSystemForAsync(projectId)
-            val n = fs.walk().size
+            // M-06: the count must be what actually landed in the archive
+            // (secrets are excluded from shared exports), not the walk size.
+            var exported = 0
             context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                ZipCodec.export(fs, out)
+                ZipCodec.export(fs, out, onEntry = { exported++ })
             } ?: return@withContext RepoResult.Err("Export failed", "Could not open the selected location.")
-            RepoResult.Ok(n)
+            RepoResult.Ok(exported)
         } catch (e: Exception) {
             RepoResult.Err("Export failed", e.message ?: "Unknown error")
         }

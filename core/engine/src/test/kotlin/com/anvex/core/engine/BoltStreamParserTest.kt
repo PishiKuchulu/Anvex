@@ -104,6 +104,24 @@ class BoltStreamParserTest {
     }
 
     @Test
+    fun `takeOpenAction returns open action without applying it`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        parser.parse(
+            "mX",
+            "<boltArtifact id=\"x\" title=\"X\">\n" +
+                "<boltAction type=\"file\" filePath=\"half.kt\">\nfun half(",
+        )
+        val open = parser.takeOpenAction("mX")
+        assertTrue(open is BoltAction.FileAction)
+        assertEquals("half.kt", (open as BoltAction.FileAction).filePath)
+        assertTrue(rec.events.none { it.startsWith("actionClose") })
+        // Already cleared: a later flush must not emit it either.
+        parser.flush("mX")
+        assertTrue(rec.events.none { it.startsWith("actionClose") })
+    }
+
+    @Test
     fun `file action strips markdown fence and unescapes tags`() {
         val rec = Recorder()
         val parser = BoltStreamParser(rec)

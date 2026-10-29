@@ -14,7 +14,10 @@ object ArtifactHygienePolicy {
         "outputs", "intermediates", "generated", "tmp", "kotlin", "classes", "reports",
         "test-results", "distributions", "libs", "bundle", "compose_metrics", "reports",
     )
-    private val excludedNames = setOf(".env", ".env.local", ".env.production", "local.properties", "keystore.properties")
+    private val excludedNames = setOf(
+        ".env", ".env.local", ".env.production", ".env.development", ".env.test", ".env.staging",
+        "local.properties", "keystore.properties", ".npmrc", ".pypirc", "service-account.json", ".dev.vars",
+    )
     private val secretName = Regex("(?i)(^|[._-])(secret|secrets|credential|credentials|token|password|passwd|private[-_]?key)([._-]|$)")
     private const val KEYS = "api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|secret[_-]?key|password|passwd|private[_-]?key"
 
@@ -32,6 +35,34 @@ object ArtifactHygienePolicy {
 
     /** One suspected secret. Only the key text and line are reported, never the value. */
     data class SecretFinding(val line: Int, val key: String)
+
+    /**
+     * M-04: known token shapes. These OVERRIDE the placeholder heuristic
+     * below — the old code treated any value containing "token",
+     * "password", "secret" or "$" as a placeholder, so a real value like
+     * `mysecretpassword123` (or a pasted `ghp_` token next to the word
+     * "token") sailed through as harmless.
+     */
+    private val knownTokenShapes = listOf(
+        Regex("ghp_[A-Za-z0-9]{20,}"),
+        Regex("github_pat_[A-Za-z0-9_]{20,}"),
+        Regex("gho_[A-Za-z0-9]{20,}"),
+        Regex("ghu_[A-Za-z0-9]{20,}"),
+        Regex("ghs_[A-Za-z0-9]{20,}"),
+        Regex("ghr_[A-Za-z0-9]{20,}"),
+        Regex("sk-ant-[A-Za-z0-9\\-]{10,}"),
+        Regex("sk-proj-[A-Za-z0-9\\-_]{10,}"),
+        Regex("sk-[A-Za-z0-9]{16,}"),
+        Regex("AKIA[0-9A-Z]{16}"),
+        Regex("AIza[0-9A-Za-z_\\-]{35}"),
+        Regex("-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----"),
+        Regex("eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+"),
+        Regex("xox[baprs]-[A-Za-z0-9\\-]{10,}"),
+        Regex("hf_[A-Za-z0-9]{20,}"),
+    )
+
+    private fun matchesKnownToken(value: String): Boolean =
+        knownTokenShapes.any { it.containsMatchIn(value) }
 
     private fun isPlaceholder(value: String): Boolean {
         val v = value.trim().lowercase()
@@ -54,7 +85,7 @@ object ArtifactHygienePolicy {
             val quoted = rx === quotedSecret
             out = rx.replace(current) { m ->
                 val value = if (quoted) m.groupValues[3] else m.groupValues[2]
-                if (isPlaceholder(value)) {
+                if (!matchesKnownToken(value) && isPlaceholder(value)) {
                     m.value
                 } else {
                     val line = current.substring(0, m.range.first).count { it == '\n' } + 1
@@ -63,6 +94,21 @@ object ArtifactHygienePolicy {
                     else m.groupValues[1] + "REDACTED"
                 }
             }
+        }
+        // M-04: a token pasted under a non-secret key name (`FOO=ghp_…`,
+        // a token inside prose or a code string) matched neither pattern
+        // above. Known token shapes anywhere in the text are findings.
+        for (rx in knownTokenShapes) {
+            // Materialize before any redaction: ranges refer to this string.
+            val matches = rx.findAll(out).toList()
+            if (matches.isEmpty()) continue
+            matches.forEach { m ->
+                val line = out.substring(0, m.range.first).count { it == '\n' } + 1
+                if (found.none { it.line == line }) {
+                    found += SecretFinding(line, "known token shape")
+                }
+            }
+            if (redact) out = rx.replace(out, "REDACTED")
         }
         return found to (if (redact) out else text)
     }

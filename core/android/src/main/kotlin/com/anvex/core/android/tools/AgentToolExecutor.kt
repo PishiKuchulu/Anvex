@@ -82,9 +82,17 @@ class AgentToolExecutor(
     private fun list(rawPath: String, fs: ProjectFileSystem): ToolResult {
         val prefix = rawPath.trim().trim('/').let { if (it == "." ) "" else it }
         val all = fs.walk().sorted().filter { prefix.isEmpty() || it == prefix || it.startsWith("$prefix/") }
-        if (all.isEmpty()) return ToolResult(true, "(no files)")
-        val shown = all.take(MAX_LIST_ENTRIES).joinToString("\n") { "$it (${fs.fileSize(it) ?: 0} bytes)" }
-        val more = if (all.size > MAX_LIST_ENTRIES) "\n…and ${all.size - MAX_LIST_ENTRIES} more" else ""
+        // L-03: listing used to name sensitive files (.env, .git/…) to the
+        // model even though their contents are refused — a name alone
+        // confirms a secret exists. Hide sensitive names, except extracted
+        // attachments, which the read tool deliberately serves.
+        val visible = all.filter {
+            !com.anvex.core.engine.SensitivePaths.isSensitive(it) ||
+                com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(it)
+        }
+        if (visible.isEmpty()) return ToolResult(true, "(no files)")
+        val shown = visible.take(MAX_LIST_ENTRIES).joinToString("\n") { "$it (${fs.fileSize(it) ?: 0} bytes)" }
+        val more = if (visible.size > MAX_LIST_ENTRIES) "\n…and ${visible.size - MAX_LIST_ENTRIES} more" else ""
         return ToolResult(true, shown + more)
     }
 

@@ -70,6 +70,34 @@ class ArtifactPackagingTest {
             fail("Expected secret detection")
         } catch (_: IllegalArgumentException) { }
     }
+
+    // M-04: known token shapes are findings even under a non-secret key
+    // name (FOO=ghp_…) or next to a placeholder word (a value containing
+    // "token" used to count as a placeholder and sail through).
+    // Token literals are built by concatenation so tooling never mistakes
+    // them for real credentials in this test file.
+    @Test fun `known token under a non-secret key name is a finding`() {
+        val token = "ghp_" + "abcdefghij1234567890"
+        val found = ArtifactHygienePolicy.findSecrets("notes.txt", "FOO=$token")
+        assertTrue("ghp_ token must be detected", found.isNotEmpty())
+    }
+
+    @Test fun `token-shaped value containing the word token is not a placeholder`() {
+        val token = "ghp_" + "tokenvalue1234567890"
+        val found = ArtifactHygienePolicy.findSecrets("config.txt", "token = \"$token\"")
+        assertTrue("value containing 'token' must still be detected when token-shaped", found.isNotEmpty())
+    }
+
+    @Test fun `plain placeholder values are still placeholders`() {
+        val found = ArtifactHygienePolicy.findSecrets("config.txt", "password = \"your-password-here\"")
+        assertTrue("obvious placeholders must not block sync", found.isEmpty())
+    }
+
+    @Test fun `newly excluded secret filenames are not included`() {
+        for (name in listOf(".env.development", ".npmrc", "service-account.json", ".dev.vars")) {
+            assertFalse("must exclude $name", ArtifactHygienePolicy.include(name))
+        }
+    }
 }
 
 

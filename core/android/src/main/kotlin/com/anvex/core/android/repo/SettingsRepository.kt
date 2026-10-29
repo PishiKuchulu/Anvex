@@ -156,13 +156,18 @@ class SettingsRepository(private val context: Context) {
     suspend fun restoreFromBackup(encoded: String) {
         val s = Json { ignoreUnknownKeys = true }.decodeFromString<AppSettings>(encoded)
         context.dataStore.edit { p ->
-            p[Keys.THEME] = s.themeMode.name; p[Keys.LANGUAGE] = s.language.name; p[Keys.DYNAMIC] = s.dynamicColor; p[Keys.UI_THEME_STYLE] = s.uiThemeStyle.name; p[Keys.EDITOR_FONT] = s.editorFontSize
-            p[Keys.AUTOSAVE] = s.editorAutoSave; p[Keys.CHAT_FONT] = s.chatFontSize; p[Keys.CONSOLE_VISIBLE] = s.previewConsoleVisible
+            // M-09: a backup restored onto a new phone must NOT silently
+            // enable network listeners or switch the agent engine — the
+            // target device keeps its own values for the security-surface
+            // flags (lanEnabled, webPort, webToolsEnabled,
+            // termuxBridgeEnabled, agentEngine). The user re-enables them
+            // deliberately if wanted. Font sizes are clamped here too:
+            // the setters clamp, but this direct write did not.
+            p[Keys.THEME] = s.themeMode.name; p[Keys.LANGUAGE] = s.language.name; p[Keys.DYNAMIC] = s.dynamicColor; p[Keys.UI_THEME_STYLE] = s.uiThemeStyle.name; p[Keys.EDITOR_FONT] = s.editorFontSize.coerceIn(10, 24)
+            p[Keys.AUTOSAVE] = s.editorAutoSave; p[Keys.CHAT_FONT] = s.chatFontSize.coerceIn(12, 22); p[Keys.CONSOLE_VISIBLE] = s.previewConsoleVisible
             p[Keys.LAST_PROJECT] = s.lastProjectId; p[Keys.THINKING] = s.thinkingLevel.name; p[Keys.ONBOARDING] = s.onboardingSeen
-            p[Keys.LAN_ENABLED] = s.lanEnabled; p[Keys.WEB_PORT] = s.webPort.coerceIn(1024, 65535)
-            p[Keys.MEMORY_ENABLED] = s.memoryEnabled; p[Keys.CUSTOM_INSTRUCTIONS] = s.customInstructions.take(4_000); p[Keys.WEB_TOOLS] = s.webToolsEnabled
-            p[Keys.NODE_BACKEND] = s.nodeBackend.name; p[Keys.TERMUX_BRIDGE] = s.termuxBridgeEnabled
-            p[Keys.AGENT_ENGINE] = s.agentEngine.name
+            p[Keys.MEMORY_ENABLED] = s.memoryEnabled; p[Keys.CUSTOM_INSTRUCTIONS] = s.customInstructions.take(4_000)
+            p[Keys.NODE_BACKEND] = s.nodeBackend.name
         }
     }
 }

@@ -13,6 +13,7 @@ import android.util.Base64
 import android.webkit.JavascriptInterface
 import com.anvex.core.ai.mcp.McpClient
 import com.anvex.core.ai.mcp.McpServerConfig
+import com.anvex.core.ai.mcp.mergeMcpConfigsForSave
 import com.anvex.core.android.AppGraph
 import com.anvex.core.android.KeystoreCrypto
 import com.anvex.core.android.fs.ProjectFileObserver
@@ -29,7 +30,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -82,6 +87,14 @@ class HarnessBridge(
 
     private var webView: android.webkit.WebView? = null
     private var session: ChatSession? = null
+    // H-04: the session itself as a flow, so the watcher follows the
+    // CURRENT session instead of the one captured at watcher start.
+    private val sessionFlow = MutableStateFlow<ChatSession?>(null)
+    // Fingerprint of the session inputs (id, model, URL, key hash —
+    // never the key). A provider-table change that leaves these alone
+    // (renaming an inactive provider, editing a name) must NOT rebuild
+    // the session mid-stream.
+    private var lastSessionKey: String? = null
     private var terminal: AndroidTerminalSession? = null
     private var terminalJob: Job? = null
     private var observer: ProjectFileObserver? = null
@@ -106,18 +119,42 @@ class HarnessBridge(
             graph.providers.observeAll().collect { providerPresent = it.isNotEmpty() }
         }
         scope.launch {
-            // Build (and re-build) the ChatSession whenever the default provider changes.
+            // Build (and re-build) the ChatSession only when the effective
+            // session inputs change — not on every provider-table edit.
             graph.providers.observeAll().collectLatest { list ->
                 val config = list.firstOrNull { it.isDefault } ?: list.firstOrNull()
                 if (config == null) {
-                    session?.close(); session = null; sessionReady = false
+                    session?.close(); session = null; sessionFlow.value = null
+                    lastSessionKey = null; sessionReady = false
                     return@collectLatest
                 }
                 val runtime = runCatching { graph.providers.runtimeConfig(config.id) }.getOrNull()
-                if (runtime == null) { sessionReady = false; return@collectLatest }
+                if (runtime == null) {
+                    // Key undecryptable (or config gone): the old session
+                    // would run with a stale key — close it, fail closed.
+                    session?.close(); session = null; sessionFlow.value = null
+                    lastSessionKey = null; sessionReady = false
+                    return@collectLatest
+                }
+                val sessionKey = listOf(
+                    config.id, config.model, config.baseUrl,
+                    java.security.MessageDigest.getInstance("SHA-256")
+                        .digest(runtime.apiKey.toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it) },
+                ).joinToString("|")
+                if (session != null && sessionKey == lastSessionKey) {
+                    // Irrelevant edit (inactive provider renamed, name
+                    // changed): keep the live session, do not cancel a
+                    // stream in flight.
+                    return@collectLatest
+                }
                 val client = graph.fallbackAiClient()
                     ?: runCatching { com.anvex.core.ai.ProviderClientFactory.create(runtime) }.getOrNull()
-                if (client == null) { sessionReady = false; return@collectLatest }
+                if (client == null) {
+                    session?.close(); session = null; sessionFlow.value = null
+                    lastSessionKey = null; sessionReady = false
+                    return@collectLatest
+                }
                 session?.close()
                 val fs = graph.projects.fileSystemForAsync(projectId)
                 val thinking = graph.settings.settings.first().thinkingLevel
@@ -136,6 +173,8 @@ class HarnessBridge(
                     s.historyProvider = { graph.chat.observeForProject(projectId).first() }
                     s.thinkingLevel = thinking
                 }
+                sessionFlow.value = session
+                lastSessionKey = sessionKey
                 sessionReady = true
             }
         }
@@ -168,7 +207,8 @@ class HarnessBridge(
         terminalJob?.cancel(); terminalJob = null
         terminal?.close(); terminal = null
         observer?.close(); observer = null
-        session?.close(); session = null
+        session?.close(); session = null; sessionFlow.value = null
+        lastSessionKey = null
         sessionReady = false
         // Release the WebView reference so a stopped bridge can no longer push
         // JS events and does not keep the view (and its Activity context) alive.
@@ -185,10 +225,23 @@ class HarnessBridge(
             var lastTextLen = 0
             var lastArtifactJson: String? = null
             var lastRevision = 0
-            while (true) {
-                val s = session
-                if (s == null) { delay(300); continue }
-                s.state.collect { state ->
+            // H-04: the old watcher captured ONE session and collected its
+            // StateFlow forever (StateFlows never complete), so after a
+            // provider change the UI kept receiving the CLOSED session's
+            // events. Follow the session itself: when the session object
+            // changes, drop the old stream and follow the new one, with
+            // the edge detectors reset so the new session's initial state
+            // cannot emit a spurious turn_end.
+            sessionFlow.flatMapLatest { s ->
+                if (s == null) emptyFlow()
+                else flow {
+                    lastStreaming = false
+                    lastTextLen = 0
+                    lastArtifactJson = null
+                    lastRevision = 0
+                    emitAll(s.state)
+                }
+            }.collect { state ->
                     if (state.streaming && !lastStreaming) emitEvent("turn_start") { put("streaming", true) }
                     if (state.streamText.length != lastTextLen) {
                         lastTextLen = state.streamText.length
@@ -223,7 +276,6 @@ class HarnessBridge(
                     }
                     lastStreaming = state.streaming
                 }
-            }
         }
     }
 
@@ -297,6 +349,12 @@ class HarnessBridge(
         fun readFile(path: String): String = runCatching {
             val safe = PathSanitizer.sanitizeOrNull(path) ?: return bridgeError("Unsafe path")
             val fs = kotlinx.coroutines.runBlocking { graph.projects.fileSystemForAsync(projectId) }
+            // M-07: the old code read the whole file into memory and only
+            // then checked the size — a multi-MB file OOM'd first. Check
+            // the size before reading (the post-read check stays as the
+            // exact guard for encodings whose byte count differs).
+            val size = fs.fileSize(safe)
+            if (size != null && size > LightDiagnostics.MAX_FILE_BYTES) return bridgeError("File is too large to load.")
             val content = fs.readFile(safe) ?: return bridgeError("File not found: $safe")
             if (content.toByteArray(Charsets.UTF_8).size > LightDiagnostics.MAX_FILE_BYTES) return bridgeError("File is too large to load.")
             ok { put("path", safe); put("content", content) }
@@ -407,7 +465,13 @@ class HarnessBridge(
         @JavascriptInterface
         fun git(op: String, arg: String): String = runCatching {
             val root = realRootSync() ?: return bridgeError("Local git requires an app-private workspace (this project uses SAF storage).")
-            val repo = GitLite.open(root) ?: GitLite.init(root)
+            // M-05: the old code ran init() for EVERY op, so even `status`
+            // silently created a `.git` directory in the user's folder.
+            // Only an explicit init creates a repository now.
+            val repo = when (op) {
+                "init" -> GitLite.init(root)
+                else -> GitLite.open(root) ?: return bridgeError("Not a git repository. Initialize one first.")
+            }
             when (op) {
                 "status" -> {
                     val status = repo.status()
@@ -581,7 +645,8 @@ class HarnessBridge(
                             put("name", cfg.name)
                             put("url", cfg.url)
                             put("enabled", cfg.enabled)
-                            put("hasKey", !cfg.apiKey.isNullOrBlank())
+                            put("hasKey", !cfg.apiKey.isNullOrBlank() || cfg.keyUndecryptable)
+                            put("keyNeedsReentry", cfg.keyUndecryptable)
                         })
                     }
                 })
@@ -591,26 +656,46 @@ class HarnessBridge(
         @JavascriptInterface
         fun mcpAdd(configJson: String): String = runCatching {
             val config = json.decodeFromString(McpServerConfig.serializer(), configJson)
-            val encryptedKey = config.apiKey?.takeIf { it.isNotBlank() }
-                ?.let { runCatching { KeystoreCrypto.encrypt(it) }.getOrNull() }
-            val stored = config.copy(apiKey = encryptedKey)
-            val configs = mcpConfigs().filter { it.id != stored.id } + stored
-            saveMcpConfigs(configs)
+            synchronized(mcpLock) {
+                val current = mcpConfigs()
+                val existing = current.firstOrNull { it.id == config.id }
+                // H-05: a blank incoming key means "keep the existing
+                // key" (an edit that only changes name/URL must not wipe
+                // it), and an undecryptable stored key is preserved by
+                // the save merge instead of being overwritten with null.
+                // A NEW key that fails to encrypt fails the whole add
+                // loudly — the old code stored null and returned ok.
+                val toStore = when {
+                    !config.apiKey.isNullOrBlank() ->
+                        config.copy(apiKey = config.apiKey, keyUndecryptable = false)
+                    existing?.keyUndecryptable == true ->
+                        config.copy(apiKey = null, keyUndecryptable = true)
+                    existing?.apiKey != null ->
+                        config.copy(apiKey = existing.apiKey, keyUndecryptable = false)
+                    else -> config.copy(apiKey = null, keyUndecryptable = false)
+                }
+                saveMcpConfigs(current.filter { it.id != config.id } + toStore)
+                mcpClients.remove(config.id)
+            }
             ok { put("id", config.id); put("name", config.name) }
         }.getOrElse { err(it) }
 
         @JavascriptInterface
         fun mcpRemove(id: String): String = runCatching {
-            saveMcpConfigs(mcpConfigs().filter { it.id != id })
+            synchronized(mcpLock) {
+                saveMcpConfigs(mcpConfigs().filter { it.id != id })
+                mcpClients.remove(id)
+            }
             ok { put("removed", id) }
         }.getOrElse { err(it) }
 
         @JavascriptInterface
         fun mcpTools(id: String): String = runCatching {
             val config = mcpConfigs().firstOrNull { it.id == id } ?: return bridgeError("Unknown MCP server: $id")
-            val client = mcpClientFor(config)
+            if (config.keyUndecryptable) return bridgeError("The API key for this server could not be decrypted; re-enter it in settings.")
+            val client = cachedMcpClient(config)
             kotlinx.coroutines.runBlocking {
-                client.initialize().fold(
+                client.ensureInitialized().fold(
                     onSuccess = { },
                     onFailure = { return@runBlocking bridgeError("MCP initialize failed: ${it.message}") },
                 )
@@ -636,9 +721,16 @@ class HarnessBridge(
         @JavascriptInterface
         fun mcpCall(id: String, tool: String, argsJson: String): String = runCatching {
             val config = mcpConfigs().firstOrNull { it.id == id } ?: return bridgeError("Unknown MCP server: $id")
-            val client = mcpClientFor(config)
+            if (config.keyUndecryptable) return bridgeError("The API key for this server could not be decrypted; re-enter it in settings.")
+            val client = cachedMcpClient(config)
             val args = (json.parseToJsonElement(argsJson) as? JsonObject) ?: JsonObject(emptyMap())
             kotlinx.coroutines.runBlocking {
+                // M-12: the old code called tools/call on a fresh client
+                // with no initialize — stateful servers rejected it.
+                client.ensureInitialized().fold(
+                    onSuccess = { },
+                    onFailure = { return@runBlocking bridgeError("MCP initialize failed: ${it.message}") },
+                )
                 client.callTool(tool, args).fold(
                     onSuccess = { call -> ok { put("tool", tool); put("success", call.success); put("text", call.text) } },
                     onFailure = { bridgeError("tools/call failed: ${it.message}") },
@@ -853,34 +945,92 @@ class HarnessBridge(
 
     // ------------------------------------------------------------------ MCP storage
 
+    // H-05: mcpAdd/mcpRemove are read-modify-write over one file and
+    // are called from the JS thread; without a lock two overlapping
+    // saves could each drop the other's server. Callers must hold it.
+    private val mcpLock = Any()
+
     private fun mcpFile(): File = File(File(context.filesDir, "harness"), "mcp-servers.json")
 
-    private fun mcpConfigs(): List<McpServerConfig> = runCatching {
-        if (!mcpFile().isFile) return emptyList()
-        val stored = json.decodeFromString(ListSerializerWrapper.serializer(), mcpFile().readText())
-        stored.items.map { cfg ->
-            val plainKey = cfg.apiKey?.takeIf { it.isNotBlank() }
-                ?.let { runCatching { KeystoreCrypto.decrypt(it) }.getOrNull() }
-            cfg.copy(apiKey = plainKey)
+    private fun mcpBackupFile(): File = File(File(context.filesDir, "harness"), "mcp-servers.json.bak")
+
+    /** Stored view: keys exactly as on disk (encrypted blobs), never decrypted. */
+    private fun rawMcpConfigs(): List<McpServerConfig> {
+        for (file in listOf(mcpFile(), mcpBackupFile())) {
+            val parsed = runCatching {
+                if (!file.isFile) return@runCatching null
+                json.decodeFromString(ListSerializerWrapper.serializer(), file.readText()).items
+            }.getOrNull()
+            if (parsed != null) return parsed
         }
-    }.getOrDefault(emptyList())
+        return emptyList()
+    }
+
+    /**
+     * Decrypted view for the UI and clients. H-05: a key that fails to
+     * decrypt is flagged, NOT nulled — the old code nulled it here, so
+     * the next save of any server permanently erased that key.
+     */
+    private fun mcpConfigs(): List<McpServerConfig> = rawMcpConfigs().map { cfg ->
+        val stored = cfg.apiKey?.takeIf { it.isNotBlank() } ?: return@map cfg.copy(apiKey = null)
+        val plain = runCatching { KeystoreCrypto.decrypt(stored) }.getOrNull()
+        if (plain != null) cfg.copy(apiKey = plain) else cfg.copy(apiKey = null, keyUndecryptable = true)
+    }
 
     @Serializable
     private data class ListSerializerWrapper(val items: List<McpServerConfig> = emptyList())
 
+    /**
+     * H-05: callers must hold [mcpLock]. Publishes atomically (tmp +
+     * fsync + rename, same pattern as RealProjectFileSystem) and keeps
+     * the previous good file as `.bak`, so a corrupt primary can no
+     * longer wipe the whole list on the next save. A failed encryption
+     * throws — the caller reports it instead of storing a null key.
+     */
     private fun saveMcpConfigs(configs: List<McpServerConfig>) {
         val file = mcpFile()
         file.parentFile?.mkdirs()
-        val encrypted = configs.map { cfg ->
-            val enc = cfg.apiKey?.takeIf { it.isNotBlank() }
-                ?.let { runCatching { KeystoreCrypto.encrypt(it) }.getOrNull() }
-            cfg.copy(apiKey = enc)
+        val storedMap = rawMcpConfigs().associate { it.id to it.apiKey }
+        val toStore = mergeMcpConfigsForSave(configs, storedMap) { plain ->
+            runCatching { KeystoreCrypto.encrypt(plain) }.getOrNull()
         }
-        file.writeText(json.encodeToString(ListSerializerWrapper.serializer(), ListSerializerWrapper(encrypted)))
+        val payload = json.encodeToString(ListSerializerWrapper.serializer(), ListSerializerWrapper(toStore))
+            .toByteArray(Charsets.UTF_8)
+        // Previous good copy first, so a crash mid-publish still leaves
+        // a recoverable file behind — but only when the primary itself
+        // parses: backing up a corrupt primary would destroy the good
+        // .bak that rawMcpConfigs falls back to.
+        val primaryOk = file.isFile && runCatching {
+            json.decodeFromString(ListSerializerWrapper.serializer(), file.readText())
+        }.isSuccess
+        if (primaryOk) writeAtomically(mcpBackupFile(), file.readBytes())
+        writeAtomically(file, payload)
     }
 
-    private fun mcpClientFor(config: McpServerConfig): McpClient =
-        McpClient(config.url, config.apiKey, McpClient.defaultClient())
+    private fun writeAtomically(target: File, bytes: ByteArray) {
+        target.parentFile?.mkdirs()
+        val tmp = File(target.parentFile, ".${target.name}.tmp-${java.util.UUID.randomUUID()}")
+        try {
+            java.io.FileOutputStream(tmp).use { out ->
+                out.write(bytes)
+                out.fd.sync()
+            }
+            require(tmp.renameTo(target)) { "Could not atomically publish ${target.name}" }
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
+    }
+
+    // M-12: one client per server, kept across calls. The old code built a
+    // fresh client for every call and mcpCall never ran initialize, so
+    // stateful (session-id) servers rejected tools/call outright.
+    // Invalidated on mcpAdd/mcpRemove, when the URL or key may change.
+    private val mcpClients = mutableMapOf<String, McpClient>()
+
+    private fun cachedMcpClient(config: McpServerConfig): McpClient = synchronized(mcpLock) {
+        mcpClients.getOrPut(config.id) { McpClient(config.url, config.apiKey, McpClient.defaultClient()) }
+    }
 
     // ------------------------------------------------------------------ GOAL 6 storage
 
