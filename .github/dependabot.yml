@@ -1,0 +1,15 @@
+# M-14: automated dependency updates for the action pins and the Gradle
+# version catalog. Security updates land as PRs; they never auto-merge —
+# the CI test job gates every one.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
