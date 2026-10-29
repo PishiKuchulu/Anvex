@@ -31,7 +31,7 @@ jobs:
           languages: java-kotlin
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@4bfa242aa49c5f7c6770b98670d354a7dfac05f8
+        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@4bfa242aa49c5f7c6770b98670d354a7dfac05f8
