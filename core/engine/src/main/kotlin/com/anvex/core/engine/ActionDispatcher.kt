@@ -155,8 +155,8 @@ class ActionDispatcher(
      * legitimately reads `.anvex/attachments/...`); writes/deletes/renames
      * through this dispatcher are refused.
      * H-03/H-07: `.anvex-pi` (the Pi extension code the agent must not
-     * rewrite) and `.github/workflows/**` (workflows run with the signing
-     * secrets) join the protected set.
+     * rewrite) and the `.github/workflows` subtree (workflows run with the
+     * signing secrets) join the protected set.
      */
     private fun isProtectedPath(path: String): Boolean {
         val parts = path.split('/')
