@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read # least privilege: only the publishing job below gets write
 
 concurrency:
   group: anvex-signed-${{ github.ref }}
@@ -56,6 +56,11 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
+    # Gives the signing secrets a protection point: add required reviewers to the
+    # "release" environment (Settings -> Environments) to gate every signed release.
+    environment: release
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
