@@ -38,15 +38,18 @@ class ProviderRepository(private val dao: ProviderDao) {
             if (entity.toDomain() != null) null else BrokenProvider(
                 id = entity.id,
                 name = entity.name,
-                reason = brokenReason(entity),
+                reason = entity.brokenReason(),
             )
         }
     }
 
     private fun ProviderEntity.brokenReason(): String {
         if (runCatching { ProviderKind.valueOf(kind) }.isFailure) return "unknown provider kind"
-        if (!extraHeadersEnc.isNullOrBlank() && runCatching {
-                decryptHeaders(extraHeadersEnc, id)
+        // Capture into a local val: a nullable entity property does not
+        // reliably smart-cast for the decrypt call below.
+        val headersEnc = extraHeadersEnc
+        if (headersEnc != null && headersEnc.isNotBlank() && runCatching {
+                decryptHeaders(headersEnc, id)
             }.isFailure) return "headers cannot be decrypted"
         if (!extraHeadersJson.isNullOrBlank() && extraHeadersJson != "{}" &&
             runCatching { json.decodeFromString<Map<String, String>>(extraHeadersJson) }.isFailure

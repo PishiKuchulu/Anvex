@@ -252,11 +252,11 @@ class ChatSession(
                     fs,
                     openFilePath = openFilePath,
                     diffNote = runCatching { recentChangesNote(runner) }.getOrDefault(""),
-                    // M-17: scale the context budget with the model's window
-                    // (chars ≈ tokens, conservative); unknown window keeps 48k.
-                    maxTotalChars = provider.contextWindow
-                        ?.let { it.coerceIn(8_000L, 96_000L).toInt() }
-                        ?: ContextBuilder.MAX_TOTAL_CHARS,
+                    // M-17 note: ProviderConfig carries no context window
+                    // (contextWindow lives on ModelInfo, not the provider
+                    // row), so the default 48k budget is used here; scaling
+                    // by window is deferred, not guessed.
+                    maxTotalChars = ContextBuilder.MAX_TOTAL_CHARS,
                     // 15.2: files named in the user's message get priority
                     // contents (pure text scan — no fs access here; build()
                     // checks membership against its own walk).
