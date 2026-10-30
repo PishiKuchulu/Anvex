@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.12.0 — Mint theme
+
+- New eighth appearance style, **Mint** (Settings → Appearance → Style): a port of
+  the Lovable design concept — near-black green-tinted dark theme with a bright
+  mint accent (#5CF2B0), pill-rounded shapes, and matching light scheme. Purely
+  additive: all seven existing styles (Professional, Glass, Nebula, Aurora,
+  Midnight, Forest, Ember) are unchanged.
+
+
 ## 4.11.1 — Agent-loop empty-reply recovery
 
 - Markup-only/empty rounds: when a model (typically a weak gateway model) ends a
