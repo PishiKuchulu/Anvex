@@ -29,9 +29,11 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
  * MIDNIGHT — deep-navy dark-first, ice-blue accent; calm and focused.
  * FOREST — deep-green dark-first, mint accent; easy on the eyes.
  * EMBER — warm-charcoal dark-first, amber accent; cozy contrast.
+ * MINT — near-black green dark-first, bright mint accent, pill-rounded surfaces;
+ *   port of the Lovable "graceful-screen-refresh" design.
  */
 @Serializable
-enum class UiThemeStyle { PROFESSIONAL, GLASS, NEBULA, AURORA, MIDNIGHT, FOREST, EMBER }
+enum class UiThemeStyle { PROFESSIONAL, GLASS, NEBULA, AURORA, MIDNIGHT, FOREST, EMBER, MINT }
 
 @Serializable
 enum class AppLanguage { SYSTEM, ENGLISH, PERSIAN }

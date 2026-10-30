@@ -490,6 +490,7 @@ private fun AppearanceCategory(
                                 UiThemeStyle.MIDNIGHT -> "Midnight — deep-navy dark, ice-blue accent; calm and focused"
                                 UiThemeStyle.FOREST -> "Forest — deep-green dark, mint accent; easy on the eyes"
                                 UiThemeStyle.EMBER -> "Ember — warm-charcoal dark, amber accent; cozy contrast"
+                                UiThemeStyle.MINT -> "Mint — near-black green dark, bright mint accent, pill-rounded surfaces (Lovable design port)"
                             }
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -507,6 +508,7 @@ private fun AppearanceCategory(
                                                 UiThemeStyle.MIDNIGHT -> "Midnight"
                                                 UiThemeStyle.FOREST -> "Forest"
                                                 UiThemeStyle.EMBER -> "Ember"
+                                                UiThemeStyle.MINT -> "Mint"
                                             }
                                         )
                                     },

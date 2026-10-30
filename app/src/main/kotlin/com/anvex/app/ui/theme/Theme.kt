@@ -532,6 +532,83 @@ private val EmberExtrasLight = AnvexExtras(
     glass = Color(0xB3FFFFFF), glassBorder = Color(0x33000000),
 )
 
+// ------------------------------------------------------------------ mint
+// Port of the Lovable "graceful-screen-refresh" design (Farzad's UI/UX prototype):
+// near-black green-tinted dark ladder (#0B0F0E → #050807), bright mint accent
+// (#5CF2B0), dark gray-green surfaces, hairline dividers and pill-rounded shapes.
+
+private val MintDarkScheme = darkColorScheme(
+    primary = Color(0xFF5CF2B0),
+    onPrimary = Color(0xFF052E1B),
+    primaryContainer = Color(0xFF0C3B28),
+    onPrimaryContainer = Color(0xFFC9F7E3),
+    secondary = Color(0xFF93A29B),
+    onSecondary = Color(0xFF0E1512),
+    secondaryContainer = Color(0xFF1E2A25),
+    onSecondaryContainer = Color(0xFFD8E2DC),
+    tertiary = Color(0xFF34D399),
+    onTertiary = Color(0xFF003826),
+    tertiaryContainer = Color(0xFF0B3527),
+    onTertiaryContainer = Color(0xFFA7F3D0),
+    background = Color(0xFF0B0F0E),
+    onBackground = Color(0xFFF2F7F4),
+    surface = Color(0xFF151A18),
+    onSurface = Color(0xFFF2F7F4),
+    surfaceVariant = Color(0xFF1A211E),
+    onSurfaceVariant = Color(0xFF8A9490),
+    outline = Color(0xFF2A332E),
+    outlineVariant = Color(0xFF232A27),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF4F171B),
+    onErrorContainer = Color(0xFFFFDAD6),
+)
+
+private val MintLightScheme = lightColorScheme(
+    primary = Color(0xFF0B7A55),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFBFF0D9),
+    onPrimaryContainer = Color(0xFF052E1B),
+    secondary = Color(0xFF3F5A52),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFD9E8E0),
+    onSecondaryContainer = Color(0xFF0E1A12),
+    tertiary = Color(0xFF0E7A46),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFA7F3D0),
+    onTertiaryContainer = Color(0xFF003826),
+    background = Color(0xFFF3F8F5),
+    onBackground = Color(0xFF0B100D),
+    surface = Color.White,
+    onSurface = Color(0xFF0B100D),
+    surfaceVariant = Color(0xFFE4EEE8),
+    onSurfaceVariant = Color(0xFF43524B),
+    outline = Color(0xFF6F8177),
+    outlineVariant = Color(0xFFC9D8CC),
+)
+
+private val MintShapes = Shapes(
+    extraSmall = RoundedCornerShape(10.dp),
+    small = RoundedCornerShape(14.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(28.dp),
+)
+
+private val MintExtrasDark = AnvexExtras(
+    accentStart = Color(0xFF5CF2B0), accentEnd = Color(0xFF34D399),
+    canvasTop = Color(0xFF0C1210), canvasBottom = Color(0xFF050807),
+    userBubbleStart = Color(0xFF0E9F6E), userBubbleEnd = Color(0xFF34D399),
+    glass = Color(0xCC151A18), glassBorder = Color(0x1FF2F7F4),
+)
+
+private val MintExtrasLight = AnvexExtras(
+    accentStart = Color(0xFF07875C), accentEnd = Color(0xFF10B981),
+    canvasTop = Color(0xFFEAF4EE), canvasBottom = Color(0xFFF7FAF8),
+    userBubbleStart = Color(0xFF0B7A55), userBubbleEnd = Color(0xFF34D399),
+    glass = Color(0xB3FFFFFF), glassBorder = Color(0x1F0F172A),
+)
+
 private fun extrasFor(style: UiThemeStyle, dark: Boolean, scheme: androidx.compose.material3.ColorScheme): AnvexExtras =
     when (style) {
         UiThemeStyle.NEBULA -> if (dark) NebulaExtrasDark else NebulaExtrasLight
@@ -539,6 +616,7 @@ private fun extrasFor(style: UiThemeStyle, dark: Boolean, scheme: androidx.compo
         UiThemeStyle.MIDNIGHT -> if (dark) MidnightExtrasDark else MidnightExtrasLight
         UiThemeStyle.FOREST -> if (dark) ForestExtrasDark else ForestExtrasLight
         UiThemeStyle.EMBER -> if (dark) EmberExtrasDark else EmberExtrasLight
+        UiThemeStyle.MINT -> if (dark) MintExtrasDark else MintExtrasLight
         else -> AnvexExtras(
             accentStart = scheme.primary, accentEnd = scheme.tertiary,
             canvasTop = scheme.background, canvasBottom = scheme.background,
@@ -574,12 +652,14 @@ fun AnvexTheme(
         style == UiThemeStyle.MIDNIGHT -> if (useDark) MidnightDarkScheme else MidnightLightScheme
         style == UiThemeStyle.FOREST -> if (useDark) ForestDarkScheme else ForestLightScheme
         style == UiThemeStyle.EMBER -> if (useDark) EmberDarkScheme else EmberLightScheme
+        style == UiThemeStyle.MINT -> if (useDark) MintDarkScheme else MintLightScheme
         else -> if (useDark) ProfessionalDarkScheme else ProfessionalLightScheme
     }
     val shapes = when {
         style == UiThemeStyle.NEBULA -> NebulaShapes
         style == UiThemeStyle.GLASS || useDynamic -> GlassShapes
         style == UiThemeStyle.AURORA -> AuroraShapes
+        style == UiThemeStyle.MINT -> MintShapes
         else -> ProfessionalShapes
     }
     val extras = extrasFor(if (useDynamic) UiThemeStyle.GLASS else style, useDark, colorScheme)
