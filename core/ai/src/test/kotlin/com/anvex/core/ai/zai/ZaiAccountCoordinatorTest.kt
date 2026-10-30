@@ -255,6 +255,9 @@ class ZaiAccountCoordinatorTest {
         val bad = initBody.replace("https://zcode.z.ai", "http://zcode.z.ai")
         assertNull(ZaiProtocol.parseInit(bad))
         assertNotNull(ZaiProtocol.parseInit(initBody))
+        // L-14: a look-alike host must be rejected even over https.
+        val foreign = initBody.replace("https://zcode.z.ai", "https://zcode.z.ai.evil.example")
+        assertNull(ZaiProtocol.parseInit(foreign))
     }
 
     @Test

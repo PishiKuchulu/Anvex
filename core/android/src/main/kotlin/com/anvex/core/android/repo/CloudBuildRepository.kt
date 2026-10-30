@@ -544,6 +544,8 @@ on:
     inputs:
       variant:
         description: "Build variant (debug or release)"
+        type: choice
+        options: [debug, release]
         default: "debug"
 permissions:
   contents: read
@@ -561,6 +563,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
       - name: Build APK
         env:
           VARIANT: ${'$'}{{ inputs.variant }}

@@ -305,6 +305,11 @@ class ChatSession(
                 var mediaRetried = false
                 // 15.1: length-truncation continuations, capped per turn.
                 var lengthContinuations = 0
+                // Intent-without-action continuations (see the branch below the
+                // media contract): the model narrated a plan and stopped with a
+                // normal finish reason before executing anything.
+                var intentContinuations = 0
+                var turnActionsExecuted = 0
                 var suppressRoundSeparator = false
                 while (true) {
                     val roundId = if (round == 0) assistantId else "$assistantId-r$round"
@@ -315,7 +320,7 @@ class ChatSession(
                     val consumer = launch {
                         ActionPipeline(
                             actionTimeoutMs,
-                            execute = { data -> executeAction(data, runner, assistantId) },
+                            execute = { data -> turnActionsExecuted++; executeAction(data, runner, assistantId) },
                             onAborted = { data, note -> markAction(data, ActionStatus.ABORTED, note) },
                             onFailed = { data, e ->
                                 // Engine-side error surfaced through the unified error model (§17).
@@ -518,6 +523,30 @@ class ChatSession(
                         turns.add(ChatTurn(MessageRole.USER, MEDIA_CORRECTION))
                         round++
                         _state.value = _state.value.copy(statusLine = "Rendering the requested video…")
+                        continue
+                    }
+                    // Intent-without-action: the model ended a round with a
+                    // normal finish reason, having only NARRATED what it is
+                    // about to do ("I will create the files and then…"), with
+                    // zero actions executed in the whole turn — the user then
+                    // had to type "continue" to unstick it. When the round's
+                    // prose announces intended work, push one more round that
+                    // tells it to actually emit the actions. Capped per turn;
+                    // never fires once any action really ran (a closing
+                    // summary after real work stays a closing summary).
+                    val normalStop = roundFinishReason == null ||
+                        roundFinishReason.equals("stop", true) ||
+                        roundFinishReason.equals("end_turn", true)
+                    val intentOnly = intentContinuations < MAX_INTENT_CONTINUATIONS &&
+                        !canceled && failure == null && normalStop &&
+                        gathered.isEmpty() && turnActionsExecuted == 0 &&
+                        looksLikeIntentOnly(roundText.toString())
+                    if (intentOnly && round < MAX_TOOL_ROUNDS) {
+                        intentContinuations++
+                        turns.add(ChatTurn(MessageRole.ASSISTANT, roundText.toString().ifBlank { "(plan announced)" }))
+                        turns.add(ChatTurn(MessageRole.USER, INTENT_CONTINUE_PROMPT))
+                        round++
+                        _state.value = _state.value.copy(statusLine = "Continuing — turning the plan into actions…")
                         continue
                     }
                     if (canceled || failure != null || gathered.isEmpty() || round >= MAX_TOOL_ROUNDS) break
@@ -942,6 +971,12 @@ class ChatSession(
         const val LENGTH_CONTINUE_PROMPT =
             "Your previous reply was cut off by the output limit. Continue exactly where you stopped. " +
             "Do not repeat anything already written and do not summarize — output only the remaining part."
+        const val INTENT_CONTINUE_PROMPT =
+            "You described what you are about to do, but you stopped before doing it — no actions " +
+            "were executed. Continue now and actually carry out those steps: emit the file and " +
+            "command actions instead of only describing them. If the task is already fully " +
+            "complete, say so explicitly instead of announcing next steps."
+        const val MAX_INTENT_CONTINUATIONS = 2
         private const val MAX_TOOL_RESULT_CHARS = 60_000
     }
 }

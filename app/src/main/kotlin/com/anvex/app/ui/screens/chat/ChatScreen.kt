@@ -370,6 +370,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     item { ProviderSetupCard(onConfigure = { nav.navigate(Routes.PROVIDERS) }) }
                 }
                 items(messages, key = { it.id }) { message ->
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().animateItem()) {
                     // v4.4.4 (smoothness): hoisted lambdas — recreated instances
                     // made every MessageBubble non-skippable, so all messages
                     // recomposed on every stream tick. Keyed on the message so
@@ -399,6 +400,8 @@ fun ChatScreen(nav: NavController, projectId: String) {
                         versionsRev = persistedMutations.size,
                         onShowActions = onShowActions,
                     )
+                
+                    }
                 }
                 branchNote?.let { note ->
                     item { NebulaChip("↻ ${note}", icon = Icons.Filled.AutoAwesome) }
@@ -889,7 +892,7 @@ private fun Composer(
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
+                            contentDescription = tr("Send"),
                             tint = if (sendReady) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

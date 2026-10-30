@@ -72,7 +72,12 @@ object SkillGitInstaller {
         // parsed as a GitHub repo. The host itself must be GitHub.
         val uri = runCatching { java.net.URI(cleaned) }.getOrNull() ?: return null
         if (uri.scheme != "https" || (uri.host != "github.com" && uri.host != "www.github.com")) return null
-        val parts = uri.path.trim('/').split('/')
+        // A query or fragment could reshape the constructed download URL;
+        // the repo URL must be a plain path and nothing else.
+        if (uri.rawQuery != null || uri.rawFragment != null) return null
+        // rawPath (not path): the decoded form would turn %2F into a real
+        // separator and smuggle extra segments past the checks below.
+        val parts = uri.rawPath.trim('/').split('/')
         if (parts.size < 2) return null
         // Owner/repo are interpolated into a URL path: accept only GitHub's own
         // character set so '?', '#', '%', '..' etc. cannot reshape the request.

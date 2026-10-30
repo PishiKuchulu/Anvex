@@ -33,6 +33,7 @@ object ZipCodec {
         if (buildIndex >= 0 && parts.take(buildIndex).none { it == "src" }) return false
         val name = parts.last()
         if (name.startsWith(".anvex-shell-") || name.startsWith(".anvex-node-")) return false
+        // Leftover temp files from an interrupted atomic write (".<name>.tmp-<uuid>").
         if (name.startsWith(".") && name.contains(".tmp-")) return false
         if (path.startsWith(".anvex/logs/")) return false
         return true
@@ -55,7 +56,10 @@ object ZipCodec {
         onSkipped: (String, String) -> Unit = { _, _ -> },
     ) {
         ZipOutputStream(out.buffered()).use { zip ->
-            val files = fs.walk().filter { isExportable(it) }
+            val files = fs.walk().filter {
+                isExportable(it) &&
+                    !(excludeSecrets && (SensitivePaths.isSecretFile(it) || it.startsWith(".anvex/")))
+            }
             if (files.size > MAX_ENTRIES) throw ZipSecurityException("Project exceeds $MAX_ENTRIES files")
             var total = 0L
             for (path in files) {

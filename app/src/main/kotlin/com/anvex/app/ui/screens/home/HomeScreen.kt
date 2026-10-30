@@ -363,6 +363,7 @@ fun HomeScreen(nav: NavController) {
                 items(visibleProjects, key = { it.id }) { project ->
                     ProjectCard(
                         project = project,
+                        modifier = Modifier.animateItem(),
                         onClick = { nav.navigate(Routes.chat(project.id)) },
                         onMenu = { menuFor = project.id },
                     )

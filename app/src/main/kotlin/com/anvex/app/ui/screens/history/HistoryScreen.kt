@@ -28,7 +28,7 @@ fun HistoryScreen(nav: NavController, projectId: String) {
         if (changes.isEmpty()) Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text(tr("No changes recorded yet.")) }
         else LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(changes, key = { "${it.path}:${it.timestamp}:${it.source.name}:${it.operation.name}" }) { m ->
-                Card(Modifier.fillMaxWidth()) {
+                Card(Modifier.fillMaxWidth().animateItem()) {
                     ListItem(
                         headlineContent = { Text(m.path) },
                         supportingContent = { Text("${m.operation.name} • ${m.source.name} • ${m.timestamp}") },

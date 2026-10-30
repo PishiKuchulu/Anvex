@@ -116,7 +116,9 @@ class AndroidTerminalSession(
 
     override fun close() {
         closed.set(true)
-        runCatching { writer?.write("exit\n"); writer?.flush() }
+        // L-04: Process.destroy() only kills the shell, leaving children (e.g. a dev
+        // server) orphaned. Ask the shell to reap its direct children first.
+        runCatching { writer?.write("pkill -P \$\$ 2>/dev/null\nexit\n"); writer?.flush() }
         process?.destroy()
         process = null
         writer = null

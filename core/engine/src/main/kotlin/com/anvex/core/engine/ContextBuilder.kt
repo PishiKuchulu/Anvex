@@ -16,11 +16,11 @@ object ContextBuilder {
     private val PRIORITY_FILES = listOf(
         "package.json", "index.html", "src/main.jsx", "src/main.tsx", "src/App.jsx",
         "src/App.tsx", "src/index.css", "app.js", "index.js", "styles.css", "style.css",
-        "src/index.ts", "wrangler.toml", "pyproject.toml", "requirements.txt",
-        "Cargo.toml", "go.mod",
+        "src/index.ts", "wrangler.toml", "wrangler.jsonc", "pyproject.toml", "requirements.txt",
+        "Cargo.toml", "go.mod", "main.py", "README.md",
         "AndroidManifest.xml", "app/src/main/AndroidManifest.xml",
         "build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle",
-        "gradle/libs.versions.toml",
+        "app/build.gradle.kts", "gradle/libs.versions.toml",
     )
 
     /** Directories that never belong in model context (deps, VCS, app-private state, build output). */
@@ -68,7 +68,8 @@ object ContextBuilder {
             // appending, so on large projects the list alone blew the whole
             // budget and the key-file contents below were never reached.
             var listed = 0
-            for (path in all.sorted()) {
+            // Shallow paths first so the top-level structure stays visible when the list is cut.
+            for (path in all.sortedWith(compareBy({ it.count { c -> c == '/' } }, { it }))) {
                 val line = "- $path (${fs.fileSize(path) ?: 0L} bytes)\n"
                 if (sb.length + line.length > maxListChars) break
                 sb.append(line)

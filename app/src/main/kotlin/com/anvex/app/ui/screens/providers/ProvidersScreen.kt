@@ -57,7 +57,6 @@ import com.anvex.app.vm.ProvidersViewModel
 import com.anvex.core.ai.zai.ZaiAccountCoordinator
 import com.anvex.core.model.ProviderKind
 import com.anvex.app.i18n.tr
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 
@@ -133,7 +132,7 @@ fun ProvidersScreen(nav: NavController) {
                 item { ProviderKeyGuideCard() }
             } else {
                 items(providers, key = { it.id }) { provider ->
-                    Card(onClick = { nav.navigate(Routes.providerEdit(provider.id)) }) {
+                    Card(onClick = { nav.navigate(Routes.providerEdit(provider.id)) }, modifier = Modifier.animateItem()) {
                         ListItem(
                             overlineContent = { Text(provider.kind.displayLabel) },
                             headlineContent = { Text(provider.name) },

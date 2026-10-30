@@ -417,8 +417,11 @@ fun DirectChatScreen(nav: NavController) {
                             }
                         }
                         items(messages, key = { it.id }) { msg ->
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().animateItem()) {
                             DirectMessageBubble(msg, onShowActions = { actionMessage = msg })
-                        }
+                        
+                    }
+                }
                         if (sessionState.streamText.isNotEmpty()) {
                             item(key = "streaming") {
                                 StreamingBubble(

@@ -92,16 +92,12 @@ class PiEngine(
         // The control socket is owned by THIS side (Kotlin listen, driver
         // connects out) — the direction this stack already proves with
         // NodeMobileRuntime's own manager socket and preload.js.
-        // H-01: the socket is authenticated. A 256-bit token is passed to
-        // the driver out-of-band (argv — same-UID process only, never on
-        // the socket); the driver must send it back as its first line
-        // before any config (and its API key) is sent. A squatter on the
-        // loopback port cannot know the token, so it never receives the
-        // key — the run just fails fast on mismatch.
-        val controlToken = ByteArray(32)
-            .also { java.security.SecureRandom().nextBytes(it) }
+        // H-01: the control socket carries the provider API key and drives the agent.
+        // Any local app could race the real driver to the (loopback) port, so the driver
+        // must prove knowledge of a per-run random token before we send anything.
+        val controlToken = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
             .joinToString("") { "%02x".format(it) }
-        val controlServer = java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
+        val controlServer = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val runJob = async(Dispatchers.IO) {
             nodeRuntime.runCommand(
                 tool = "node",
@@ -123,7 +119,18 @@ class PiEngine(
 
         var socket: Socket? = null
         try {
-            val accepted = async(Dispatchers.IO) { runCatching { controlServer.accept() }.getOrNull() }
+            val accepted = CompletableDeferred<Socket?>()
+            val acceptLoop = launch(Dispatchers.IO) {
+                while (!accepted.isCompleted) {
+                    val candidate = runCatching { controlServer.accept() }.getOrNull() ?: break
+                    // One coroutine per candidate so a silent squatter cannot stall the real driver.
+                    launch(Dispatchers.IO) {
+                        val ok = runCatching { verifyControlToken(candidate, controlToken) }.getOrDefault(false)
+                        if (!(ok && accepted.complete(candidate))) runCatching { candidate.close() }
+                    }
+                }
+            }
+            acceptLoop.invokeOnCompletion { accepted.complete(null) }
             var bootRaceLostToRunEnd = false
             val connected = withTimeoutOrNull(BOOT_TIMEOUT_MS) {
                 kotlinx.coroutines.selects.select<Socket?> {
@@ -151,26 +158,6 @@ class PiEngine(
 
             socket = connected
             val activeSocket = socket
-            // Only one peer ever: close the listener now so no second
-            // connection can be accepted mid-run (finally closes it too).
-            runCatching { controlServer.close() }
-            // H-01: authenticate BEFORE sending anything sensitive. The
-            // reader is created once here and reused by the reader job
-            // below — a second BufferedReader would swallow buffered
-            // lines the job must see.
-            val controlReader = BufferedReader(InputStreamReader(activeSocket.getInputStream(), Charsets.UTF_8))
-            val authed = withTimeoutOrNull(30_000L) {
-                withContext(Dispatchers.IO) {
-                    val first = runCatching { controlReader.readLine() }.getOrNull()
-                    first != null && java.security.MessageDigest.isEqual(
-                        first.toByteArray(Charsets.UTF_8),
-                        controlToken.toByteArray(Charsets.UTF_8),
-                    )
-                }
-            } == true
-            if (!authed) {
-                return@coroutineScope fail(runJob, "Pi driver authentication failed (unexpected peer on the control socket).")
-            }
             val writer = OutputStreamWriter(activeSocket.getOutputStream(), Charsets.UTF_8)
             val writeMutex = Mutex()
             suspend fun send(record: JSONObject) = withContext(Dispatchers.IO) {
@@ -182,7 +169,6 @@ class PiEngine(
 
             // Config line (consumed by the driver; carries the API key,
             // which then lives only in the :node process's environment).
-            // Sent only after the driver authenticated above.
             val configJson = JSONObject()
                 .put("extraExtensions", org.json.JSONArray(config.extraExtensions))
             if (config.providerName != null) configJson.put("providerName", config.providerName)
@@ -198,7 +184,7 @@ class PiEngine(
             val settled = CompletableDeferred<Unit>()
             var sessionFile: String? = config.sessionFile
             val readerJob = launch(Dispatchers.IO) {
-                val reader = controlReader
+                val reader = BufferedReader(InputStreamReader(activeSocket.getInputStream(), Charsets.UTF_8))
                 while (true) {
                     // Blocking socket read: teardown closes the socket
                     // under us, which surfaces as SocketException — that
@@ -264,6 +250,29 @@ class PiEngine(
             nodeRuntime.stopCurrent()
             runJob.cancel()
         }
+    }
+
+    /**
+     * Reads the driver's first line (`{"type":"auth","token":"…"}`, bounded to 512 bytes,
+     * 5 s timeout) and compares the token in constant time. Reads byte-by-byte so no
+     * buffered reader swallows data that belongs to the later protocol.
+     */
+    private fun verifyControlToken(socket: Socket, expected: String): Boolean {
+        socket.soTimeout = 5_000
+        val input = socket.getInputStream()
+        val buf = java.io.ByteArrayOutputStream()
+        while (buf.size() < 512) {
+            val b = input.read()
+            if (b < 0) return false
+            if (b == '\n'.code) break
+            buf.write(b)
+        }
+        val record = JSONObject(buf.toString(Charsets.UTF_8.name()))
+        if (record.optString("type") != "auth") return false
+        val presented = record.optString("token").toByteArray(Charsets.UTF_8)
+        val ok = java.security.MessageDigest.isEqual(presented, expected.toByteArray(Charsets.UTF_8))
+        if (ok) socket.soTimeout = 0
+        return ok
     }
 
     private suspend fun fail(runJob: kotlinx.coroutines.Deferred<*>, message: String): RunResult {

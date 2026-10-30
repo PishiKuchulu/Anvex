@@ -155,7 +155,9 @@ object AppUpdateChecker {
                     }
                 }
                 val expected = httpGet(sha256Url).trim().split(Regex("\\s+")).firstOrNull()?.lowercase()
-                check(!expected.isNullOrBlank()) { "Could not read the update checksum." }
+                check(!expected.isNullOrBlank() && expected.matches(Regex("[0-9a-f]{64}"))) {
+                    "Could not read a valid update checksum."
+                }
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
                 check(actual == expected) { "Update checksum mismatch — refusing to install a corrupted or tampered file." }
                 if (dest.exists()) dest.delete()

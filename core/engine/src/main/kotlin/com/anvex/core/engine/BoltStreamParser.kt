@@ -215,11 +215,26 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         return action
     }
 
-    /** Flush any pending action at end-of-stream (upstream relies on </boltAction>). */
-    fun flush(messageId: String) {
-        val st = messages[messageId] ?: return
+    /**
+     * Flush any pending action at end-of-stream (upstream relies on </boltAction>).
+     *
+     * H-06: a stream that ends INSIDE an action (network cut, `max_tokens`
+     * truncation) has produced an incomplete file or command. With
+     * [applyIncomplete] = false the half-written action is dropped instead of
+     * being closed and applied -- a truncated `package.json` or a half-typed
+     * shell command must never run as if it were whole.
+     *
+     * @return true when an unterminated action was pending (dropped or applied).
+     */
+    fun flush(messageId: String, applyIncomplete: Boolean = true): Boolean {
+        val st = messages[messageId] ?: return false
         if (st.insideArtifact && st.insideAction) {
-            val artifact = st.currentArtifact ?: return
+            if (!applyIncomplete) {
+                st.insideAction = false
+                st.currentAction = BoltAction.ShellAction("")
+                return true
+            }
+            val artifact = st.currentArtifact ?: return false
             val action = st.currentAction
             var content = action.content.trim()
             if (action is BoltAction.FileAction && !action.filePath.endsWith(".md")) {
@@ -233,7 +248,9 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
             )
             st.insideAction = false
             st.currentAction = BoltAction.ShellAction("")
+            return true
         }
+        return false
     }
 
     // ------------------------------------------------------------------ helpers

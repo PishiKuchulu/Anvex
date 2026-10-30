@@ -233,6 +233,27 @@ class BoltStreamParserTest {
         parser.flush("m9")
         assertEquals(1, rec.events.count { it.startsWith("actionClose") })
     }
+
+    @Test
+    fun `flush with applyIncomplete=false drops a truncated file action (H-06)`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        var full = "<boltArtifact id=\"f\" title=\"F\">"
+        parser.parse("m10", full)
+        full += "<boltAction type=\"file\" filePath=\"package.json\">{ \"name\": \"x\", \"dep"
+        parser.parse("m10", full)
+        val dropped = parser.flush("m10", applyIncomplete = false)
+        assertEquals(true, dropped)
+        assertEquals(0, rec.events.count { it.startsWith("actionClose") })
+    }
+
+    @Test
+    fun `flush reports false when nothing is pending`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        parser.parse("m11", "plain text without artifact")
+        assertEquals(false, parser.flush("m11", applyIncomplete = false))
+    }
 }
 
 private fun BoltAction.typeName(): String = when (this) {

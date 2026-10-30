@@ -20,7 +20,71 @@ object SensitivePaths {
         ".git-credentials", ".npmrc", ".pypirc", "local.properties",
         "credentials", "credentials.json", "service-account.json",
         "secrets.json", "secret.json",
+        ".netrc", ".dev.vars", ".htpasswd", "kubeconfig", "keystore.properties",
+        "terraform.tfstate", "terraform.tfstate.backup", "terraform.tfvars",
+        "secrets.yaml", "secrets.yml", "google-credentials.json",
     )
+
+    /** Directories whose whole content is credential material. */
+    private val SECRET_DIRS = setOf(".ssh", ".aws", ".kube", ".gnupg")
+
+    /** Sample names used to decide whether a shell glob could hit a secret. */
+    private val SECRET_SAMPLES = listOf(
+        ".env", ".env.local", ".env.production", "id_rsa", "id_ed25519",
+        ".npmrc", ".netrc", ".git-credentials", "credentials.json",
+        "service-account.json", "secrets.json", "server.pem", "release.keystore",
+        "release.jks", "cert.p12", "private.key", "local.properties",
+        ".dev.vars", "terraform.tfstate", ".git",
+    )
+
+    /**
+     * Quote/escape characters never change what a path IS to the shell
+     * (`.e''nv` and `.e"n"v` both mean `.env`), so a lexical filter must
+     * drop them before comparing — otherwise the filter is bypassable.
+     */
+    private fun canonicalToken(s: String): String =
+        s.filterNot { it == '\'' || it == '"' || it == '\\' || it == '`' }
+
+    /**
+     * True when a token contains shell glob metacharacters AND the glob
+     * could expand to a secret file name (`.e?v`, `.env*`, `*.pem`).
+     * Mirrors shell rules: a leading wildcard never matches a dotfile.
+     */
+    private fun globCouldMatchSecret(token: String): Boolean {
+        if (token.none { it == '*' || it == '?' || it == '[' }) return false
+        val base = token.substringAfterLast('/')
+        if (base.isEmpty()) return false
+        val rx = StringBuilder()
+        var i = 0
+        while (i < base.length) {
+            val c = base[i]
+            when (c) {
+                '*' -> rx.append(".*")
+                '?' -> rx.append('.')
+                '[' -> {
+                    val end = base.indexOf(']', i + 1)
+                    if (end < 0) rx.append("\\[") else { rx.append(base, i, end + 1); i = end }
+                }
+                else -> rx.append(Regex.escape(c.toString()))
+            }
+            i++
+        }
+        val regex = runCatching { Regex(rx.toString()) }.getOrNull() ?: return true
+        val startsWithDot = base.startsWith(".")
+        // A bare `*` / `?` names nothing in particular (and never matches dotfiles), so it is
+        // not treated as a secret reference; dotfile globs (`.*`, `.e?v`) always are.
+        if (!startsWithDot && base.count { it != '*' && it != '?' && it != '[' && it != ']' } < 2) return false
+        return SECRET_SAMPLES.any { sample ->
+            (startsWithDot || !sample.startsWith(".")) && regex.matches(sample)
+        }
+    }
+
+    /** the .github/workflows subtree runs with repository secrets: writes need explicit approval. */
+    fun isWorkflowPath(path: String): Boolean {
+        val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() }
+        val i = parts.indexOf(".github")
+        return i >= 0 && parts.getOrNull(i + 1) == "workflows"
+    }
 
     /**
      * v4.10.5 follow-up: reads of extracted zip attachments. 4.10.5 extracts
@@ -64,11 +128,12 @@ object SensitivePaths {
 
     fun commandReferencesSensitiveOutsideExtracted(command: String): Boolean {
         for (raw in command.split(Regex("\\s+"))) {
-            val token = raw.trim('\'', '"').trim(',', ';', ':')
+            val token = canonicalToken(raw).trim(',', ';', ':')
             if (token.isEmpty()) continue
             for (piece in token.split('=', '@')) {
-                val p = shellNormalized(piece.trim(',', ';', ':'))
+                val p = canonicalToken(piece)
                 if (p.isNotEmpty() && isSensitive(p) && !isReadableExtractedAttachment(p)) return true
+                if (p.isNotEmpty() && globCouldMatchSecret(p)) return true
             }
         }
         return false
@@ -96,11 +161,12 @@ object SensitivePaths {
      */
     fun commandReferencesSensitive(command: String): Boolean {
         for (raw in command.split(Regex("\\s+"))) {
-            val token = raw.trim('\'', '"').trim(',', ';', ':')
+            val token = canonicalToken(raw).trim(',', ';', ':')
             if (token.isEmpty()) continue
             for (piece in token.split('=', '@')) {
-                val p = shellNormalized(piece.trim(',', ';', ':'))
+                val p = canonicalToken(piece)
                 if (p.isNotEmpty() && isSensitive(p)) return true
+                if (p.isNotEmpty() && globCouldMatchSecret(p)) return true
             }
         }
         return false
@@ -115,10 +181,12 @@ object SensitivePaths {
         val normalized = path.replace('\\', '/').trim()
         if (normalized.isEmpty()) return false
         val parts = normalized.split('/').filter { it.isNotEmpty() }
-        if (parts.any { it == ".git" || it == ".anvex-pi" }) return true
+        if (parts.any { it == ".git" || it == ".anvex-pi" || it in SECRET_DIRS }) return true
         val name = parts.last().lowercase()
         if (name == ".env" || name.startsWith(".env.") || name.endsWith(".env")) return true
         if (name in KEY_NAMES) return true
+        if (name.startsWith(".dev.vars.")) return true
+        if (name.startsWith("service-account") && name.endsWith(".json")) return true
         val ext = name.substringAfterLast('.', "")
         return ext in KEY_EXTENSIONS
     }

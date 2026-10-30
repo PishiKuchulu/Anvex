@@ -29,11 +29,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -218,6 +218,7 @@ class HarnessBridge(
 
     private var sessionWatcher: Job? = null
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun startSessionWatcher() {
         if (sessionWatcher != null) return
         sessionWatcher = scope.launch {
@@ -225,6 +226,8 @@ class HarnessBridge(
             var lastTextLen = 0
             var lastArtifactJson: String? = null
             var lastRevision = 0
+            var lastText = ""
+            var deltaCount = 0
             // H-04: the old watcher captured ONE session and collected its
             // StateFlow forever (StateFlows never complete), so after a
             // provider change the UI kept receiving the CLOSED session's
@@ -237,6 +240,8 @@ class HarnessBridge(
                 else flow {
                     lastStreaming = false
                     lastTextLen = 0
+                    lastText = ""
+                    deltaCount = 0
                     lastArtifactJson = null
                     lastRevision = 0
                     emitAll(s.state)
@@ -244,8 +249,17 @@ class HarnessBridge(
             }.collect { state ->
                     if (state.streaming && !lastStreaming) emitEvent("turn_start") { put("streaming", true) }
                     if (state.streamText.length != lastTextLen) {
-                        lastTextLen = state.streamText.length
-                        emitEvent("delta") { put("text", state.streamText) }
+                        // L-02: send only the new suffix (O(n) instead of O(n²) over the
+                        // JS bridge); resend the full text when it was rewritten or every
+                        // 40 events so the UI can never drift.
+                        val text = state.streamText
+                        deltaCount++
+                        val appendOnly = lastText.isNotEmpty() && text.startsWith(lastText) && deltaCount % 40 != 0
+                        val offset = if (appendOnly) lastText.length else 0
+                        val payload = if (appendOnly) text.substring(offset) else text
+                        lastTextLen = text.length
+                        lastText = text
+                        emitEvent("delta") { put("text", payload); put("offset", offset) }
                     }
                     state.currentArtifact?.let { artifact ->
                         val payload = json.encodeToString(ArtifactUiDto.from(artifact))
@@ -262,6 +276,7 @@ class HarnessBridge(
                         lastStreaming = false
                         lastArtifactJson = null
                         lastTextLen = 0
+                        lastText = ""
                         val errorObj: JsonObject? = state.error?.let { e ->
                             buildJsonObject {
                                 put("title", e.userTitle)
@@ -465,13 +480,16 @@ class HarnessBridge(
         @JavascriptInterface
         fun git(op: String, arg: String): String = runCatching {
             val root = realRootSync() ?: return bridgeError("Local git requires an app-private workspace (this project uses SAF storage).")
-            // M-05: the old code ran init() for EVERY op, so even `status`
-            // silently created a `.git` directory in the user's folder.
-            // Only an explicit init creates a repository now.
-            val repo = when (op) {
-                "init" -> GitLite.init(root)
-                else -> GitLite.open(root) ?: return bridgeError("Not a git repository. Initialize one first.")
+            val existing = GitLite.open(root)
+            // M-05: a read-only "status" must not silently create `.git` inside the user's folder.
+            if (existing == null && op == "status") {
+                return ok {
+                    put("branch", ""); put("head", ""); put("clean", true)
+                    put("staged", buildJsonArray { }); put("unstaged", buildJsonArray { }); put("untracked", buildJsonArray { })
+                    put("initialized", false)
+                }
             }
+            val repo = existing ?: GitLite.init(root)
             when (op) {
                 "status" -> {
                     val status = repo.status()

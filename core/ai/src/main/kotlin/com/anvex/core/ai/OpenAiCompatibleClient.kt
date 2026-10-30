@@ -184,7 +184,10 @@ class OpenAiCompatibleClient(
             val choices = obj["choices"]?.jsonArrayOrNull
             val choice = choices?.firstOrNull()?.jsonObjectOrNull
             if (choice != null) {
-                val delta = choice["delta"]?.jsonObjectOrNull
+                // Some gateways answer a "streaming" request with one
+                // non-streamed completion chunk whose content sits in
+                // `message`, not `delta` — accept both shapes.
+                val delta = choice["delta"]?.jsonObjectOrNull ?: choice["message"]?.jsonObjectOrNull
                 val content = delta?.get("content")?.jsonPrimitiveOrNull?.contentOrNull
                 if (!content.isNullOrEmpty()) {
                     tokenCount++

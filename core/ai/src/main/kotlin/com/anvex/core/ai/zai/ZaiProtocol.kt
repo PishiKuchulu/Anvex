@@ -52,8 +52,13 @@ object ZaiProtocol {
         // L-14: the old check accepted ANY https URL — a tampered init
         // response could send the user to an attacker site to "authorize".
         // The authorize page must live on Z.ai itself.
-        val authorizeHost = runCatching { java.net.URI(authorizeUrl).host?.lowercase() }.getOrNull()
+        val authorizeUri = runCatching { java.net.URI(authorizeUrl) }.getOrNull() ?: return null
+        val authorizeHost = authorizeUri.host?.lowercase()
+        // No userinfo and no non-default port: `https://z.ai@evil.example/`
+        // and `https://z.ai:8443@…` shapes must not pass as "z.ai".
         if (!authorizeUrl.startsWith("https://") ||
+            authorizeUri.userInfo != null ||
+            (authorizeUri.port != -1 && authorizeUri.port != 443) ||
             !(authorizeHost == "z.ai" || (authorizeHost?.endsWith(".z.ai") == true))
         ) return null
         val interval = (data["poll_interval_sec"]?.jsonPrimitiveOrNull?.longOrNull ?: 3L).coerceAtLeast(1L)

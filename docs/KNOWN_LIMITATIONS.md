@@ -1,4 +1,4 @@
-# Known Limitations — Anvex 4.10.5
+# Known Limitations — Anvex 4.11.0
 
 This document describes the **actual** runtime rather than the original bolt.diy/WebContainer
 assumptions.

@@ -222,10 +222,40 @@ private fun AnvexNavHost(
     modifier: Modifier,
     updateController: com.anvex.app.ui.components.AppUpdateController,
 ) {
+    // Directional, RTL-aware transitions (SlideDirection.Start/End mirror automatically in
+    // Persian): the incoming screen slides a short distance while fading, the outgoing one
+    // recedes — instead of the library default 700 ms cross-fade.
+    val slideSpec = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(300)
+    val fadeInSpec = androidx.compose.animation.core.tween<Float>(260, delayMillis = 40)
+    val fadeOutSpec = androidx.compose.animation.core.tween<Float>(160)
     NavHost(
         navController = navController,
         startDestination = Routes.HOME,
         modifier = modifier,
+        enterTransition = {
+            slideIntoContainer(
+                androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection.Start, slideSpec,
+                initialOffset = { it / 6 },
+            ) + androidx.compose.animation.fadeIn(fadeInSpec)
+        },
+        exitTransition = {
+            slideOutOfContainer(
+                androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection.Start, slideSpec,
+                targetOffset = { it / 8 },
+            ) + androidx.compose.animation.fadeOut(fadeOutSpec)
+        },
+        popEnterTransition = {
+            slideIntoContainer(
+                androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection.End, slideSpec,
+                initialOffset = { it / 8 },
+            ) + androidx.compose.animation.fadeIn(fadeInSpec)
+        },
+        popExitTransition = {
+            slideOutOfContainer(
+                androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection.End, slideSpec,
+                targetOffset = { it / 6 },
+            ) + androidx.compose.animation.fadeOut(fadeOutSpec)
+        },
     ) {
         composable(Routes.HOME) { HomeScreen(navController) }
         composable(Routes.SETTINGS) { SettingsScreen(navController, updateController) }

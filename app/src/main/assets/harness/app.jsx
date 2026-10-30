@@ -982,7 +982,10 @@ function App() {
   // event pump
   useEffect(function () {
     const offs = [
-      BoltHarness.on('delta', function (p) { setStream(p.text || ''); }),
+      BoltHarness.on('delta', function (p) {
+        var off = p.offset || 0;
+        setStream(function (prev) { return (off > 0 && prev.length >= off) ? prev.slice(0, off) + (p.text || '') : (p.text || ''); });
+      }),
       BoltHarness.on('turn_start', function () { setStreaming(true); setStream(''); setArtifact(null); setTurnError(null); }),
       BoltHarness.on('artifact', function (p) { setArtifact(p); }),
       BoltHarness.on('turn_end', function (p) {

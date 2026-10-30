@@ -16,7 +16,6 @@ import java.io.InputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -57,9 +56,15 @@ class StaticPreviewServer(
     @Synchronized
     fun start() {
         if (serverSocket != null) return
-        val newPool = Executors.newFixedThreadPool(2) { r ->
-            Thread(r, "bolt-preview").apply { isDaemon = true }
-        }
+        // L-01: a bounded queue + 4 workers (was 2 workers and an unbounded queue): two
+        // stalled connections no longer block the preview, and a flood is shed instead of
+        // queued forever.
+        val newPool = java.util.concurrent.ThreadPoolExecutor(
+            4, 4, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+            java.util.concurrent.ArrayBlockingQueue(32),
+            { r -> Thread(r, "anvex-preview").apply { isDaemon = true } },
+            java.util.concurrent.ThreadPoolExecutor.AbortPolicy(),
+        )
         try {
             serverSocket = ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1")).apply {
                 port = localPort
@@ -74,12 +79,19 @@ class StaticPreviewServer(
             while (!sock.isClosed) {
                 try {
                     val client = sock.accept()
-                    pool?.execute { handle(client) }
-                } catch (e: Exception) { android.util.Log.w("Anvex", "non-fatal: ${e.javaClass.simpleName}", e);
-                    // socket closed
+                    try {
+                        pool?.execute { handle(client) }
+                    } catch (_: java.util.concurrent.RejectedExecutionException) {
+                        runCatching { client.close() } // overloaded: shed the connection
+                    }
+                } catch (e: Exception) {
+                    if (sock.isClosed) break // normal shutdown
+                    // L-01: never spin (and spam the log) on a persistent accept() failure.
+                    android.util.Log.w("Anvex", "preview accept failed: ${e.javaClass.simpleName}")
+                    try { Thread.sleep(50) } catch (_: InterruptedException) { break }
                 }
             }
-        }, "bolt-preview-accept").apply { isDaemon = true }.start()
+        }, "anvex-preview-accept").apply { isDaemon = true }.start()
     }
 
     @Synchronized

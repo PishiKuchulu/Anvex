@@ -256,7 +256,7 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
                     placeholder = { Text(tr("ls -la")) },
                 )
                 FilledIconButton(onClick = ::send, enabled = command.isNotBlank() && session != null && !starting, modifier = Modifier.padding(top = 4.dp).size(AnvexDimens.control)) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Run command")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = tr("Run command"))
                 }
             }
             if (history.isNotEmpty()) {

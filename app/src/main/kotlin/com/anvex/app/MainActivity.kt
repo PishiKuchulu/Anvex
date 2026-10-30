@@ -15,6 +15,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
@@ -129,7 +130,14 @@ class MainActivity : ComponentActivity() {
         }
         val graph = AppGraph.get()
         setContent {
-            val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = null)
+            // M-11: starting from `null` painted the first frame with the SYSTEM
+            // theme/language and then flipped to the saved values (visible flash,
+            // RTL direction flip). Read the persisted value once, synchronously,
+            // so frame one is already correct.
+            val initialSettings = androidx.compose.runtime.remember {
+                runCatching { kotlinx.coroutines.runBlocking { graph.settings.settings.first() } }.getOrNull()
+            }
+            val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = initialSettings)
             androidx.compose.runtime.LaunchedEffect(settings?.language) {
                 // Wait for the REAL settings value — the null initial emission must not
                 // consume the apply (that was the round-2 bug).

@@ -326,7 +326,15 @@ class ProviderRepository(private val dao: ProviderDao) {
                 require(!encoded.isNullOrBlank() || extraHeadersJson == "{}") { "Legacy plaintext provider headers require secure migration." }
                 val raw = if (!encoded.isNullOrBlank()) decryptHeaders(encoded, id) else "{}"
                 json.decodeFromString<Map<String, String>>(raw.ifBlank { "{}" })
-            }.getOrElse { return null },
+            }.getOrElse { e ->
+                // Legacy plaintext headers must be migrated first: stay unavailable (security).
+                if (e is IllegalArgumentException) return null
+                // M-08: a Keystore failure used to make the whole provider vanish
+                // with no explanation. Keep it visible (without its headers) so
+                // the user can open it and re-enter the credentials. The broken
+                // API key itself still surfaces via observeBroken().
+                emptyMap()
+            },
             temperature = temperature,
             maxTokens = maxTokens,
             inputPricePerMillion = inputPricePerMillion,

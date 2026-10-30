@@ -121,22 +121,25 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
         val raw = File(root, safe)
         if (java.nio.file.Files.isSymbolicLink(raw.toPath())) return raw.delete()
         val f = resolve(relativePath)
-        return if (recursive) deleteRecursivelyNoFollow(f) else f.delete()
+        return if (recursive) deleteTreeNoFollow(f) else f.delete()
     }
 
-    private fun deleteRecursivelyNoFollow(f: File): Boolean {
+    private fun isSymlink(f: File): Boolean = java.nio.file.Files.isSymbolicLink(f.toPath())
+
+    /**
+     * M-07: Kotlin's `deleteRecursively()` follows symlinks to directories. A link created
+     * inside the project (`ln -s /sdcard/DCIM pics` from the terminal) would have its TARGET's
+     * contents deleted. Links are removed as links and never descended into.
+     */
+    private fun deleteTreeNoFollow(f: File): Boolean {
+        if (isSymlink(f)) return f.delete()
         if (f.isDirectory) {
-            f.listFiles()?.forEach { child ->
-                if (java.nio.file.Files.isSymbolicLink(child.toPath())) {
-                    child.delete()
-                } else if (child.isDirectory) {
-                    deleteRecursivelyNoFollow(child)
-                } else {
-                    child.delete()
-                }
-            }
+            val children = f.listFiles() ?: return f.delete()
+            var ok = true
+            for (child in children) if (!deleteTreeNoFollow(child)) ok = false
+            if (!ok) return false
         }
-        return f.delete()
+        return f.delete() || !f.exists()
     }
 
     override fun list(relativePath: String): List<ProjectFileSystem.FileEntry> {
@@ -183,9 +186,11 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
      */
     override fun walk(): List<String> {
         if (!root.exists()) return emptyList()
+        // M-07: do not descend into / list symlinks — they may point outside the project
+        // and every later read of such a path would throw a SecurityException.
         return root.walkTopDown()
-            .onEnter { dir -> dir == root || !java.nio.file.Files.isSymbolicLink(dir.toPath()) }
-            .filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) }
+            .onEnter { it == root || !isSymlink(it) }
+            .filter { it.isFile && !isSymlink(it) }
             .map { it.relativeTo(root).invariantSeparatorsPath }
             .sorted()
             .toList()
@@ -193,7 +198,7 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
 
     fun rootDirectory(): File = root
 
-    fun sizeBytes(): Long = root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    fun sizeBytes(): Long = root.walkTopDown().onEnter { it == root || !isSymlink(it) }.filter { it.isFile && !isSymlink(it) }.sumOf { it.length() }
 
     fun deleteAll() {
         root.deleteRecursively()

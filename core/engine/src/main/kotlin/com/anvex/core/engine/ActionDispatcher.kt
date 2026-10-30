@@ -350,7 +350,7 @@ class ActionDispatcher(
             is CommandTranslator.Effect.Write -> {
                 val safe = PathSanitizer.sanitizeOrNull(effect.path)
                     ?: throw IllegalArgumentException("Invalid write path: ${effect.path}")
-                if (isProtectedPath(safe)) throw IllegalStateException("Protected path (app/VCS metadata): '$safe'")
+                if (isProtectedPath(safe)) throw IllegalStateException("Protected path (app/VCS metadata or workflow): '$safe'")
                 val before = fs.readFile(safe) // BEFORE — P0-2 fix (was read after write)
                 PathSanitizer.parent(safe)?.let(fs::mkdirs)
                 if (effect.append) fs.appendFile(safe, effect.content + "\n") else fs.writeFile(safe, effect.content + "\n")

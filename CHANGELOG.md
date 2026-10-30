@@ -1,5 +1,93 @@
 # Changelog
 
+## 4.11.0 — Security & reliability hardening (full code-review pass)
+
+Security
+- Pi control socket (H-01): the driver must now prove a per-run random token before the
+  host sends anything; the API key no longer goes to the first process that connects.
+  The Pi runtime asset was bumped to `pi-1.4.1-auth` so existing installs re-extract it.
+- Shell/terminal allow-list (H-02): quote/escape splitting (`.e''nv`) and shell globs
+  (`.e?v`, `.env*`, `*.pem`) can no longer hide a secret file name; the terminal now has the
+  same glob gate as the shell runtime; `cat`/`tail -f` without a finite file are rejected.
+- Secret laundering (H-03): the agent can no longer `cp`/`mv` a secret file to a readable name,
+  and virtual `cat` of secret/metadata files is refused. `.anvex-pi` is write-protected.
+- Workflows (H-07): AI writes to `.github/workflows/**` are refused (they run with repository
+  secrets). Cloud-build workflow template now has least-privilege `permissions`, a timeout and
+  a Gradle cache; the release workflow gets read-only default permissions, a `release`
+  environment for the publishing job, wrapper validation, and no secret interpolation into shell.
+- Context (M-17): secret files (e.g. an open `.env`) are never pasted into the model prompt.
+- Sync/package hygiene (M-04): well-known token formats (GitHub, OpenAI/Anthropic `sk-`, AWS,
+  Google, Slack, JWT, PEM private keys) are detected whatever the variable is called; one shared
+  secret-file definition (`.env.*`, `.netrc`, `.ssh/`, tfstate, …); `.env.example` templates stay.
+- Share/export (M-06): the user-facing project export leaves out secrets and `.anvex/` state.
+- LAN status server (M-02): bounded header lines, an 8 s per-request deadline, correct JSON escaping.
+- Updater (M-03): a checksum asset is mandatory, download URLs must belong to this repository,
+  and the file is hashed in the same single pass as the download.
+- Backup restore (M-09): never switches the LAN server or Termux bridge ON; font sizes are clamped.
+- Node-compat FS bridge (M-10): bad paths return an error instead of throwing across the JS
+  bridge; symlinks cannot leave the workspace; `.git`/`.anvex` are write-protected.
+- Z.ai login (L-14): the authorize URL must be a `z.ai` host.
+
+Correctness
+- Truncated model output (H-06): a stream that ends inside a file/command (network cut,
+  `max_tokens`) is no longer applied as if complete; the half-written part is discarded and the
+  user is told. Parser `flush(applyIncomplete=false)`, new tests.
+- Harness (H-04): the session watcher follows the current session (provider switch no longer
+  silences the UI) and unrelated provider edits no longer cancel a running stream. Stream deltas
+  are sent as suffixes instead of the full text each time.
+- MCP (H-05, M-12): atomic, locked config writes; a key that cannot be encrypted is an error, never
+  silently dropped; an unreadable file is kept as `.corrupt` instead of being treated as empty.
+  Client keeps `Mcp-Session-Id`, sends `MCP-Protocol-Version`, uses atomic request ids and
+  initializes lazily for one-shot calls.
+- Git (M-05): `.gitignore`/`.github` are tracked again; `node_modules`, build output, secrets and
+  `.anvex*` are never staged; `.gitignore`/`.anvexignore` are honoured; `status` no longer creates `.git`.
+- Providers (M-08): a Keystore failure keeps the provider visible instead of dropping it.
+- OpenAI-compatible (M-16): usage is requested (`stream_options`), plain-JSON 200 responses
+  (gateway errors / non-streamed completions) are surfaced instead of "stream ended without content".
+- Files (M-07): recursive delete and walk no longer follow symlinks; oversize files are rejected
+  before being read.
+- Terminal (L-04): multi-byte characters (Persian) are no longer corrupted at read boundaries;
+  closing the terminal reaps child processes.
+- Startup (M-11): the saved theme/language is read before the first frame (no flash / RTL flip);
+  shared files are size-limited while copying.
+- Preview server (L-01): 4 workers with a bounded queue, no hot accept loop. JNI argument handling
+  (L-15) tolerates null/failed strings.
+
+UI / UX
+- Screen transitions are directional and RTL-aware (slide + fade) instead of a 700 ms cross-fade.
+- Chat messages, project cards, providers and history rows animate in/out/reorder (`animateItem`).
+- Send icons mirror in RTL; Send / Run-command descriptions are localized.
+
+Tooling
+- `.github/dependabot.yml` (Actions + Gradle). New regression tests: `SecurityFixesRegressionTest`,
+  parser truncation tests, MCP session test, Z.ai host test.
+
+Maintainer merge (this tree)
+- This source combines the external 4.11.0 review pass with the maintainer's parallel
+  remediation of the same reports; where the two passes overlapped, the stricter or
+  better-tested variant was kept. Additions on top of the external pass:
+- Credential binding (M-08/M-15, idea 1.1): provider keys and headers are encrypted with
+  per-provider AAD; a key that stops decrypting surfaces in the UI (broken-provider card)
+  instead of failing silently; restores report skipped items by name.
+- Workflow hardening (M-14): all GitHub Actions are pinned to commit SHAs; a CodeQL
+  workflow and wrapper validation were added; the Gradle Kotlin daemon heap matches the
+  4 GB build heap (fixes CodeQL IR-lowering OOM).
+- Updater (M-03): the downloaded APK's signer certificate is compared with the installed
+  app before install; stale partial downloads are swept; the checksum must be a full
+  64-hex SHA-256.
+- Agent loop (ideas 15.1/15.2/15.5): truncated prose continues automatically; files the
+  user names in their message are loaded into context; token usage is priced per provider
+  and totals are shown on the Usage screen.
+- Push sync (M-04): deletions are pushed explicitly; GitHub error bodies and rate-limit
+  state are surfaced instead of a bare failure.
+- Export hygiene (M-04): pasted tokens are caught by shape even under innocent names,
+  without redacting committed templates (`.env.example` and friends stay).
+- Intent-without-action fix: when a turn's prose only ANNOUNCES the work ("I will create
+  the files…") and no action was executed, the agent loop now continues by itself and
+  tells the model to emit the actions — the user no longer has to type "continue".
+  Detection is a tested pure matcher (English + Persian intent phrasing), capped at two
+  continuations per turn, and it never fires once a real action has run.
+
 ## 4.10.5 — Agent fixes: composer loader, full-width messages, zip reading, Pi on cloud projects
 
 - Agent composer: while streaming, the send key now shows the goo

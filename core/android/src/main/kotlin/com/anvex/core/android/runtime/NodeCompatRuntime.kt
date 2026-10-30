@@ -156,6 +156,12 @@ class NodeCompatRuntime(
                 if (java.nio.file.Files.isSymbolicLink(target.toPath())) {
                     return err("symlinks are not followed here: $path")
                 }
+                // App/VCS metadata is read-only through this bridge: a script
+                // must not rewrite .git, .anvex or .anvex-pi state.
+                val metadata = safe.split('/').any { it == ".git" || it == ".anvex" || it == ".anvex-pi" }
+                if (metadata && op in setOf("write", "append", "unlink", "mkdir")) {
+                    return err("protected path (app/VCS metadata): $path")
+                }
                 when (op) {
                     "read" -> when {
                         !target.isFile -> err("no such file: $path")

@@ -30,13 +30,17 @@ Java_com_anvex_core_android_runtime_node_NodeBridge_startNodeWithArguments(
     int c_arguments_size = 0;
     for (int i = 0; i < argument_count; i++) {
         auto jstr = (jstring) env->GetObjectArrayElement(arguments, i);
-        // L-15: a null array element used to reach GetStringUTFChars
-        // (undefined behavior), and Release was called even when the Get
-        // returned nullptr (OOM) — both are JNI contract violations.
-        if (jstr == nullptr) { joined[i] = ""; c_arguments_size += 1; continue; }
-        const char *utf = env->GetStringUTFChars(jstr, nullptr);
-        joined[i] = utf ? utf : "";
-        if (utf != nullptr) env->ReleaseStringUTFChars(jstr, utf);
+        if (jstr == nullptr) {
+            // A null element used to be passed straight to GetStringUTFChars (undefined behaviour).
+            joined[i] = "";
+        } else {
+            const char *utf = env->GetStringUTFChars(jstr, nullptr);
+            if (utf != nullptr) {
+                joined[i] = utf;
+                env->ReleaseStringUTFChars(jstr, utf); // only release what was actually acquired
+            }
+            env->DeleteLocalRef(jstr);
+        }
         c_arguments_size += (int) joined[i].size() + 1; // + '\0'
     }
 

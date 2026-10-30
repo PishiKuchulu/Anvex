@@ -25,15 +25,17 @@ class CloudBuildRepositoryTest {
         assertTrue(t.contains("workflow_dispatch:"))
         assertTrue(t.contains("variant:"))
         assertTrue(t.contains("""default: "debug""""))
-        assertTrue(t.contains("actions/checkout@v4"))
-        assertTrue(t.contains("actions/setup-java@v4"))
+        // H-07/L-13: actions are pinned by commit SHA, not floating tags.
+        assertTrue(t.contains("actions/checkout@11d5960a326750d5838078e36cf38b85af677262"))
+        assertTrue(t.contains("actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3"))
         assertTrue(t.contains("--no-daemon"))
         assertTrue(t.contains("assemble"))
-        assertTrue(t.contains("actions/upload-artifact@v4"))
+        assertTrue(t.contains("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"))
         assertTrue(t.contains("**/build/outputs/apk/**/*.apk"))
-        // 15-25 lines of YAML, spaces only (tabs are invalid YAML).
+        // Bounded YAML (the H-07 permissions/concurrency/timeout block
+        // added lines), spaces only (tabs are invalid YAML).
         val lines = t.trimEnd('\n').lines()
-        assertTrue("template has ${lines.size} lines", lines.size in 15..25)
+        assertTrue("template has ${lines.size} lines", lines.size in 15..40)
         assertFalse(t.contains('\t'))
     }
 

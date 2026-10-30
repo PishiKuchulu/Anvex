@@ -127,6 +127,11 @@ object ArtifactHygienePolicy {
         }
         val name = parts.last()
         if (name in excludedNames || secretName.containsMatchIn(name)) return false
+        // M-04: one shared definition of "secret file" (.env.*, .netrc, .ssh/, tfstate, …);
+        // committed templates such as `.env.example` stay.
+        val isTemplate = name.endsWith(".example") || name.endsWith(".sample") ||
+            name.endsWith(".template") || name.endsWith(".dist")
+        if (!isTemplate && SensitivePaths.isSecretFile(normalized)) return false
         // Private keys and keystores must never leave the device via sync or
         // artifact packaging — a .p12 is binary, so the secret-content scan
         // cannot see it; the extension is the only reliable signal.
