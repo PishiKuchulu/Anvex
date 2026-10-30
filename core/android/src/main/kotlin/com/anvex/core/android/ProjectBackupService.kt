@@ -46,7 +46,11 @@ class ProjectBackupService {
             staged.writeBytes(bytes)
             val stagedFs = RealProjectFileSystem(File(tempRoot, "staged-project").apply { mkdirs() })
             FileInputStream(staged).use { ZipCodec.import(it, stagedFs) }
-            FileOutputStream(previous).use { ZipCodec.export(fs, it) }
+            // The rollback snapshot must be COMPLETE (it is the only copy of
+            // the pre-restore workspace): same excludeSecrets=false as the
+            // backup export above — the merged safe-by-default would have
+            // silently dropped .env from the rollback copy.
+            FileOutputStream(previous).use { ZipCodec.export(fs, it, excludeSecrets = false) }
             val count = commit(stagedFs, fs)
             count
         } catch (e: Throwable) {

@@ -65,7 +65,9 @@ class SecurityFixesRegressionTest {
         fs.writeFile(".env", "OPENAI_API_KEY=sk-live-should-never-leave-the-device")
         val context = ContextBuilder.build(fs, openFilePath = ".env")
         assertFalse(context.contains("sk-live-should-never-leave-the-device"))
-        assertFalse(context.contains("### .env"))
+        // Merged behavior: the open secret file gets a "contents withheld"
+        // note (its name is not secret; its content never appears). The
+        // stricter no-header shape from the external pass was not kept.
     }
 
     // ---- M-06: share exports leave secrets out ------------------------------------------------
@@ -89,7 +91,9 @@ class SecurityFixesRegressionTest {
     fun `backup export keeps the users own files`() {
         val fs = FakeFs()
         fs.writeFile(".env", "SECRET=1")
-        val bytes = java.io.ByteArrayOutputStream().also { ZipCodec.export(fs, it) }.toByteArray()
+        // Backup mode is explicit in the merged tree (the export default is
+        // the safe share mode, excludeSecrets=true).
+        val bytes = java.io.ByteArrayOutputStream().also { ZipCodec.export(fs, it, excludeSecrets = false) }.toByteArray()
         val names = java.util.zip.ZipInputStream(bytes.inputStream()).use { zin ->
             generateSequence { zin.nextEntry }.map { it.name }.toList()
         }

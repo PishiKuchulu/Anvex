@@ -56,9 +56,12 @@ object ZipCodec {
         onSkipped: (String, String) -> Unit = { _, _ -> },
     ) {
         ZipOutputStream(out.buffered()).use { zip ->
+            // Secrets are NOT pre-filtered here: they must reach the loop
+            // below so each one is reported through onSkipped instead of
+            // vanishing silently. App state (.anvex/) is filtered here —
+            // it is never archive content in either mode.
             val files = fs.walk().filter {
-                isExportable(it) &&
-                    !(excludeSecrets && (SensitivePaths.isSecretFile(it) || it.startsWith(".anvex/")))
+                isExportable(it) && !(excludeSecrets && it.startsWith(".anvex/"))
             }
             if (files.size > MAX_ENTRIES) throw ZipSecurityException("Project exceeds $MAX_ENTRIES files")
             var total = 0L
