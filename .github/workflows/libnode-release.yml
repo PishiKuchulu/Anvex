@@ -169,7 +169,7 @@ jobs:
           find stage-headers -type f | wc -l
 
       - name: Upload per-ABI libraries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libnode-libs-${{ matrix.android_abi }}
           path: stage/${{ matrix.android_abi }}/
@@ -178,7 +178,7 @@ jobs:
 
       - name: Upload generated headers
         if: matrix.android_abi == 'x86_64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libnode-headers
           path: stage-headers/node/
