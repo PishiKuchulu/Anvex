@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.11.1 — Agent-loop empty-reply recovery
+
+- Markup-only/empty rounds: when a model (typically a weak gateway model) ends a
+  round with nothing but a harness marker such as `<tool_results>` — or with no
+  text at all — after tool results, the agent loop no longer shows that raw tag
+  as the reply. The marker is scrubbed from the visible prose and the model is
+  nudged to produce the actual answer (max 2 retries per turn); if it still
+  returns nothing, the message reads "(The model returned an empty response.)"
+  instead of an internal tag. Detection is a tested pure matcher; markup mixed
+  with real prose is untouched.
+
+
 ## 4.11.0 — Security & reliability hardening (full code-review pass)
 
 Security

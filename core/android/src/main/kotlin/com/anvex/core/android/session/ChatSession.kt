@@ -309,6 +309,9 @@ class ChatSession(
                 // media contract): the model narrated a plan and stopped with a
                 // normal finish reason before executing anything.
                 var intentContinuations = 0
+                // Markup-only/empty-round continuations (see the branch below):
+                // the model answered with nothing but harness markers.
+                var emptyRoundContinuations = 0
                 var turnActionsExecuted = 0
                 var suppressRoundSeparator = false
                 while (true) {
@@ -373,6 +376,9 @@ class ChatSession(
                     var lengthCutProse = false
                     val roundText = StringBuilder()
                     val roundReasoning = StringBuilder()
+                    // Visible-prose length before this round: a markup-only
+                    // round is scrubbed back to this point (see below).
+                    val proseStart = prose.length
                     var lastUiEmit = 0L
                     // A length-continuation resumes mid-sentence: no blank
                     // line between the cut text and its continuation.
@@ -549,6 +555,31 @@ class ChatSession(
                         _state.value = _state.value.copy(statusLine = "Continuing — turning the plan into actions…")
                         continue
                     }
+                    // Markup-only/empty round: the model answered with
+                    // nothing but harness markers (a bare "<tool_results>")
+                    // or nothing at all — typically a weak gateway model
+                    // echoing the tool-result wrapper after a tool round
+                    // and stopping. That is never a real answer: scrub the
+                    // marker out of the visible prose, and nudge the model
+                    // to produce the actual reply. Capped per turn; if the
+                    // cap is exhausted the finalize step substitutes a
+                    // plain "empty response" note instead of the raw tag.
+                    val markupOnly = failure == null && !canceled && normalStop &&
+                        gathered.isEmpty() && isMarkupOnlyOrEmpty(roundText.toString())
+                    if (markupOnly) {
+                        prose.setLength(proseStart)
+                        if (emptyRoundContinuations < MAX_EMPTY_CONTINUATIONS && round < MAX_TOOL_ROUNDS) {
+                            emptyRoundContinuations++
+                            turns.add(ChatTurn(MessageRole.ASSISTANT, "(empty reply)"))
+                            turns.add(ChatTurn(MessageRole.USER, EMPTY_ROUND_PROMPT))
+                            round++
+                            _state.value = _state.value.copy(
+                                statusLine = "The model returned an empty reply — asking again…",
+                                streamText = MemoryTags.stripForDisplay(prose.toString()),
+                            )
+                            continue
+                        }
+                    }
                     if (canceled || failure != null || gathered.isEmpty() || round >= MAX_TOOL_ROUNDS) break
 
                     // Agent loop: feed tool results back and let the model continue.
@@ -566,12 +597,17 @@ class ChatSession(
                 )
             }
 
+            // A turn that ends on a markup-only reply (retries exhausted)
+            // must not persist the raw harness tag as the message text.
+            val finalProse = prose.toString().let {
+                if (isMarkupOnlyOrEmpty(it)) "(The model returned an empty response.)" else it
+            }
             // Finalization must survive cancellation: persist the partial result
             // under NonCancellable so the message, journal, and state are complete.
             withContext(NonCancellable) {
                 finalize(
                     assistantId = assistantId,
-                    prose = prose.toString(),
+                    prose = finalProse,
                     rawText = rawAll.toString(),
                     runner = runner,
                     usage = usage,
@@ -977,6 +1013,11 @@ class ChatSession(
             "command actions instead of only describing them. If the task is already fully " +
             "complete, say so explicitly instead of announcing next steps."
         const val MAX_INTENT_CONTINUATIONS = 2
+        const val EMPTY_ROUND_PROMPT =
+            "Your previous reply was empty — it contained no actual answer, only an internal " +
+            "marker. Produce your real reply now: answer the user's request directly, using " +
+            "the tool results you already received. Do not repeat the marker."
+        const val MAX_EMPTY_CONTINUATIONS = 2
         private const val MAX_TOOL_RESULT_CHARS = 60_000
     }
 }

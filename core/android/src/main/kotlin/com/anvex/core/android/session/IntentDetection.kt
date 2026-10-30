@@ -24,6 +24,28 @@ internal fun looksLikeIntentOnly(prose: String): Boolean {
     return INTENT_PATTERNS.any { flat.contains(it) }
 }
 
+/**
+ * True when a round's prose carries no actual answer: blank, or nothing
+ * but harness/tool wrapper markers (`<tool_results>` and friends). Weak
+ * gateway models sometimes echo the wrapper the harness uses for tool
+ * results and then stop — the user sees a raw internal tag instead of a
+ * reply. Markup MIXED with real prose is a legitimate answer and does
+ * not match: the markers are stripped and only an empty remainder
+ * counts.
+ */
+internal fun isMarkupOnlyOrEmpty(prose: String): Boolean {
+    val flat = prose.lowercase()
+    val stripped = HARNESS_MARKERS.fold(flat) { acc, marker -> acc.replace(marker, "") }
+    return stripped.isBlank()
+}
+
+private val HARNESS_MARKERS = listOf(
+    "<tool_results>", "</tool_results>",
+    "<tool_result>", "</tool_result>",
+    "<tool_call>", "</tool_call>",
+    "<tool_calls>", "</tool_calls>",
+)
+
 private val INTENT_PATTERNS = listOf(
     // English first-person intent / plan announcements.
     "i will ",

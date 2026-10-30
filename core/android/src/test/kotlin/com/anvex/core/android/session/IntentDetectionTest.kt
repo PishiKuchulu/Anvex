@@ -35,4 +35,21 @@ class IntentDetectionTest {
         val long = "I will " + "x".repeat(4_100)
         assertFalse(looksLikeIntentOnly(long))
     }
+
+    @Test
+    fun markupOnlyRepliesAreDetected() {
+        assertTrue(isMarkupOnlyOrEmpty(""))
+        assertTrue(isMarkupOnlyOrEmpty("   \n  "))
+        assertTrue(isMarkupOnlyOrEmpty("<tool_results>"))
+        assertTrue(isMarkupOnlyOrEmpty("<tool_results>\n</tool_results>"))
+        assertTrue(isMarkupOnlyOrEmpty("</tool_result>"))
+        assertTrue(isMarkupOnlyOrEmpty("  <TOOL_RESULTS>  "))
+    }
+
+    @Test
+    fun markupMixedWithRealProseIsARealAnswer() {
+        assertFalse(isMarkupOnlyOrEmpty("Here is what the tool returned: <tool_results> ok"))
+        assertFalse(isMarkupOnlyOrEmpty("<tool_results> The build passed."))
+        assertFalse(isMarkupOnlyOrEmpty("Done — the report is in REPORT.md."))
+    }
 }
