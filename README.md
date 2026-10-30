@@ -32,6 +32,16 @@ It started as an Android port of [bolt.diy](https://github.com/stackblitz-labs/b
 
 **Download:** get the latest signed APK from [Releases](https://github.com/PishiKuchulu/Anvex/releases).
 
+## 📸 Screenshots
+
+| Home — agent workspace | AI & providers | Workspace & build |
+|---|---|---|
+| <img src="docs/screenshots/home.jpg" width="260" alt="Anvex home screen — agent workspace, skills & MCP, quick actions"> | <img src="docs/screenshots/settings-ai-providers.jpg" width="260" alt="Settings — AI providers, usage, web tools and custom instructions"> | <img src="docs/screenshots/settings-workspace.jpg" width="260" alt="Settings — agent workspace, terminal, Node.js runtime and Termux bridge"> |
+
+| Developer & about — agent engine | Memory |
+|---|---|
+| <img src="docs/screenshots/settings-developer.jpg" width="260" alt="Settings — developer tools and agent engine choice (native harness or Pi)"> | <img src="docs/screenshots/memory.jpg" width="260" alt="Memory screen — what the assistant remembers about you"> |
+
 ## ✨ Features
 
 - 🤖 **Bring any model** — connect OpenAI, Anthropic, Google Gemini, OpenRouter, DeepSeek, Mistral, Groq, or any OpenAI-compatible custom endpoint (API key + URL).
@@ -166,6 +176,16 @@ Inspired by [bolt.diy](https://github.com/stackblitz-labs/bolt.diy).
 این پروژه با پورت اندرویدی [bolt.diy](https://github.com/stackblitz-labs/bolt.diy) شروع شد و حالا به یک ایجنت عمومی با قابلیت «مدل دلخواه خودتان» تبدیل شده است: **هر کلید API و آدرسی (URL)** را وارد کنید و یک محیط کدنویسی چت‌محور با حافظه، ابزارها و فایل‌سیستم واقعی پروژه داشته باشید.
 
 **دانلود:** آخرین نسخه امضاشده را از بخش [Releases](https://github.com/PishiKuchulu/Anvex/releases) بگیرید.
+
+## 📸 اسکرین‌شات‌ها
+
+| خانه — فضای کاری ایجنت | هوش مصنوعی و ارائه‌دهنده‌ها | فضای کاری و بیلد |
+|---|---|---|
+| <img src="docs/screenshots/home.jpg" width="260" alt="صفحه خانه Anvex — فضای کاری ایجنت و میانبرها"> | <img src="docs/screenshots/settings-ai-providers.jpg" width="260" alt="تنظیمات — ارائه‌دهنده‌ها، مصرف توکن و ابزارهای وب"> | <img src="docs/screenshots/settings-workspace.jpg" width="260" alt="تنظیمات — ترمینال، ران‌تایم Node.js و پل Termux"> |
+
+| توسعه‌دهنده — موتور ایجنت | حافظه |
+|---|---|
+| <img src="docs/screenshots/settings-developer.jpg" width="260" alt="تنظیمات — ابزارهای توسعه‌دهنده و انتخاب موتور ایجنت"> | <img src="docs/screenshots/memory.jpg" width="260" alt="صفحه حافظه — آنچه دستیار درباره شما به خاطر می‌سپارد"> |
 
 ## ✨ ویژگی‌ها
 
