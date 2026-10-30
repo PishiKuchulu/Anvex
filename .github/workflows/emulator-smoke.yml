@@ -26,7 +26,7 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           # Explicit list (same as build-apk.yml): the action's default set
           # includes the legacy 'tools' package, which current cmdline-tools
