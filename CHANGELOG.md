@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.12.1 — In-app update download fix
+
+- Fixed the in-app updater refusing every download with "Update download
+  redirected to an unexpected host: release-assets.githubusercontent.com".
+  The redirect allowlist added in the M-03 hardening named github.com and
+  the legacy objects.githubusercontent.com but missed the host GitHub
+  actually serves release assets from today, so no update could ever
+  download. The allowlist is now an exact-match set of the three GitHub
+  hosts, pinned by a unit test (lookalike suffix domains still fail).
+  Note: builds older than 4.12.1 carry the broken allowlist, so this one
+  release must be installed manually once from GitHub Releases; in-app
+  updates work again from 4.12.1 onward.
+
 ## 4.12.0 — Mint theme
 
 - New eighth appearance style, **Mint** (Settings → Appearance → Style): a port of

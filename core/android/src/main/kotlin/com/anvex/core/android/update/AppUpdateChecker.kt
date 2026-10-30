@@ -41,6 +41,20 @@ object AppUpdateChecker {
         "https://api.github.com/repos/PishiKuchulu/Anvex/releases?per_page=20"
     private const val USER_AGENT = "Anvex-Updater"
 
+    /**
+     * The only hosts a release-download redirect may land on: github.com
+     * itself (no redirect) and GitHub's release-asset CDN hosts — today
+     * release-assets.githubusercontent.com serves every release asset
+     * (verified against the live v4.11.1 asset redirect); objects… is the
+     * legacy host. Exact matches only, so lookalike suffix domains fail.
+     * (The 4.11.x updater omitted release-assets… and so refused every
+     * real download — this set is pinned by AppUpdateCheckerHostTest.)
+     */
+    internal fun isAllowedUpdateRedirectHost(host: String?): Boolean =
+        host == "github.com" ||
+            host == "objects.githubusercontent.com" ||
+            host == "release-assets.githubusercontent.com"
+
     /** The newest release strictly newer than [currentVersion], or null. */
     suspend fun fetchLatestNewerThan(currentVersion: String): AppUpdateInfo? =
         withContext(Dispatchers.IO) {
@@ -124,9 +138,10 @@ object AppUpdateChecker {
                 val code = conn.responseCode
                 check(code in 200..299) { "Download failed (HTTP $code)" }
                 // Redirects from github.com release downloads land on
-                // objects.githubusercontent.com; anything else is suspect.
+                // GitHub's asset CDN (release-assets.githubusercontent.com
+                // today); anything outside the allowlist is suspect.
                 val finalHost = conn.url.host
-                check(finalHost == "github.com" || finalHost == "objects.githubusercontent.com") {
+                check(isAllowedUpdateRedirectHost(finalHost)) {
                     "Update download redirected to an unexpected host: $finalHost"
                 }
                 val total = conn.contentLengthLong
