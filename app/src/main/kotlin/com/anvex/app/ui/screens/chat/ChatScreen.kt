@@ -78,6 +78,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -175,6 +177,8 @@ internal fun LazyListState.isPinnedToBottom(): Boolean {
 @Composable
 fun ChatScreen(nav: NavController, projectId: String) {
     val vm: ChatViewModel = viewModel(key = "chat-$projectId") { ChatViewModel(projectId) }
+    val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
+        com.anvex.core.android.repo.UiThemeStyle.ATELIER
     val messages by vm.messages.collectAsState()
     // v4.4.4 (smoothness): the full sessionState ticks up to every 80ms while
     // streaming — the root now collects only the lightweight streamUi snapshot
@@ -385,6 +389,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     MessageBubble(
                         message,
                         projectId,
+                        atelier = atelierStyle,
                         onDiff = onDiff,
                         canRegenerate = message.id == lastAssistantId,
                         onRegenerate = vm::regenerateLast,
@@ -482,6 +487,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 }
             }
             Composer(
+                atelier = atelierStyle,
                 value = input,
                 enabled = !streamUi.streaming,
                 streaming = streamUi.streaming,
@@ -755,6 +761,7 @@ private fun startVoiceInput(context: android.content.Context, launcher: Activity
 
 @Composable
 private fun Composer(
+    atelier: Boolean = false,
     value: String,
     enabled: Boolean,
     onValueChange: (String) -> Unit,
@@ -780,10 +787,16 @@ private fun Composer(
     // v4.4.4 (Command Deck): the composer is the signature control — a command
     // palette, not a chat box. Mono prompt glyph, hairline border, solid surface.
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page, vertical = 8.dp),
-        shape = RoundedCornerShape(AnvexDimens.radiusLarge),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        // Atelier: the composer attaches to the bottom edge as a flat bar
+        // (surface color, top-rounded 28dp, hairline implied by the color
+        // step) instead of the floating command-deck card.
+        modifier = if (atelier) Modifier.fillMaxWidth()
+            else Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page, vertical = 8.dp),
+        shape = if (atelier) RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            else RoundedCornerShape(AnvexDimens.radiusLarge),
+        color = if (atelier) MaterialTheme.colorScheme.surface
+            else MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = if (atelier) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         tonalElevation = 0.dp,
     ) {
         Column(Modifier.padding(8.dp)) {
@@ -862,6 +875,7 @@ private fun Composer(
                 }
                 Spacer(Modifier.width(8.dp))
                 val sendReady = canSend && enabled
+                val composerExtras = com.anvex.app.ui.theme.LocalBoltExtras.current
                 // v4.4.4 (Command Deck): the send key springs alive when a command
                 // is ready — the one orchestrated motion on this surface.
                 val sendScale by animateFloatAsState(
@@ -872,7 +886,25 @@ private fun Composer(
                     ),
                     label = "sendReady",
                 )
-                if (streaming) {
+                if (streaming && atelier) {
+                    // Atelier streaming state: a filled stop square in the
+                    // accent circle (the design's stop treatment).
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onCancel),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.Stop,
+                            contentDescription = tr("Stop"),
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                } else if (streaming) {
                     // Thinking state shows the goo loader (tap still cancels).
                     IconButton(onClick = onCancel) {
                         GooThinkingIcon(modifier = Modifier.size(32.dp))
@@ -880,18 +912,30 @@ private fun Composer(
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(48.dp)
+                            .size(if (atelier) 44.dp else 48.dp)
                             .graphicsLayer { scaleX = sendScale; scaleY = sendScale }
-                            .clip(RoundedCornerShape(AnvexDimens.radiusMedium))
-                            .background(
-                                if (sendReady) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.surfaceVariant,
+                            .clip(
+                                if (atelier) androidx.compose.foundation.shape.CircleShape
+                                else RoundedCornerShape(AnvexDimens.radiusMedium),
+                            )
+                            .then(
+                                if (atelier && sendReady) {
+                                    Modifier.background(
+                                        composerExtras.accentBrush,
+                                        androidx.compose.foundation.shape.CircleShape,
+                                    )
+                                } else {
+                                    Modifier.background(
+                                        if (sendReady) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.surfaceVariant,
+                                    )
+                                },
                             )
                             .clickable(enabled = sendReady, role = androidx.compose.ui.semantics.Role.Button, onClick = onSend),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.Send,
+                            if (atelier) Icons.Filled.ArrowUpward else Icons.AutoMirrored.Filled.Send,
                             contentDescription = tr("Send"),
                             tint = if (sendReady) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -984,6 +1028,7 @@ private fun AttachOption(
 private fun MessageBubble(
     message: ChatMessage,
     projectId: String,
+    atelier: Boolean = false,
     onDiff: (String) -> Unit,
     canRegenerate: Boolean = false,
     onRegenerate: () -> Unit = {},
@@ -1011,7 +1056,7 @@ private fun MessageBubble(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (!isUser) GradientBadge(Icons.Filled.AutoAwesome, size = 18)
             Text(
-                if (isUser) "You" else "Anvex",
+                if (isUser) "You" else if (atelier) tr("Agent") else "Anvex",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium,
@@ -1020,25 +1065,31 @@ private fun MessageBubble(
         Spacer(Modifier.height(4.dp))
         val extras = LocalBoltExtras.current
         // v4.4.4 (Command Deck): compact radii on the 8pt grid.
-        val bubbleShape = RoundedCornerShape(
+        // Atelier: uniform 20dp bubbles; the user bubble is an inverted
+        // ink fill and the agent reply is bare text (no fill, no border).
+        val bubbleShape = if (atelier) RoundedCornerShape(20.dp) else RoundedCornerShape(
             topStart = 16.dp, topEnd = 16.dp,
             bottomStart = if (isUser) 16.dp else 4.dp,
             bottomEnd = if (isUser) 4.dp else 16.dp,
         )
         Box(
             modifier = Modifier
-                .fillMaxWidth(if (isUser) 0.88f else 0.96f)
+                .fillMaxWidth(if (isUser) 0.88f else if (atelier) 1f else 0.96f)
                 .clip(bubbleShape)
                 .then(
-                    if (isUser) Modifier.background(extras.userBubbleBrush, bubbleShape)
-                    else Modifier.background(extras.glass, bubbleShape).border(BorderStroke(1.dp, extras.glassBorder), bubbleShape)
+                    when {
+                        atelier && isUser -> Modifier.background(MaterialTheme.colorScheme.onSurface, bubbleShape)
+                        atelier -> Modifier
+                        isUser -> Modifier.background(extras.userBubbleBrush, bubbleShape)
+                        else -> Modifier.background(extras.glass, bubbleShape).border(BorderStroke(1.dp, extras.glassBorder), bubbleShape)
+                    }
                 )
                 // v4.6: long-press anywhere on the bubble opens the action
                 // sheet (reply / copy / share / select text). Inner icon
                 // buttons keep their own clicks.
                 .combinedClickable(onClick = {}, onLongClick = onShowActions),
         ) {
-            Column(Modifier.padding(14.dp)) {
+            Column(Modifier.padding(if (atelier && !isUser) 0.dp else 14.dp)) {
                 message.reasoning?.let { trace ->
                     ThinkingCard(reasoning = trace, streaming = false, modifier = Modifier.padding(bottom = 8.dp))
                 }
@@ -1058,7 +1109,10 @@ private fun MessageBubble(
                             // v4.4.5 (UX): onPrimaryContainer pairs with the
                             // bubble fill by design — hardcoded White was
                             // unreadable on light-theme fills.
-                            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onPrimaryContainer),
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = if (atelier) MaterialTheme.colorScheme.surface
+                                    else MaterialTheme.colorScheme.onPrimaryContainer,
+                            ),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
@@ -1130,7 +1184,8 @@ private fun MessageBubble(
                         Text(
                             attachment.name,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            color = if (atelier) MaterialTheme.colorScheme.surface
+                                else MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.padding(top = 6.dp),
                         )
                     }

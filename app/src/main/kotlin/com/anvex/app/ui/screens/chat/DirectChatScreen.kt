@@ -3,6 +3,7 @@ package com.anvex.app.ui.screens.chat
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,7 +30,9 @@ import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Image
@@ -139,6 +142,8 @@ fun DirectChatScreen(nav: NavController) {
     val activeId by vm.activeId.collectAsState()
     val messages by vm.messages.collectAsState()
     val sessionState by vm.sessionState.collectAsState()
+    val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
+        com.anvex.core.android.repo.UiThemeStyle.ATELIER
     val streamActive by vm.streamActive.collectAsState()
     val noProvider by vm.noProviderConfigured.collectAsState()
     val activeModel by vm.activeModel.collectAsState()
@@ -539,10 +544,23 @@ fun DirectChatScreen(nav: NavController) {
                         }
                     }
 
-                    // Composer.
+                    // Composer. Atelier: attached flat bar (surface fill +
+                    // top hairline) instead of floating over the canvas.
+                    if (atelierStyle) {
+                        androidx.compose.material3.HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .then(
+                                if (atelierStyle) {
+                                    Modifier.background(MaterialTheme.colorScheme.surface)
+                                } else {
+                                    Modifier
+                                },
+                            )
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.Bottom,
                     ) {
@@ -570,10 +588,63 @@ fun DirectChatScreen(nav: NavController) {
                             }
                         }
                         Spacer(Modifier.width(8.dp))
-                        if (sessionState.streaming) {
+                        if (sessionState.streaming && atelierStyle) {
+                            // Atelier streaming state: stop square in the
+                            // accent circle, matching the agent composer.
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                                    .clickable(
+                                        role = androidx.compose.ui.semantics.Role.Button,
+                                        onClick = { vm.cancel() },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Stop,
+                                    contentDescription = tr("Stop"),
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        } else if (sessionState.streaming) {
                             // Thinking state shows the goo loader (tap still cancels).
                             IconButton(onClick = { vm.cancel() }) {
                                 GooThinkingIcon(modifier = Modifier.size(32.dp))
+                            }
+                        } else if (atelierStyle) {
+                            // Atelier send: gradient circle with an up arrow.
+                            val sendReady = input.isNotBlank() || attachments.isNotEmpty() || replyTo != null
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .then(
+                                        if (sendReady) {
+                                            Modifier.background(
+                                                com.anvex.app.ui.theme.LocalBoltExtras.current.accentBrush,
+                                                androidx.compose.foundation.shape.CircleShape,
+                                            )
+                                        } else {
+                                            Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+                                        },
+                                    )
+                                    .clickable(
+                                        enabled = sendReady,
+                                        role = androidx.compose.ui.semantics.Role.Button,
+                                        onClick = { send() },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.ArrowUpward,
+                                    contentDescription = tr("Send"),
+                                    tint = if (sendReady) MaterialTheme.colorScheme.onPrimary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp),
+                                )
                             }
                         } else {
                             IconButton(
@@ -693,16 +764,27 @@ fun DirectChatScreen(nav: NavController) {
 @Composable
 private fun DirectMessageBubble(msg: ChatMessage, onShowActions: () -> Unit = {}) {
     val isUser = msg.role == MessageRole.USER
+    // Atelier quick chat: the user bubble is an inverted ink fill and the
+    // assistant reply is bare text (transparent surface).
+    val atelier = com.anvex.app.ui.theme.LocalThemeStyle.current ==
+        com.anvex.core.android.repo.UiThemeStyle.ATELIER
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = if (isUser) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(if (atelier) 20.dp else 16.dp),
+            color = when {
+                atelier && isUser -> MaterialTheme.colorScheme.onSurface
+                atelier -> androidx.compose.ui.graphics.Color.Transparent
+                isUser -> MaterialTheme.colorScheme.primaryContainer
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+            contentColor = when {
+                atelier && isUser -> MaterialTheme.colorScheme.surface
+                isUser -> MaterialTheme.colorScheme.onPrimaryContainer
+                else -> MaterialTheme.colorScheme.onSurface
+            },
             // v4.6: long-press opens the message action sheet.
             modifier = Modifier
                 .fillMaxWidth(if (isUser) 0.85f else 1f)
@@ -741,10 +823,13 @@ private fun DirectMessageBubble(msg: ChatMessage, onShowActions: () -> Unit = {}
 
 @Composable
 private fun StreamingBubble(text: String, reasoning: String) {
+    val atelier = com.anvex.app.ui.theme.LocalThemeStyle.current ==
+        com.anvex.core.android.repo.UiThemeStyle.ATELIER
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(if (atelier) 20.dp else 16.dp),
+            color = if (atelier) androidx.compose.ui.graphics.Color.Transparent
+                else MaterialTheme.colorScheme.surfaceContainerHigh,
             contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
