@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.14.2 — Model switching everywhere + chat search
+
+- Quick chat finally has a model switcher: the model row above its
+  composer opens the provider list in place, and the pick takes effect
+  immediately.
+- The Home composer's model chip also opens the model list in place
+  (Project and Quick chat modes) instead of navigating away to the
+  Providers screen; a Providers entry at the bottom of the list still
+  opens provider management.
+- Search across chats: the quick-chat Conversations drawer has a
+  search field that matches conversation titles and message content.
+  (Project search already matched chat content; it still does.)
+
 ## 4.14.1 — Device-test fixes for Atelier
 
 - Message time no longer dangles alone at the bottom edge of a message
