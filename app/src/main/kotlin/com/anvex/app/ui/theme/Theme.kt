@@ -609,6 +609,90 @@ private val MintExtrasLight = AnvexExtras(
     glass = Color(0xB3FFFFFF), glassBorder = Color(0x1F0F172A),
 )
 
+// ------------------------------------------------------------------ atelier
+// The «کارگاه» (Atelier) UI/UX design, implemented as a selectable style —
+// the existing styles are untouched. One token system, two schemes:
+// Paper (light: #F4F1EA bg, white surface, #F26A1B accent) and Ink (dark:
+// #0F0E0D bg, #1A1816 surface, #FF8A3D accent). The accent is reserved for
+// the primary action of the moment; everything else stays warm-neutral.
+// Radii follow the design rhythm: 16 / 20 / 28 / pill.
+
+private val AtelierDarkScheme = darkColorScheme(
+    primary = Color(0xFFFF8A3D),
+    onPrimary = Color(0xFF2A1503),
+    primaryContainer = Color(0xFF4A2A12),
+    onPrimaryContainer = Color(0xFFFFDCC2),
+    secondary = Color(0xFFB3ADA2),
+    onSecondary = Color(0xFF1A1816),
+    secondaryContainer = Color(0xFF24211E),
+    onSecondaryContainer = Color(0xFFF5F1E8),
+    tertiary = Color(0xFF6C9BFF),
+    onTertiary = Color(0xFF0B1B3A),
+    tertiaryContainer = Color(0xFF1C2B4A),
+    onTertiaryContainer = Color(0xFFD6E4FF),
+    background = Color(0xFF0F0E0D),
+    onBackground = Color(0xFFF5F1E8),
+    surface = Color(0xFF1A1816),
+    onSurface = Color(0xFFF5F1E8),
+    surfaceVariant = Color(0xFF24211E),
+    onSurfaceVariant = Color(0xFFB3ADA2),
+    outline = Color(0xFF34302B),
+    outlineVariant = Color(0xFF2A2723),
+    error = Color(0xFFFF6B6B),
+    onError = Color(0xFF3D0A0A),
+    errorContainer = Color(0xFF4A1D1D),
+    onErrorContainer = Color(0xFFFFDAD6),
+)
+
+private val AtelierLightScheme = lightColorScheme(
+    primary = Color(0xFFF26A1B),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFFFE3D3),
+    onPrimaryContainer = Color(0xFF4A1E02),
+    secondary = Color(0xFF5C5D66),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFECE8DF),
+    onSecondaryContainer = Color(0xFF17181C),
+    tertiary = Color(0xFF2F6FED),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFD9E4FD),
+    onTertiaryContainer = Color(0xFF0B2A5B),
+    background = Color(0xFFF4F1EA),
+    onBackground = Color(0xFF17181C),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF17181C),
+    surfaceVariant = Color(0xFFECE8DF),
+    onSurfaceVariant = Color(0xFF5C5D66),
+    outline = Color(0xFF8A8171),
+    outlineVariant = Color(0xFFE0DACB),
+    error = Color(0xFFD83A3A),
+    onError = Color.White,
+    errorContainer = Color(0xFFFBD9D9),
+    onErrorContainer = Color(0xFF4A0E0E),
+)
+
+private val AtelierShapes = Shapes(
+    extraSmall = RoundedCornerShape(12.dp),
+    small = RoundedCornerShape(16.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(28.dp),
+    extraLarge = RoundedCornerShape(36.dp),
+)
+
+private val AtelierExtrasDark = AnvexExtras(
+    accentStart = Color(0xFFFFAA66), accentEnd = Color(0xFFF2543F),
+    canvasTop = Color(0xFF141210), canvasBottom = Color(0xFF0F0E0D),
+    userBubbleStart = Color(0xFFFF8A3D), userBubbleEnd = Color(0xFFF2543F),
+    glass = Color(0xCC1A1816), glassBorder = Color(0x1FF5F1E8),
+)
+
+private val AtelierExtrasLight = AnvexExtras(
+    accentStart = Color(0xFFFF9A4A), accentEnd = Color(0xFFF0453A),
+    canvasTop = Color(0xFFFBF9F4), canvasBottom = Color(0xFFF4F1EA),
+    userBubbleStart = Color(0xFFF26A1B), userBubbleEnd = Color(0xFFF0453A),
+    glass = Color(0xB3FFFFFF), glassBorder = Color(0x1F17181C),
+)
+
 private fun extrasFor(style: UiThemeStyle, dark: Boolean, scheme: androidx.compose.material3.ColorScheme): AnvexExtras =
     when (style) {
         UiThemeStyle.NEBULA -> if (dark) NebulaExtrasDark else NebulaExtrasLight
@@ -617,6 +701,7 @@ private fun extrasFor(style: UiThemeStyle, dark: Boolean, scheme: androidx.compo
         UiThemeStyle.FOREST -> if (dark) ForestExtrasDark else ForestExtrasLight
         UiThemeStyle.EMBER -> if (dark) EmberExtrasDark else EmberExtrasLight
         UiThemeStyle.MINT -> if (dark) MintExtrasDark else MintExtrasLight
+        UiThemeStyle.ATELIER -> if (dark) AtelierExtrasDark else AtelierExtrasLight
         else -> AnvexExtras(
             accentStart = scheme.primary, accentEnd = scheme.tertiary,
             canvasTop = scheme.background, canvasBottom = scheme.background,
@@ -653,6 +738,7 @@ fun AnvexTheme(
         style == UiThemeStyle.FOREST -> if (useDark) ForestDarkScheme else ForestLightScheme
         style == UiThemeStyle.EMBER -> if (useDark) EmberDarkScheme else EmberLightScheme
         style == UiThemeStyle.MINT -> if (useDark) MintDarkScheme else MintLightScheme
+        style == UiThemeStyle.ATELIER -> if (useDark) AtelierDarkScheme else AtelierLightScheme
         else -> if (useDark) ProfessionalDarkScheme else ProfessionalLightScheme
     }
     val shapes = when {
@@ -660,6 +746,7 @@ fun AnvexTheme(
         style == UiThemeStyle.GLASS || useDynamic -> GlassShapes
         style == UiThemeStyle.AURORA -> AuroraShapes
         style == UiThemeStyle.MINT -> MintShapes
+        style == UiThemeStyle.ATELIER -> AtelierShapes
         else -> ProfessionalShapes
     }
     val extras = extrasFor(if (useDynamic) UiThemeStyle.GLASS else style, useDark, colorScheme)

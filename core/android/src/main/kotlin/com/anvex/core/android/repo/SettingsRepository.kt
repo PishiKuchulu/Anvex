@@ -31,9 +31,11 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
  * EMBER — warm-charcoal dark-first, amber accent; cozy contrast.
  * MINT — near-black green dark-first, bright mint accent, pill-rounded surfaces;
  *   port of the Lovable "graceful-screen-refresh" design.
+ * ATELIER — the «کارگاه» UI/UX design: warm paper (light) / ink (dark) neutrals,
+ *   orange accent reserved for the primary action, large radii (16/20/28).
  */
 @Serializable
-enum class UiThemeStyle { PROFESSIONAL, GLASS, NEBULA, AURORA, MIDNIGHT, FOREST, EMBER, MINT }
+enum class UiThemeStyle { PROFESSIONAL, GLASS, NEBULA, AURORA, MIDNIGHT, FOREST, EMBER, MINT, ATELIER }
 
 @Serializable
 enum class AppLanguage { SYSTEM, ENGLISH, PERSIAN }

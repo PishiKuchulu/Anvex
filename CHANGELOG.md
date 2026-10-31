@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.13.0 — Atelier theme («کارگاه»)
+
+- New ninth appearance style, **Atelier** (Settings → Appearance → Style),
+  implementing the «کارگاه» UI/UX design's token system: Paper light scheme
+  (warm #F4F1EA paper background, white surfaces, #F26A1B orange accent)
+  and Ink dark scheme (#0F0E0D ink background, #1A1816 surfaces, #FF8A3D
+  accent), the design's orange accent gradient, and its large radii
+  (16 / 20 / 28 / pill). Purely additive — all eight existing styles
+  (Professional, Glass, Nebula, Aurora, Midnight, Forest, Ember, Mint)
+  are unchanged. This is stage one of the Atelier design (its token
+  layer); the design's navigation restructure is a separate later stage.
+
 ## 4.12.1 — In-app update download fix
 
 - Fixed the in-app updater refusing every download with "Update download

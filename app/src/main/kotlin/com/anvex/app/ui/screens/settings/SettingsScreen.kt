@@ -491,6 +491,7 @@ private fun AppearanceCategory(
                                 UiThemeStyle.FOREST -> "Forest — deep-green dark, mint accent; easy on the eyes"
                                 UiThemeStyle.EMBER -> "Ember — warm-charcoal dark, amber accent; cozy contrast"
                                 UiThemeStyle.MINT -> "Mint — near-black green dark, bright mint accent, pill-rounded surfaces (Lovable design port)"
+                                UiThemeStyle.ATELIER -> "Atelier — warm paper/ink neutrals, orange accent, large radii («کارگاه» design)"
                             }
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -509,6 +510,7 @@ private fun AppearanceCategory(
                                                 UiThemeStyle.FOREST -> "Forest"
                                                 UiThemeStyle.EMBER -> "Ember"
                                                 UiThemeStyle.MINT -> "Mint"
+                                                UiThemeStyle.ATELIER -> "Atelier"
                                             }
                                         )
                                     },
