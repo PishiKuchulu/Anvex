@@ -104,6 +104,27 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
+ * In-memory hand-off for the Atelier home composer's "quick chat" mode:
+ * the typed text is sent as the first message when this screen opens.
+ * Same guarded pattern as the project-chat NewProjectHandoff.
+ */
+object DirectChatHandoff {
+    @Volatile
+    private var pending: String = ""
+
+    var pendingPrompt: String
+        get() = synchronized(this) { pending }
+        set(value) { synchronized(this) { pending = value } }
+
+    /** Atomically reads and clears the pending prompt exactly once. */
+    fun takePendingPrompt(): String = synchronized(this) {
+        val value = pending
+        pending = ""
+        value
+    }
+}
+
+/**
  * v4.4.6: project-less direct chat — a top-level Chat tab for conversing with
  * the agent without a folder/project. Conversations live in a drawer; the
  * thread supports text, image/file attachments (via the activity pickers),
@@ -154,6 +175,12 @@ fun DirectChatScreen(nav: NavController) {
         if (total > 0 && !listState.isScrollInProgress && listState.isPinnedToBottom()) {
             listState.scrollToItem((total - 1).coerceAtLeast(0))
         }
+    }
+
+    // Atelier home composer (quick-chat mode) hands its first message here.
+    LaunchedEffect(Unit) {
+        val pending = DirectChatHandoff.takePendingPrompt()
+        if (pending.isNotBlank()) vm.send(pending, emptyList())
     }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

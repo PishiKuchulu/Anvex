@@ -122,6 +122,10 @@ fun HomeScreen(nav: NavController) {
     val providers by vm.providers.collectAsState()
     val newUi by vm.newProjectUi.collectAsState()
     val events by vm.events.collectAsState(initial = null as String?)
+    val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
+        com.anvex.core.android.repo.UiThemeStyle.ATELIER
+    val tasks by com.anvex.core.android.AppGraph.get().reliability.observeTaskItems(20)
+        .collectAsState(initial = emptyList())
     var showNewDialog by remember { mutableStateOf(false) }
 
     // Phase 3.2: content shared from another app -> choose the chat that receives it.
@@ -228,9 +232,7 @@ fun HomeScreen(nav: NavController) {
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
-            if (com.anvex.app.ui.theme.LocalThemeStyle.current ==
-                com.anvex.core.android.repo.UiThemeStyle.ATELIER
-            ) {
+            if (atelierStyle) {
                 // Atelier home header: a greeting and the avatar — Settings
                 // lives behind the avatar in this design, not in the dock.
                 Row(
@@ -314,13 +316,50 @@ fun HomeScreen(nav: NavController) {
             }
         },
         floatingActionButton = {
-            com.anvex.app.ui.components.GradientButton(
-                text = "New project",
-                icon = Icons.Filled.Add,
-                onClick = { showNewDialog = true },
-            )
+            // Atelier Home has no FAB — the composer and the new-project
+            // sheet replace it (the design removes the floating button).
+            if (!atelierStyle) {
+                com.anvex.app.ui.components.GradientButton(
+                    text = "New project",
+                    icon = Icons.Filled.Add,
+                    onClick = { showNewDialog = true },
+                )
+            }
         },
     ) { padding ->
+        if (atelierStyle) {
+            AtelierHomeBody(
+                padding = padding,
+                projects = projects,
+                providers = providers,
+                tasks = tasks,
+                events = events,
+                onOpenProject = { id -> nav.navigate(Routes.chat(id)) },
+                onSendProject = { text ->
+                    val name = text.lineSequence().firstOrNull()?.trim()?.take(40)
+                        ?.ifBlank { null } ?: "New project"
+                    vm.updateNewProject { copy(name = name, prompt = text) }
+                    NewProjectHandoff.pendingPrompt = text
+                    vm.createAndOpen { id -> nav.navigate(Routes.chat(id)) }
+                },
+                onSendQuickChat = { text ->
+                    com.anvex.app.ui.screens.chat.DirectChatHandoff.pendingPrompt = text
+                    nav.navigate(Routes.DIRECT_CHAT)
+                },
+                onAgentCenter = { nav.navigate(Routes.AGENT_CENTER) },
+                onExtensions = { nav.navigate(Routes.EXTENSIONS) },
+                onBuildFirst = {
+                    projects.firstOrNull()?.let { nav.navigate(Routes.build(it.id)) }
+                },
+                onTerminal = {
+                    nav.navigate(Routes.terminal(com.anvex.core.android.runtime.AndroidRuntimeGateway.HOME_PROJECT_ID))
+                },
+                onGithubFirst = {
+                    projects.firstOrNull()?.let { nav.navigate(Routes.github(it.id)) }
+                },
+                onProviders = { nav.navigate(Routes.PROVIDERS) },
+            )
+        } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 108.dp),
@@ -469,9 +508,28 @@ fun HomeScreen(nav: NavController) {
                 }
             }
         }
+        }
     }
 
-    if (showNewDialog) {
+    if (showNewDialog && atelierStyle) {
+        AtelierNewProjectSheet(
+            ui = newUi,
+            onUpdate = vm::updateNewProject,
+            onCreate = {
+                NewProjectHandoff.pendingPrompt = newUi.prompt
+                showNewDialog = false
+                vm.createAndOpen { id -> nav.navigate(Routes.chat(id)) }
+            },
+            onChooseFolder = { workspaceLauncher.launch(null) },
+            onImportZip = {
+                showNewDialog = false
+                importLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+            },
+            onDismiss = { showNewDialog = false },
+        )
+    }
+
+    if (showNewDialog && !atelierStyle) {
         NewProjectDialog(
             ui = newUi,
             providers = providers,
