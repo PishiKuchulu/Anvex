@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.14.1 — Device-test fixes for Atelier
+
+- Message time no longer dangles alone at the bottom edge of a message
+  (where it read as clipped): under Atelier it sits on the header line,
+  next to the sender label.
+- The composer's model label is now a real model switcher: tap it to
+  pick any configured provider; the pick becomes the default and the
+  session continues on that model.
+- Short user messages no longer get a huge empty bubble: the Atelier
+  user bubble uses tighter padding and a compact edit affordance, and
+  the timestamp moved out of the bubble.
+- The Projects screen's new-project dialog now asks for the project
+  folder too (with the system folder picker), matching Home.
+
 ## 4.14.0 — Atelier, fully implemented («کارگاه»)
 
 - The Atelier style is now the complete «کارگاه» design, not just its
