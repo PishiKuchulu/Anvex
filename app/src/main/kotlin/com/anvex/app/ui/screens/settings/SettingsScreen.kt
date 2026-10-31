@@ -134,6 +134,19 @@ fun SettingsScreen(
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
         ) {
+            if (settings?.uiThemeStyle == UiThemeStyle.ATELIER) {
+                // Atelier Settings (design screen 09): identity, update
+                // banner, mode previews and accent dots above the classic
+                // category content.
+                AtelierSettingsHeader(
+                    settings = settings,
+                    projectCount = projects.size,
+                    updateState = updateController.state,
+                    onThemeMode = { mode -> vm.setTheme(mode) },
+                    onAccent = { accent -> scope.launch { graph.settings.setAtelierAccent(accent) } },
+                    onUpdateTap = { showUpdateDialog = true },
+                )
+            }
             // ---- category chips (web-prototype port: accent-coded, horizontally scrollable)
             LazyRow(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),

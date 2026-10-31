@@ -173,6 +173,8 @@ class MainActivity : ComponentActivity() {
                 },
                 dynamicColor = settings?.dynamicColor ?: false,
                 themeStyle = settings?.uiThemeStyle,
+                atelierAccent = settings?.atelierAccent
+                    ?: com.anvex.core.android.repo.AtelierAccent.ORANGE,
             ) {
                 AnvexApp()
             }

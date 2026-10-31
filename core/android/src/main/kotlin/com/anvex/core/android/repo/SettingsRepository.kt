@@ -59,6 +59,9 @@ enum class NodeBackend { IN_APP, TERMUX }
 @Serializable
 enum class AgentEngine { NATIVE, PI }
 
+/** Atelier theme accent choices (design: six accent dots in Settings). */
+enum class AtelierAccent { ORANGE, BLUE, GREEN, VIOLET, ROSE, TEAL }
+
 @Serializable
 data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.DARK,
@@ -88,6 +91,8 @@ data class AppSettings(
     val termuxBridgeEnabled: Boolean = false,
     /** v4.9: agent engine selection (native harness vs Pi, experimental). */
     val agentEngine: AgentEngine = AgentEngine.NATIVE,
+    /** v4.14 (Atelier): the selected accent for the Atelier theme. */
+    val atelierAccent: AtelierAccent = AtelierAccent.ORANGE,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -112,6 +117,7 @@ class SettingsRepository(private val context: Context) {
         val NODE_BACKEND = stringPreferencesKey("node_backend")
         val TERMUX_BRIDGE = booleanPreferencesKey("termux_bridge_enabled")
         val AGENT_ENGINE = stringPreferencesKey("agent_engine")
+        val ATELIER_ACCENT = stringPreferencesKey("atelier_accent")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -135,6 +141,7 @@ class SettingsRepository(private val context: Context) {
             nodeBackend = p[Keys.NODE_BACKEND]?.let { runCatching { NodeBackend.valueOf(it) }.getOrNull() } ?: NodeBackend.IN_APP,
             termuxBridgeEnabled = p[Keys.TERMUX_BRIDGE] ?: false,
             agentEngine = p[Keys.AGENT_ENGINE]?.let { runCatching { AgentEngine.valueOf(it) }.getOrNull() } ?: AgentEngine.NATIVE,
+            atelierAccent = p[Keys.ATELIER_ACCENT]?.let { runCatching { AtelierAccent.valueOf(it) }.getOrNull() } ?: AtelierAccent.ORANGE,
         )
     }
 
@@ -155,6 +162,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setWebToolsEnabled(v: Boolean) = context.dataStore.edit { it[Keys.WEB_TOOLS] = v }
     suspend fun setNodeBackend(v: NodeBackend) = context.dataStore.edit { it[Keys.NODE_BACKEND] = v.name }
     suspend fun setAgentEngine(v: AgentEngine) = context.dataStore.edit { it[Keys.AGENT_ENGINE] = v.name }
+    suspend fun setAtelierAccent(v: AtelierAccent) = context.dataStore.edit { it[Keys.ATELIER_ACCENT] = v.name }
     suspend fun setTermuxBridgeEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TERMUX_BRIDGE] = v }
 
     suspend fun restoreFromBackup(encoded: String) {
@@ -171,7 +179,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.AUTOSAVE] = s.editorAutoSave; p[Keys.CHAT_FONT] = s.chatFontSize.coerceIn(12, 22); p[Keys.CONSOLE_VISIBLE] = s.previewConsoleVisible
             p[Keys.LAST_PROJECT] = s.lastProjectId; p[Keys.THINKING] = s.thinkingLevel.name; p[Keys.ONBOARDING] = s.onboardingSeen
             p[Keys.MEMORY_ENABLED] = s.memoryEnabled; p[Keys.CUSTOM_INSTRUCTIONS] = s.customInstructions.take(4_000)
-            p[Keys.NODE_BACKEND] = s.nodeBackend.name
+            p[Keys.NODE_BACKEND] = s.nodeBackend.name; p[Keys.ATELIER_ACCENT] = s.atelierAccent.name
         }
     }
 }

@@ -106,10 +106,26 @@ fun MemoryScreen(nav: NavController) {
                     }
                 }
                 item {
+                    // Atelier memory (design screen 08): category chips
+                    // carry their item counts.
+                    val atelier = com.anvex.app.ui.theme.LocalThemeStyle.current ==
+                        com.anvex.core.android.repo.UiThemeStyle.ATELIER
                     androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        item { NebulaChip("All", selected = filter == null, onClick = { filter = null }) }
+                        item {
+                            NebulaChip(
+                                if (atelier) "All · ${items.size}" else "All",
+                                selected = filter == null,
+                                onClick = { filter = null },
+                            )
+                        }
                         items(MemoryCategory.ALL) { c ->
-                            NebulaChip(c.replaceFirstChar { it.uppercase() }, selected = filter == c, onClick = { filter = c })
+                            val name = c.replaceFirstChar { it.uppercase() }
+                            val count = items.count { it.category == c }
+                            NebulaChip(
+                                if (atelier) "$name · $count" else name,
+                                selected = filter == c,
+                                onClick = { filter = c },
+                            )
                         }
                     }
                 }

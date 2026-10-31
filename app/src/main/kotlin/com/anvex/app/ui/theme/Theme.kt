@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.anvex.core.android.repo.AtelierAccent
 import com.anvex.core.android.repo.UiThemeStyle
 
 /**
@@ -693,6 +694,49 @@ private val AtelierExtrasLight = AnvexExtras(
     glass = Color(0xB3FFFFFF), glassBorder = Color(0x1F17181C),
 )
 
+/** Atelier accent presets (design screen 09: six accent dots). */
+data class AtelierAccentPreset(
+    val primaryLight: Color,
+    val primaryDark: Color,
+    val gradStartLight: Color,
+    val gradEndLight: Color,
+    val gradStartDark: Color,
+    val gradEndDark: Color,
+)
+
+val AtelierAccentPresets: Map<AtelierAccent, AtelierAccentPreset> = mapOf(
+    AtelierAccent.ORANGE to AtelierAccentPreset(
+        Color(0xFFF26A1B), Color(0xFFFF8A3D),
+        Color(0xFFFF9A4A), Color(0xFFF0453A),
+        Color(0xFFFFAA66), Color(0xFFF2543F),
+    ),
+    AtelierAccent.BLUE to AtelierAccentPreset(
+        Color(0xFF2F6FED), Color(0xFF6C9BFF),
+        Color(0xFF5B9BFF), Color(0xFF2F6FED),
+        Color(0xFF8FBAFF), Color(0xFF4A86F5),
+    ),
+    AtelierAccent.GREEN to AtelierAccentPreset(
+        Color(0xFF1F9D6B), Color(0xFF47C98F),
+        Color(0xFF3ECF8E), Color(0xFF1F9D6B),
+        Color(0xFF6FE3AC), Color(0xFF2BB673),
+    ),
+    AtelierAccent.VIOLET to AtelierAccentPreset(
+        Color(0xFF7C4DFF), Color(0xFFA78BFA),
+        Color(0xFF9D7BFF), Color(0xFF7C4DFF),
+        Color(0xFFB79CFF), Color(0xFF8B5CF6),
+    ),
+    AtelierAccent.ROSE to AtelierAccentPreset(
+        Color(0xFFE5484D), Color(0xFFFF7A7E),
+        Color(0xFFF97066), Color(0xFFE5484D),
+        Color(0xFFFF9D9A), Color(0xFFF2543F),
+    ),
+    AtelierAccent.TEAL to AtelierAccentPreset(
+        Color(0xFF0E9594), Color(0xFF3EC6C6),
+        Color(0xFF2BB3B1), Color(0xFF0E9594),
+        Color(0xFF5FD9D7), Color(0xFF14A8A6),
+    ),
+)
+
 private fun extrasFor(style: UiThemeStyle, dark: Boolean, scheme: androidx.compose.material3.ColorScheme): AnvexExtras =
     when (style) {
         UiThemeStyle.NEBULA -> if (dark) NebulaExtrasDark else NebulaExtrasLight
@@ -719,6 +763,7 @@ fun AnvexTheme(
     dark: Boolean? = null,
     dynamicColor: Boolean = false,
     themeStyle: UiThemeStyle? = null,
+    atelierAccent: AtelierAccent = AtelierAccent.ORANGE,
     content: @Composable () -> Unit,
 ) {
     val useDark = dark ?: isSystemInDarkTheme()
@@ -749,14 +794,37 @@ fun AnvexTheme(
         style == UiThemeStyle.ATELIER -> AtelierShapes
         else -> ProfessionalShapes
     }
-    val extras = extrasFor(if (useDynamic) UiThemeStyle.GLASS else style, useDark, colorScheme)
+    val baseExtras = extrasFor(if (useDynamic) UiThemeStyle.GLASS else style, useDark, colorScheme)
+    // Atelier accent selection: only the accent family moves (primary +
+    // gradient + user-bubble hues); the Paper/Ink tokens stay constant.
+    val accentPreset = AtelierAccentPresets[atelierAccent]
+    val applyAccent = style == UiThemeStyle.ATELIER && !useDynamic &&
+        atelierAccent != AtelierAccent.ORANGE && accentPreset != null
+    val effectiveScheme = if (applyAccent && accentPreset != null) {
+        colorScheme.copy(
+            primary = if (useDark) accentPreset.primaryDark else accentPreset.primaryLight,
+            onPrimary = Color.White,
+        )
+    } else {
+        colorScheme
+    }
+    val extras = if (applyAccent && accentPreset != null) {
+        baseExtras.copy(
+            accentStart = if (useDark) accentPreset.gradStartDark else accentPreset.gradStartLight,
+            accentEnd = if (useDark) accentPreset.gradEndDark else accentPreset.gradEndLight,
+            userBubbleStart = if (useDark) accentPreset.primaryDark else accentPreset.primaryLight,
+            userBubbleEnd = if (useDark) accentPreset.gradEndDark else accentPreset.gradEndLight,
+        )
+    } else {
+        baseExtras
+    }
 
     androidx.compose.runtime.CompositionLocalProvider(
         LocalThemeStyle provides style,
         LocalBoltExtras provides extras,
     ) {
         MaterialTheme(
-            colorScheme = colorScheme,
+            colorScheme = effectiveScheme,
             // Atelier carries its own type system (Vazirmatn + the design's scale).
             typography = if (style == UiThemeStyle.ATELIER && !useDynamic) AtelierTypography else AnvexTypography,
             shapes = shapes,
