@@ -31,7 +31,9 @@ import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
@@ -139,6 +141,11 @@ fun DirectChatScreen(nav: NavController) {
     val vm: DirectChatViewModel = viewModel()
     val conversations by vm.conversations.collectAsState()
     val archivedConversations by vm.archivedConversations.collectAsState()
+    val visibleConversations by vm.visibleConversations.collectAsState()
+    val visibleArchived by vm.visibleArchivedConversations.collectAsState()
+    val chatQuery by vm.chatQuery.collectAsState()
+    val providerChoices by vm.providerChoices.collectAsState()
+    val activeProviderId by vm.activeProviderId.collectAsState()
     val activeId by vm.activeId.collectAsState()
     val messages by vm.messages.collectAsState()
     val sessionState by vm.sessionState.collectAsState()
@@ -237,12 +244,21 @@ fun DirectChatScreen(nav: NavController) {
                         Icon(Icons.Filled.Add, contentDescription = tr("New chat"))
                     }
                 }
+                if (conversations.isNotEmpty() || archivedConversations.isNotEmpty() || chatQuery.isNotBlank()) {
+                    OutlinedTextField(
+                        value = chatQuery,
+                        onValueChange = vm::setChatQuery,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        singleLine = true,
+                        label = { Text(tr("Search chats")) },
+                    )
+                }
                 Column(
                     modifier = Modifier
                         .weight(1f, fill = false)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                conversations.forEach { conv ->
+                visibleConversations.forEach { conv ->
                     ConversationDrawerRow(
                         conv = conv,
                         selected = conv.id == activeId,
@@ -258,7 +274,15 @@ fun DirectChatScreen(nav: NavController) {
                         onDelete = { deleteTarget = conv },
                     )
                 }
-                if (conversations.isEmpty()) {
+                if (visibleConversations.isEmpty() && visibleArchived.isEmpty() && chatQuery.isNotBlank()) {
+                    Text(
+                        "No chats match \"${chatQuery.trim()}\"",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+                if (conversations.isEmpty() && chatQuery.isBlank()) {
                     Text(
                         tr("No conversations yet"),
                         style = MaterialTheme.typography.bodySmall,
@@ -266,14 +290,14 @@ fun DirectChatScreen(nav: NavController) {
                         modifier = Modifier.padding(16.dp),
                     )
                 }
-                if (archivedConversations.isNotEmpty()) {
+                if (visibleArchived.isNotEmpty()) {
                     Text(
                         tr("Archived"),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
                     )
-                    archivedConversations.forEach { conv ->
+                    visibleArchived.forEach { conv ->
                         ConversationDrawerRow(
                             conv = conv,
                             selected = conv.id == activeId,
@@ -550,6 +574,98 @@ fun DirectChatScreen(nav: NavController) {
                         androidx.compose.material3.HorizontalDivider(
                             color = MaterialTheme.colorScheme.outline,
                         )
+                    }
+                    // Model switcher row: quick chat previously had NO way
+                    // to change the model after it was chosen. Tapping the
+                    // label opens the provider list; the pick becomes the
+                    // default and the session rebuilds on it.
+                    if (activeModel != null && providerChoices.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (atelierStyle) {
+                                        Modifier.background(MaterialTheme.colorScheme.surface)
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .padding(horizontal = 16.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (providerChoices.size > 1) {
+                                var modelMenuOpen by remember { mutableStateOf(false) }
+                                Box {
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .clickable(enabled = !sessionState.streaming) { modelMenuOpen = true }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            activeModel!!,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Icon(
+                                            Icons.Filled.ArrowDropDown,
+                                            contentDescription = tr("Switch model"),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = modelMenuOpen,
+                                        onDismissRequest = { modelMenuOpen = false },
+                                    ) {
+                                        providerChoices.forEach { choice ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Column {
+                                                        Text(
+                                                            choice.name,
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            fontWeight = if (choice.id == activeProviderId) {
+                                                                androidx.compose.ui.text.font.FontWeight.SemiBold
+                                                            } else {
+                                                                androidx.compose.ui.text.font.FontWeight.Normal
+                                                            },
+                                                        )
+                                                        Text(
+                                                            choice.model,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        )
+                                                    }
+                                                },
+                                                trailingIcon = if (choice.id == activeProviderId) {
+                                                    { Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) }
+                                                } else {
+                                                    null
+                                                },
+                                                onClick = {
+                                                    modelMenuOpen = false
+                                                    if (choice.id != activeProviderId) vm.switchProvider(choice.id)
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    activeModel!!,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                            Spacer(Modifier.weight(1f))
+                        }
                     }
                     Row(
                         modifier = Modifier

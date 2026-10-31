@@ -122,6 +122,65 @@ class DirectChatViewModel : ViewModel() {
         .map { list -> (list.firstOrNull { it.isDefault } ?: list.firstOrNull())?.model }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    /** All configured providers, for the composer's model switcher. */
+    val providerChoices: StateFlow<List<ProviderConfig>> = graph.providers.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** The provider the live session is bound to (the default, else first). */
+    val activeProviderId: StateFlow<String?> = graph.providers.observeAll()
+        .map { list -> (list.firstOrNull { it.isDefault } ?: list.firstOrNull())?.id }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * Composer model switch: making a provider the default is the switch —
+     * the init collector rebuilds the session on the new default, and the
+     * composer label follows via [activeModel].
+     */
+    fun switchProvider(id: String) {
+        viewModelScope.launch { graph.providers.setDefault(id) }
+    }
+
+    // ---- Drawer search: title match locally, message-content match via
+    // the repository's LIKE search (same one Home's project search uses).
+    private val _chatQuery = MutableStateFlow("")
+    val chatQuery: StateFlow<String> = _chatQuery.asStateFlow()
+    private val _contentMatchIds = MutableStateFlow<Set<String>>(emptySet())
+
+    fun setChatQuery(q: String) {
+        _chatQuery.value = q
+        viewModelScope.launch {
+            val needle = q.trim()
+            _contentMatchIds.value = if (needle.isEmpty()) {
+                emptySet()
+            } else {
+                runCatching { graph.chat.projectIdsMatching(needle).toSet() }
+                    .getOrDefault(emptySet())
+            }
+        }
+    }
+
+    private fun filterConversations(
+        list: List<Conversation>,
+        q: String,
+        ids: Set<String>,
+    ): List<Conversation> {
+        val needle = q.trim()
+        if (needle.isEmpty()) return list
+        return list.filter {
+            it.title.contains(needle, ignoreCase = true) || it.id in ids
+        }
+    }
+
+    val visibleConversations: StateFlow<List<Conversation>> =
+        kotlinx.coroutines.flow.combine(_conversations, _chatQuery, _contentMatchIds) { list, q, ids ->
+            filterConversations(list, q, ids)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val visibleArchivedConversations: StateFlow<List<Conversation>> =
+        kotlinx.coroutines.flow.combine(_archivedConversations, _chatQuery, _contentMatchIds) { list, q, ids ->
+            filterConversations(list, q, ids)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val webSearchAvailable: StateFlow<Boolean> = defaultProvider
         .map { p -> p != null && ProviderCapabilities.webSearch(p.kind) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
