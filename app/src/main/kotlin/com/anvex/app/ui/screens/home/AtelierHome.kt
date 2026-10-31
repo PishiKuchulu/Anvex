@@ -22,7 +22,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cloud
@@ -39,8 +41,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -87,6 +92,8 @@ fun AtelierHomeBody(
     onTerminal: () -> Unit,
     onGithubFirst: () -> Unit,
     onProviders: () -> Unit,
+    activeProviderId: String? = null,
+    onSwitchModel: (String) -> Unit = {},
 ) {
     val running = tasks.firstOrNull {
         it.state == "RUNNING" || it.state == "RETRYING" || it.state == "WAITING_APPROVAL"
@@ -96,7 +103,16 @@ fun AtelierHomeBody(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        item { AtelierComposer(providers = providers, onProviders = onProviders, onSendProject = onSendProject, onSendQuickChat = onSendQuickChat) }
+        item {
+            AtelierComposer(
+                providers = providers,
+                onProviders = onProviders,
+                onSendProject = onSendProject,
+                onSendQuickChat = onSendQuickChat,
+                activeProviderId = activeProviderId,
+                onSwitchModel = onSwitchModel,
+            )
+        }
 
         if (providers.isEmpty()) {
             item {
@@ -281,6 +297,8 @@ private fun AtelierComposer(
     onProviders: () -> Unit,
     onSendProject: (String) -> Unit,
     onSendQuickChat: (String) -> Unit,
+    activeProviderId: String? = null,
+    onSwitchModel: (String) -> Unit = {},
 ) {
     var text by remember { mutableStateOf("") }
     var quick by remember { mutableStateOf(false) }
@@ -327,23 +345,84 @@ private fun AtelierComposer(
                 },
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    onClick = onProviders,
-                ) {
-                    Text(
-                        if (model == null) {
-                            tr("Choose model")
-                        } else if (model.model.isBlank()) {
-                            model.name
-                        } else {
-                            "${model.name} · ${model.model}"
+                // Model chip: tapping it opens the model list IN PLACE
+                // (it used to navigate away to the Providers screen). The
+                // pick becomes the default provider. "Choose model" with
+                // nothing configured still goes to provider setup.
+                var modelMenuOpen by remember { mutableStateOf(false) }
+                Box {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        onClick = {
+                            if (model == null) onProviders() else modelMenuOpen = true
                         },
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        maxLines = 1,
-                    )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                if (model == null) {
+                                    tr("Choose model")
+                                } else if (model.model.isBlank()) {
+                                    model.name
+                                } else {
+                                    "${model.name} · ${model.model}"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                            )
+                            if (model != null && providers.size > 1) {
+                                Icon(
+                                    Icons.Filled.ArrowDropDown,
+                                    contentDescription = tr("Switch model"),
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                    }
+                    if (model != null) {
+                        DropdownMenu(
+                            expanded = modelMenuOpen,
+                            onDismissRequest = { modelMenuOpen = false },
+                        ) {
+                            providers.forEach { choice ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                choice.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (choice.id == activeProviderId) FontWeight.SemiBold else FontWeight.Normal,
+                                            )
+                                            Text(
+                                                choice.model,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    },
+                                    trailingIcon = if (choice.id == activeProviderId) {
+                                        { Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) }
+                                    } else {
+                                        null
+                                    },
+                                    onClick = {
+                                        modelMenuOpen = false
+                                        if (choice.id != activeProviderId) onSwitchModel(choice.id)
+                                    },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(tr("Providers")) },
+                                onClick = {
+                                    modelMenuOpen = false
+                                    onProviders()
+                                },
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 Box(

@@ -118,6 +118,16 @@ class HomeViewModel : ViewModel() {
     val providers: StateFlow<List<ProviderConfig>> = providersRepo.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** The provider new chats will use (the default, else first). */
+    val activeProviderId: StateFlow<String?> = providers
+        .map { list -> (list.firstOrNull { it.isDefault } ?: list.firstOrNull())?.id }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Home composer model switch: the pick becomes the default provider. */
+    fun switchProvider(id: String) {
+        viewModelScope.launch { providersRepo.setDefault(id) }
+    }
+
     data class NewProjectUi(
         val name: String = "",
         val prompt: String = "",

@@ -120,6 +120,7 @@ fun HomeScreen(nav: NavController) {
     val query by vm.query.collectAsState()
     val pinnedIds by vm.pinned.collectAsState()
     val providers by vm.providers.collectAsState()
+    val activeProviderId by vm.activeProviderId.collectAsState()
     val newUi by vm.newProjectUi.collectAsState()
     val events by vm.events.collectAsState(initial = null as String?)
     val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
@@ -358,6 +359,8 @@ fun HomeScreen(nav: NavController) {
                     projects.firstOrNull()?.let { nav.navigate(Routes.github(it.id)) }
                 },
                 onProviders = { nav.navigate(Routes.PROVIDERS) },
+                activeProviderId = activeProviderId,
+                onSwitchModel = vm::switchProvider,
             )
         } else {
         LazyColumn(
