@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
@@ -226,6 +228,48 @@ fun HomeScreen(nav: NavController) {
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
+            if (com.anvex.app.ui.theme.LocalThemeStyle.current ==
+                com.anvex.core.android.repo.UiThemeStyle.ATELIER
+            ) {
+                // Atelier home header: a greeting and the avatar — Settings
+                // lives behind the avatar in this design, not in the dock.
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(tr("Hello"), style = MaterialTheme.typography.displaySmall)
+                        Text(
+                            tr("What shall we build today?"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(
+                        onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
+                    ) {
+                        Icon(Icons.Filled.Archive, contentDescription = "Import ZIP")
+                    }
+                    IconButton(onClick = { openExistingLauncher.launch(null) }) {
+                        Icon(Icons.Filled.FolderOpen, contentDescription = "Open folder")
+                    }
+                    Box(
+                        Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable { nav.navigate(Routes.SETTINGS) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.anvex_emblem),
+                            contentDescription = tr("Settings"),
+                            modifier = Modifier.size(38.dp).clip(CircleShape),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                }
+            } else {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -267,6 +311,7 @@ fun HomeScreen(nav: NavController) {
                     actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
             )
+            }
         },
         floatingActionButton = {
             com.anvex.app.ui.components.GradientButton(

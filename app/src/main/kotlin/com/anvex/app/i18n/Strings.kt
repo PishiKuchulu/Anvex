@@ -21,6 +21,14 @@ fun tr(english: String): String {
 val LocalAppLanguage = androidx.compose.runtime.staticCompositionLocalOf<String?> { null }
 
 private val FA: Map<String, String> = mapOf(
+    // Atelier («کارگاه») UI strings.
+    "Hello" to "سلام",
+    "What shall we build today?" to "امروز چی بسازیم؟",
+    "Projects" to "پروژه‌ها",
+    "Quick chat" to "گفتگوی سریع",
+    "Running" to "در حال اجرا",
+    "Recent projects" to "پروژه‌های اخیر",
+    "Shortcuts" to "میانبر",
     // v4.4.5 (UX): composer "+" attach sheet.
     "Add attachment" to "افزودن پیوست",
     "Voice input" to "ورودی صوتی",

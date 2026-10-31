@@ -43,3 +43,33 @@ val AnvexTypography = Typography(
 
 /** Convenience style for monospace inline content (paths, commands, file names). */
 val AnvexCodeStyle = TextStyle(fontFamily = AnvexMono, fontSize = 12.sp, lineHeight = 18.sp)
+
+/** Atelier («کارگاه») UI font: Vazirmatn (SIL OFL 1.1), bundled in assets/fonts. Lazy: needs AppGraph. */
+val AtelierFont: FontFamily by lazy {
+    val assets = AppGraph.get().context.assets
+    FontFamily(
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Regular.ttf", assets, FontWeight.Normal),
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Medium.ttf", assets, FontWeight.Medium),
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Bold.ttf", assets, FontWeight.Bold),
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-ExtraBold.ttf", assets, FontWeight.ExtraBold),
+    )
+}
+
+/**
+ * Atelier type scale (design spec section 4): Display 26/800, Title 20/800,
+ * Headline 16/800, Body 14/500, Caption 12/500 — mapped onto the Material
+ * slots the existing screens already read.
+ */
+val AtelierTypography = Typography(
+    displaySmall = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, lineHeight = 34.sp),
+    headlineSmall = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, lineHeight = 27.sp),
+    titleLarge = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, lineHeight = 27.sp),
+    titleMedium = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, lineHeight = 22.sp),
+    titleSmall = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.Bold, fontSize = 14.sp, lineHeight = 20.sp),
+    bodyLarge = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.Medium, fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 21.sp),
+    bodySmall = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 18.sp),
+    labelLarge = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.Bold, fontSize = 14.sp, lineHeight = 20.sp),
+    labelMedium = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp),
+    labelSmall = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 15.sp),
+)

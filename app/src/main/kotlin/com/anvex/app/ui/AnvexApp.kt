@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
@@ -59,6 +60,7 @@ import com.anvex.app.i18n.tr
 
 object Routes {
     const val HOME = "home"
+    const val PROJECTS = "projects"
     const val MEMORY = "memory"
     const val SETTINGS = "settings"
     const val PROVIDERS = "providers"
@@ -156,7 +158,45 @@ fun AnvexApp() {
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         bottomBar = {
-            if (topLevel) {
+            if (settings?.uiThemeStyle == com.anvex.core.android.repo.UiThemeStyle.ATELIER) {
+                // Atelier IA: a flat dock on the four main destinations only.
+                // Settings is reached from the Home avatar and Quick chat is a
+                // focused screen — neither carries the dock (per the design).
+                if (currentRoute == Routes.HOME || currentRoute == Routes.PROJECTS ||
+                    currentRoute == Routes.AGENT_CENTER || currentRoute == Routes.MEMORY
+                ) {
+                    Box(Modifier.imePadding()) {
+                        com.anvex.app.ui.components.AtelierDock(
+                            listOf(
+                                com.anvex.app.ui.components.DockItem(
+                                    label = tr("Home"),
+                                    icon = Icons.Filled.Home,
+                                    selected = currentRoute == Routes.HOME,
+                                    onClick = { navController.navigateTop(Routes.HOME) },
+                                ),
+                                com.anvex.app.ui.components.DockItem(
+                                    label = tr("Projects"),
+                                    icon = Icons.Filled.Folder,
+                                    selected = currentRoute == Routes.PROJECTS,
+                                    onClick = { navController.navigateTop(Routes.PROJECTS) },
+                                ),
+                                com.anvex.app.ui.components.DockItem(
+                                    label = tr("Agent"),
+                                    icon = Icons.Filled.AutoAwesome,
+                                    selected = currentRoute == Routes.AGENT_CENTER,
+                                    onClick = { navController.navigateTop(Routes.AGENT_CENTER) },
+                                ),
+                                com.anvex.app.ui.components.DockItem(
+                                    label = tr("Memory"),
+                                    icon = Icons.Filled.Psychology,
+                                    selected = currentRoute == Routes.MEMORY,
+                                    onClick = { navController.navigateTop(Routes.MEMORY) },
+                                ),
+                            ),
+                        )
+                    }
+                }
+            } else if (topLevel) {
                 // v4.6 (keyboard fix): imePadding on the bottom bar makes the
                 // Scaffold's content padding GROW by the keyboard height, so
                 // every top-level screen (notably Direct Chat, whose composer
@@ -258,6 +298,7 @@ private fun AnvexNavHost(
         },
     ) {
         composable(Routes.HOME) { HomeScreen(navController) }
+        composable(Routes.PROJECTS) { com.anvex.app.ui.screens.projects.ProjectsScreen(navController) }
         composable(Routes.SETTINGS) { SettingsScreen(navController, updateController) }
         composable(Routes.MEMORY) { MemoryScreen(navController) }
         composable(Routes.USAGE) { UsageScreen(navController) }

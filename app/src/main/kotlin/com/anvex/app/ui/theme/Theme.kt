@@ -757,7 +757,8 @@ fun AnvexTheme(
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = AnvexTypography,
+            // Atelier carries its own type system (Vazirmatn + the design's scale).
+            typography = if (style == UiThemeStyle.ATELIER && !useDynamic) AtelierTypography else AnvexTypography,
             shapes = shapes,
             content = content,
         )
