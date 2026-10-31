@@ -150,6 +150,20 @@ class ChatViewModel(
         .map { list -> (list.firstOrNull { it.isDefault } ?: list.firstOrNull())?.model }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    /** The provider the live session is bound to (the default, else first). */
+    val activeProviderId: StateFlow<String?> = graph.providers.observeAll()
+        .map { list -> (list.firstOrNull { it.isDefault } ?: list.firstOrNull())?.id }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * Composer model switch: making a provider the default is the switch —
+     * the init collector rebuilds the session on the new default, and the
+     * composer label follows via [activeModel].
+     */
+    fun switchProvider(id: String) {
+        viewModelScope.launch { graph.providers.setDefault(id) }
+    }
+
     val noProviderConfigured: StateFlow<Boolean> = graph.providers.observeAll()
         .map { it.isEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)

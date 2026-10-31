@@ -44,6 +44,7 @@ private val FA: Map<String, String> = mapOf(
     "Update" to "به‌روزرسانی",
     "Accent" to "رنگ تاکیدی",
     "projects" to "پروژه",
+    "Switch model" to "تعویض مدل",
     "Write the app or feature you want…" to "اپ یا فیچری که می‌خوای رو بنویس بده…",
     "Running" to "در حال اجرا",
     "Recent projects" to "پروژه‌های اخیر",

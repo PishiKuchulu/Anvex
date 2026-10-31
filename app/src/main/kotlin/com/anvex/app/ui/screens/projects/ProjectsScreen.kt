@@ -12,9 +12,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,7 +61,23 @@ fun ProjectsScreen(nav: NavController) {
     val projects by vm.projects.collectAsState()
     val visibleProjects by vm.visibleProjects.collectAsState()
     val query by vm.query.collectAsState()
+    val newUi by vm.newProjectUi.collectAsState()
     var showCreate by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Same folder picking as Home's new-project dialog: the user chooses
+    // where the project lives, not just its name.
+    val workspaceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            }
+            vm.updateNewProject { copy(parentWorkspaceUri = uri.toString()) }
+        }
+    }
 
     Scaffold(
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -122,24 +142,45 @@ fun ProjectsScreen(nav: NavController) {
     }
 
     if (showCreate) {
-        var name by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showCreate = false },
             title = { Text(tr("New project")) },
             text = {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    singleLine = true,
-                    label = { Text(tr("Project name")) },
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = newUi.name,
+                        onValueChange = { v -> vm.updateNewProject { copy(name = v) } },
+                        singleLine = true,
+                        label = { Text(tr("Project name")) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = newUi.parentWorkspaceUri?.let {
+                                Uri.parse(it).lastPathSegment?.substringAfterLast(":") ?: it
+                            } ?: "App private storage",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(tr("Project folder")) },
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                        )
+                        IconButton(onClick = { workspaceLauncher.launch(null) }) {
+                            Icon(Icons.Filled.Folder, contentDescription = "Choose project folder")
+                        }
+                    }
+                    Text(
+                        tr("Choose the project folder. If it already contains files they are kept and the folder is opened as the project."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
-                    enabled = name.isNotBlank(),
+                    enabled = newUi.name.isNotBlank(),
                     onClick = {
-                        vm.updateNewProject { copy(name = name) }
-                        NewProjectHandoff.pendingPrompt = ""
+                        NewProjectHandoff.pendingPrompt = newUi.prompt
                         showCreate = false
                         vm.createAndOpen { id -> nav.navigate(Routes.chat(id)) }
                     },

@@ -78,6 +78,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.StopCircle
@@ -190,6 +191,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
     val attachmentError by vm.attachmentError.collectAsState()
     val thinkingLevel by vm.thinkingLevel.collectAsState()
     val activeModel by vm.activeModel.collectAsState()
+    val activeProviderId by vm.activeProviderId.collectAsState()
     val webAvail by vm.webSearchAvailable.collectAsState()
     var pythonCode by remember { mutableStateOf<String?>(null) }
     var showKnowledge by remember { mutableStateOf(false) }
@@ -519,6 +521,9 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     }
                 },
                 modelLabel = activeModel,
+                modelChoices = providerChoices,
+                activeProviderId = activeProviderId,
+                onSwitchModel = vm::switchProvider,
                 webAvailable = webAvail,
                 webOn = webOn,
                 onProject = { showKnowledge = true },
@@ -791,6 +796,9 @@ private fun Composer(
     onVoice: () -> Unit,
     onCamera: () -> Unit = {},
     modelLabel: String? = null,
+    modelChoices: List<ProviderConfig> = emptyList(),
+    activeProviderId: String? = null,
+    onSwitchModel: (String) -> Unit = {},
     webAvailable: Boolean = false,
     webOn: Boolean = false,
     onToggleWeb: (Boolean) -> Unit = {},
@@ -864,7 +872,68 @@ private fun Composer(
                     )
                 }
                 ThinkingMenu(selected = thinkingLevel, enabled = enabled, onSelect = onThinkingLevel)
-                if (modelLabel != null) {
+                if (modelLabel != null && modelChoices.size > 1) {
+                    // Model switcher: tapping the model label opens the
+                    // provider list; picking one makes it the default and
+                    // the session rebuilds on it (see ChatViewModel).
+                    var modelMenuOpen by remember { mutableStateOf(false) }
+                    Box(Modifier.weight(1f)) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable(enabled = enabled) { modelMenuOpen = true }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                modelLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            Icon(
+                                Icons.Filled.ArrowDropDown,
+                                contentDescription = tr("Switch model"),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = modelMenuOpen,
+                            onDismissRequest = { modelMenuOpen = false },
+                        ) {
+                            modelChoices.forEach { choice ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                choice.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (choice.id == activeProviderId) FontWeight.SemiBold else FontWeight.Normal,
+                                            )
+                                            Text(
+                                                choice.model,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    },
+                                    trailingIcon = if (choice.id == activeProviderId) {
+                                        { Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) }
+                                    } else {
+                                        null
+                                    },
+                                    onClick = {
+                                        modelMenuOpen = false
+                                        if (choice.id != activeProviderId) onSwitchModel(choice.id)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                } else if (modelLabel != null) {
                     Text(
                         modelLabel,
                         style = MaterialTheme.typography.labelSmall,
@@ -1065,7 +1134,23 @@ private fun MessageBubble(
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = if (atelier) Modifier.fillMaxWidth() else Modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // Atelier: the message time lives in the header row (the design
+            // keeps meta on the header line). The old bottom timestamp sat
+            // alone at the screen edge and read as clipped — it is not
+            // rendered under Atelier anymore.
+            if (atelier && isUser) {
+                Text(
+                    formatRelative(message.createdAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+            }
             if (!isUser) GradientBadge(Icons.Filled.AutoAwesome, size = 18)
             Text(
                 if (isUser) "You" else if (atelier) tr("Agent") else "Anvex",
@@ -1073,6 +1158,14 @@ private fun MessageBubble(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium,
             )
+            if (atelier && !isUser) {
+                Spacer(Modifier.weight(1f))
+                Text(
+                    formatRelative(message.createdAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
         val extras = LocalBoltExtras.current
@@ -1101,7 +1194,15 @@ private fun MessageBubble(
                 // buttons keep their own clicks.
                 .combinedClickable(onClick = {}, onLongClick = onShowActions),
         ) {
-            Column(Modifier.padding(if (atelier && !isUser) 0.dp else 14.dp)) {
+            Column(
+                Modifier.padding(
+                    when {
+                        atelier && isUser -> androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                        atelier -> androidx.compose.foundation.layout.PaddingValues(0.dp)
+                        else -> androidx.compose.foundation.layout.PaddingValues(14.dp)
+                    },
+                ),
+            ) {
                 message.reasoning?.let { trace ->
                     ThinkingCard(reasoning = trace, streaming = false, modifier = Modifier.padding(bottom = 8.dp))
                 }
@@ -1142,8 +1243,17 @@ private fun MessageBubble(
                     ) {
                         if (isUser) {
                             // v4.4 (architect feature 8): edit this user message → branch turn.
-                            IconButton(onClick = onEditUser, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Filled.Edit, tr("Edit & branch"))
+                            // Atelier: a compact 32dp edit affordance — the
+                            // classic 48dp row made one-word bubbles huge.
+                            IconButton(
+                                onClick = onEditUser,
+                                modifier = Modifier.size(if (atelier) 32.dp else 48.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    tr("Edit & branch"),
+                                    modifier = Modifier.size(if (atelier) 18.dp else 24.dp),
+                                )
                             }
                         }
                         if (!isUser) {
@@ -1215,7 +1325,9 @@ private fun MessageBubble(
                         DeliverableCard(projectId, record)
                     }
                 }
-                Text(formatRelative(message.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                if (!atelier) {
+                    Text(formatRelative(message.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                }
             }
         }
     }
