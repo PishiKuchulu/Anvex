@@ -1,5 +1,41 @@
 # Changelog
 
+## 4.14.0 — Atelier, fully implemented («کارگاه»)
+
+- The Atelier style is now the complete «کارگاه» design, not just its
+  colors (4.13.0 shipped the token layer). Everything below applies only
+  while Atelier is the selected style; the other eight styles are
+  untouched.
+- Typography: the design's type system — Vazirmatn (bundled in the APK,
+  four weights) with its Display/Title/Headline/Body/Caption scale;
+  JetBrains Mono stays for code.
+- Shell: a flat dock attached to the bottom edge with four tabs
+  (Home, Projects, Agent, Memory). Settings opens from the avatar on
+  Home; quick chat leaves the dock and becomes a mode of the Home
+  composer.
+- Home: greeting header with avatar, the big composer card with a
+  Project / Quick-chat switch (Project creates a project from the typed
+  text and opens its chat; Quick chat hands the text to the quick-chat
+  screen), a running-work card fed by the real task journal, a
+  recent-projects carousel, and a shortcuts row (Build APK, Terminal,
+  GitHub, MCP). New project is a bottom sheet with template chips,
+  folder picking and ZIP import.
+- Chat: user messages in an inverted ink bubble, agent replies as bare
+  text under an «عامل» label, and an attached flat composer whose send
+  button is the accent-gradient circle and whose streaming state is a
+  stop button. Quick chat gets the same treatment.
+- Review changes: tapping a changed file opens the design's full
+  review screen — file chips, a real line diff (+/− with counts), a
+  sensitive-file notice driven by the engine's own sensitive-path rules,
+  and per-file / revert-all undo wired to the mutation journal.
+- Project screens: the five-tab dock becomes the design's segmented
+  mode switch under the header (Chat · Code · Preview · Build); the
+  harness moves into the header overflow menu.
+- Settings: identity card, an update banner using the real update
+  state, light/dark/system preview cards, and the design's six accent
+  colors — a real persisted setting that re-hues the Atelier primary,
+  gradient and user-bubble colors. Memory category chips show counts.
+
 ## 4.13.0 — Atelier theme («کارگاه»)
 
 - New ninth appearance style, **Atelier** (Settings → Appearance → Style),
