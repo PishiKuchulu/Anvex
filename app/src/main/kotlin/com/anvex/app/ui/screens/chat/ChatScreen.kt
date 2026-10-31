@@ -605,17 +605,29 @@ fun ChatScreen(nav: NavController, projectId: String) {
     }
 
     diffPath?.let { path ->
-        val change = pendingChangesCached.firstOrNull { it.path == path }
-        DiffSheet(
-            path = path,
-            before = change?.before,
-            after = diffContent,
-            operation = change?.operation,
-            renamedTo = change?.renamedTo,
-            onRevert = { vm.revertChange(path); diffPath = null },
-            onOpenEditor = { diffPath = null; nav.navigate(Routes.editor(projectId, path)) },
-            onDismiss = { diffPath = null },
-        )
+        if (atelierStyle) {
+            // Atelier: the design's full Review Changes screen over all of
+            // the last response's recorded mutations.
+            ReviewChangesSheet(
+                changes = pendingChangesCached,
+                initialPath = path,
+                onRevert = { p -> vm.revertChange(p) },
+                onOpenEditor = { p -> diffPath = null; nav.navigate(Routes.editor(projectId, p)) },
+                onDismiss = { diffPath = null },
+            )
+        } else {
+            val change = pendingChangesCached.firstOrNull { it.path == path }
+            DiffSheet(
+                path = path,
+                before = change?.before,
+                after = diffContent,
+                operation = change?.operation,
+                renamedTo = change?.renamedTo,
+                onRevert = { vm.revertChange(path); diffPath = null },
+                onOpenEditor = { diffPath = null; nav.navigate(Routes.editor(projectId, path)) },
+                onDismiss = { diffPath = null },
+            )
+        }
     }
 
     versionPath?.let { path ->

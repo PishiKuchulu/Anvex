@@ -1,7 +1,12 @@
 package com.anvex.app.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -50,14 +55,13 @@ fun ProjectScaffold(
     content: @Composable (Modifier) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val atelier = com.anvex.app.ui.theme.LocalThemeStyle.current ==
+        com.anvex.core.android.repo.UiThemeStyle.ATELIER
 
-    NebulaBackground {
-    Scaffold(
-        // v4.4.5 (UX): explicit contentColor — contentColorFor(Transparent)
-        // is Unspecified, whose text fallback is BLACK on the dark canvas.
-        containerColor = androidx.compose.ui.graphics.Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        topBar = {
+    // The project top bar, extracted so the Atelier shell can stack the
+    // design's mode switch directly underneath it.
+    @Composable
+    fun ProjectBar() {
             TopAppBar(
                 title = {
                     Text(
@@ -112,6 +116,15 @@ fun ProjectScaffold(
                             leadingIcon = { Icon(Icons.Filled.Cloud, null) },
                             onClick = { menuOpen = false; nav.navigate(Routes.github(projectId)) },
                         )
+                        if (atelier) {
+                            // The Atelier mode switch has four modes; the
+                            // harness stays one tap away in this menu.
+                            DropdownMenuItem(
+                                text = { Text(tr("Harness")) },
+                                leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
+                                onClick = { menuOpen = false; nav.navigate(Routes.harness(projectId)) },
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -122,8 +135,34 @@ fun ProjectScaffold(
                     actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
             )
+    }
+
+    NebulaBackground {
+    Scaffold(
+        // v4.4.5 (UX): explicit contentColor — contentColorFor(Transparent)
+        // is Unspecified, whose text fallback is BLACK on the dark canvas.
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        topBar = {
+            if (atelier) {
+                androidx.compose.foundation.layout.Column {
+                    ProjectBar()
+                    AtelierProjectModes(currentTab) { tab ->
+                        when (tab) {
+                            ProjectTab.CHAT -> nav.replaceTab(Routes.chat(projectId))
+                            ProjectTab.EDITOR -> nav.replaceTab(Routes.editor(projectId))
+                            ProjectTab.PREVIEW -> nav.replaceTab(Routes.preview(projectId))
+                            ProjectTab.BUILD -> nav.replaceTab(Routes.build(projectId))
+                            ProjectTab.HARNESS -> nav.replaceTab(Routes.harness(projectId))
+                        }
+                    }
+                }
+            } else {
+                ProjectBar()
+            }
         },
         bottomBar = {
+            if (!atelier) {
             // v4.6 (keyboard fix): imePadding on the bottom bar makes this
             // Scaffold's content bottom padding grow by the keyboard height,
             // lifting the chat composer above the keyboard by layout
@@ -169,6 +208,7 @@ fun ProjectScaffold(
                 ),
             )
             }
+            }
         },
     ) { padding ->
         content(
@@ -192,5 +232,54 @@ private fun NavController.replaceTab(route: String) {
         // Back from any project tab must leave the project for Home,
         // not walk back through previously visited tabs.
         popUpTo(Routes.HOME)
+    }
+}
+
+/**
+ * Atelier project mode switch (design: گفتگو · کد · پیش‌نمایش · ساخت) — a
+ * segmented pill track directly under the project header. The harness is
+ * not one of the four modes; it lives in the header overflow menu.
+ */
+@Composable
+private fun AtelierProjectModes(
+    current: ProjectTab,
+    onSelect: (ProjectTab) -> Unit,
+) {
+    val modes = listOf(
+        ProjectTab.CHAT to "Chat",
+        ProjectTab.EDITOR to "Code",
+        ProjectTab.PREVIEW to "Preview",
+        ProjectTab.BUILD to "Build",
+    )
+    androidx.compose.foundation.layout.Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 8.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(4.dp),
+    ) {
+        modes.forEach { (tab, label) ->
+            val selected = tab == current
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.surface
+                        else androidx.compose.ui.graphics.Color.Transparent,
+                    )
+                    .clickable { onSelect(tab) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                Text(
+                    tr(label),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
