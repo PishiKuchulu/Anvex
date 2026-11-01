@@ -126,7 +126,8 @@ fun AnvexApp() {
     // Review A8: the launch-time check honors the user's auto-check
     // setting once settings have loaded (manual checks are unaffected).
     androidx.compose.runtime.LaunchedEffect(settings?.autoUpdateCheck) {
-        if (settings != null && settings.autoUpdateCheck) updateController.check()
+        val loaded = settings
+        if (loaded != null && loaded.autoUpdateCheck) updateController.check()
     }
     androidx.compose.runtime.LaunchedEffect(updateController.state) {
         if (updateController.state is com.anvex.app.ui.components.AppUpdateController.State.Available &&

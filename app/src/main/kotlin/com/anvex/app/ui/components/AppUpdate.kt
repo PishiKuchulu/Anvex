@@ -96,7 +96,7 @@ class AppUpdateController(private val context: Context) {
     /** Review C6: the controller's scope must not outlive the UI that
      * owns it — AnvexApp disposes it via DisposableEffect. */
     fun dispose() {
-        scope.cancel()
+        scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
     }
 
     init {
