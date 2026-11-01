@@ -36,6 +36,7 @@ class AndroidShellRuntime(
             return@withContext ShellResult(false, "", "Approval required: ${effectiveAssessment.reason}", approvalRequired = true)
         }
         val safeTimeout = timeoutMs.coerceIn(1_000L, 10 * 60_000L)
+        val shellToken = "anvex-shell-${System.nanoTime()}"
         val outputFile = File(projectRoot, ".anvex/logs").apply { mkdirs() }.let { File(it, "shell-${System.nanoTime()}.log") }
         return@withContext try {
             val process = ProcessBuilder("/system/bin/sh", "-c", trimmed)
@@ -46,6 +47,10 @@ class AndroidShellRuntime(
                     environment().remove("LD_PRELOAD")
                     environment()["PWD"] = projectRoot.absolutePath
                     environment()["HOME"] = projectRoot.absolutePath
+                    // Review B8: unique marker so the timeout path can
+                    // find this shell's pid in /proc (Android's
+                    // java.lang.Process has no pid() accessor).
+                    environment()["ANVEX_SHELL_TOKEN"] = shellToken
                 }
                 .start()
             val finished = process.waitFor(safeTimeout, TimeUnit.MILLISECONDS)
@@ -54,7 +59,7 @@ class AndroidShellRuntime(
                 // its children (node/npm dev servers) orphaned — the
                 // terminal session already reaps its tree on close. Kill
                 // the descendant tree first, then the shell.
-                reapProcessTree(process)
+                reapProcessTree(shellToken)
                 process.destroy()
                 if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
                 ShellResult(false, readBounded(outputFile), "Process timed out after ${safeTimeout}ms.")
@@ -68,17 +73,30 @@ class AndroidShellRuntime(
     }
 
     /**
-     * Review B8: SIGKILL every descendant of [process] (deepest first),
-     * discovered through /proc parent links. Best-effort: if the pid is
-     * unavailable the caller still destroys the shell itself, which is
+     * Review B8: SIGKILL every descendant of the timed-out shell
+     * (deepest first). The shell is identified by the unique
+     * ANVEX_SHELL_TOKEN in its environment — Android's
+     * java.lang.Process exposes no pid() — and descendants are
+     * discovered through /proc parent links. Best-effort: on any
+     * failure the caller still destroys the shell itself, which is
      * the previous behavior.
      */
-    private fun reapProcessTree(process: Process) {
+    private fun reapProcessTree(shellToken: String) {
         runCatching {
-            val rootPid = process.pid()
-            if (rootPid <= 0) return
+            val procDirs = File("/proc").listFiles().orEmpty()
+            val marker = "ANVEX_SHELL_TOKEN=$shellToken"
+            var rootPid: Long? = null
+            for (dir in procDirs) {
+                val pid = dir.name.toLongOrNull() ?: continue
+                val environ = runCatching { File(dir, "environ").readBytes().toString(Charsets.UTF_8) }.getOrNull() ?: continue
+                if (environ.contains(marker)) {
+                    rootPid = pid
+                    break
+                }
+            }
+            val root = rootPid ?: return
             val childrenOf = HashMap<Long, MutableList<Long>>()
-            File("/proc").listFiles()?.forEach { dir ->
+            procDirs.forEach { dir ->
                 val pid = dir.name.toLongOrNull() ?: return@forEach
                 val ppid = runCatching {
                     File(dir, "stat").readText().substringAfterLast(") ")
@@ -88,7 +106,7 @@ class AndroidShellRuntime(
             }
             val descendants = ArrayList<Long>()
             val queue = ArrayDeque<Long>()
-            queue.add(rootPid)
+            queue.add(root)
             while (queue.isNotEmpty()) {
                 val current = queue.removeFirst()
                 childrenOf[current]?.forEach { child ->
