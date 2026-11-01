@@ -1,5 +1,55 @@
 # Changelog
 
+## 4.14.3 — External review #2 fixes
+
+A second external static review (47 findings against 4.14.2) was
+verified line-by-line; this release fixes everything confirmed. The
+review's one critical claim — that releases are signed with the public
+debug key — did not survive verification: versioned releases are
+signed with the private release key, the rolling `latest` build is a
+labelled debug channel, and the updater only ever offers versioned
+releases.
+
+- Security: the harness bridge now enforces the same SensitivePaths
+  rules as every other surface (no more writing `.env` or recursively
+  deleting `.git` through it); both loopback servers send a
+  Content-Security-Policy header; provider API-key ciphertexts are
+  versioned and AAD-only (the silent legacy fallback now applies only
+  to pre-upgrade records, which migrate on read); extracted toolchain
+  files are owner-only; the LAN status no longer shows any part of its
+  token; `google-services.json` and `secrets.properties` count as
+  sensitive files.
+- The update dialog shows the expected SHA-256 of the update, and a
+  new Settings toggle can turn the automatic on-launch update check
+  off (manual checks always remain).
+- The Python runner states up front that its first run downloads the
+  Python runtime.
+- Correctness: a Stop→Send race in the chat session could let a
+  cancelled turn's finalization wipe the new turn's state — turns now
+  carry a generation guard. Editor edits made in the last moments
+  before leaving the screen are no longer lost (the exit flush ran on
+  an already-cancelled scope). Opening a file in the editor no longer
+  blocks the UI thread. A failed memory-file rename can no longer
+  delete your long-term memory. Replacing the build toolchain is now
+  an atomic swap — a failed import keeps the working toolchain.
+  Timed-out shell commands now reap their child processes (no more
+  orphaned dev servers). Installed skills show their real name instead
+  of the slug. Sizes and costs format with a fixed decimal point in
+  every locale.
+- Build screen: the build-script risk scan actually runs now and
+  shows its findings before you acknowledge a wrapper build; the
+  toolchain Import button is disabled on Android 10+, where the
+  system (W^X) would never let the toolchain run anyway.
+- README claims corrected: APK builds on Android 10+ use the optional
+  cloud build, and the Persian translation is described as broad
+  rather than complete.
+- Deliberately deferred (with reasons): the startup settings read
+  (B4 — proper fix is a splash-screen migration), the universal APK's
+  bundled Node runtime (C1 — releases already ship per-ABI APKs), the
+  lifecycle-aware state-collection sweep (C2), the large-file and DI
+  refactors (C3/D1/D2/D3), and content-pattern secret masking on tool
+  output (A11 — name rules were extended instead).
+
 ## 4.14.2 — Model switching everywhere + chat search
 
 - Quick chat finally has a model switcher: the model row above its

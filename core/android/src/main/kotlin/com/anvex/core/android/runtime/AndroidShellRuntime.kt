@@ -50,6 +50,11 @@ class AndroidShellRuntime(
                 .start()
             val finished = process.waitFor(safeTimeout, TimeUnit.MILLISECONDS)
             if (!finished) {
+                // Review B8: destroy() alone killed only the `sh`, leaving
+                // its children (node/npm dev servers) orphaned — the
+                // terminal session already reaps its tree on close. Kill
+                // the descendant tree first, then the shell.
+                reapProcessTree(process)
                 process.destroy()
                 if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
                 ShellResult(false, readBounded(outputFile), "Process timed out after ${safeTimeout}ms.")
@@ -59,6 +64,41 @@ class AndroidShellRuntime(
             }
         } finally {
             outputFile.delete()
+        }
+    }
+
+    /**
+     * Review B8: SIGKILL every descendant of [process] (deepest first),
+     * discovered through /proc parent links. Best-effort: if the pid is
+     * unavailable the caller still destroys the shell itself, which is
+     * the previous behavior.
+     */
+    private fun reapProcessTree(process: Process) {
+        runCatching {
+            val rootPid = process.pid()
+            if (rootPid <= 0) return
+            val childrenOf = HashMap<Long, MutableList<Long>>()
+            File("/proc").listFiles()?.forEach { dir ->
+                val pid = dir.name.toLongOrNull() ?: return@forEach
+                val ppid = runCatching {
+                    File(dir, "stat").readText().substringAfterLast(") ")
+                        .split(" ").getOrNull(1)?.toLongOrNull()
+                }.getOrNull() ?: return@forEach
+                childrenOf.getOrPut(ppid) { mutableListOf() }.add(pid)
+            }
+            val descendants = ArrayList<Long>()
+            val queue = ArrayDeque<Long>()
+            queue.add(rootPid)
+            while (queue.isNotEmpty()) {
+                val current = queue.removeFirst()
+                childrenOf[current]?.forEach { child ->
+                    descendants.add(child)
+                    queue.add(child)
+                }
+            }
+            descendants.asReversed().forEach { pid ->
+                runCatching { android.os.Process.killProcess(pid.toInt()) }
+            }
         }
     }
 

@@ -799,8 +799,10 @@ internal fun formatRelative(ts: Long): String {
     }
 }
 
+// Review B10: fixed Locale.US (a fa/de default locale would render a
+// decimal comma) and Double math (Float lost precision on large sizes).
 internal fun formatSize(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024f)
-    else -> "%.1f MB".format(bytes / (1024f * 1024f))
+    bytes < 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f KB", bytes / 1024.0)
+    else -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
 }

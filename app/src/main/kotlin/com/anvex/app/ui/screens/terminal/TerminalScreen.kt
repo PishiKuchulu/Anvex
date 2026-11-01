@@ -86,7 +86,10 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
                     outputBase += drop
                 }
             }
-            delay(180)
+            // Review C4: 350 ms batching (was 180 ms) — halves the
+            // recomposition churn of the poll loop while staying well
+            // inside interactive latency for terminal output.
+            delay(350)
         }
     }
 

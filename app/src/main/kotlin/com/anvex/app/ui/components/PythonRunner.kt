@@ -50,6 +50,13 @@ fun PythonRunnerDialog(code: String, onDismiss: () -> Unit) {
         title = { Text(tr("Python sandbox")) },
         text = {
             Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
+                // Review A3: the first run downloads the Pyodide runtime
+                // from a CDN — say so in the UI, not just in docs.
+                Text(
+                    tr("First run downloads the Python runtime (needs network)."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(output, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
                 AndroidView(
                     factory = { ctx ->

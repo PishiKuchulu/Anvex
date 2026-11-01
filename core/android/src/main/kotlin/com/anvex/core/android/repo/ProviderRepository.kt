@@ -70,19 +70,33 @@ class ProviderRepository(private val dao: ProviderDao) {
     private fun providerHeadersAad(id: String): ByteArray =
         "anvex-provider-headers-v1|$id".toByteArray(Charsets.UTF_8)
 
-    /** AAD form first, legacy no-AAD form second (transparent migration). */
-    private fun decryptHeaders(encoded: String, providerId: String): String = try {
-        KeystoreCrypto.decrypt(encoded, providerHeadersAad(providerId))
-    } catch (_: KeystoreCrypto.CryptoException) {
-        KeystoreCrypto.decrypt(encoded)
-    }
+    // Review A5: ciphertexts written from now on carry a version prefix.
+    // A VERSIONED record decrypts ONLY with its AAD — the old silent
+    // no-AAD fallback would let a DB edit (e.g. baseUrl) redirect a key
+    // whose binding was supposed to fail closed. Unversioned legacy
+    // records keep the fallback and are migrated on read (runtimeConfig
+    // re-encrypts them into the versioned AAD form).
+    private fun encryptAad(plain: String, aad: ByteArray): String =
+        CIPHERTEXT_V2_PREFIX + KeystoreCrypto.encrypt(plain, aad)
 
-    /** AAD form first, legacy form second. Throws when neither works. */
-    private fun decryptApiKey(encoded: String, id: String, baseUrl: String, model: String): String = try {
-        KeystoreCrypto.decrypt(encoded, providerKeyAad(id, baseUrl, model))
-    } catch (_: KeystoreCrypto.CryptoException) {
-        KeystoreCrypto.decrypt(encoded)
-    }
+    private fun decryptAad(encoded: String, aad: ByteArray): String =
+        if (encoded.startsWith(CIPHERTEXT_V2_PREFIX)) {
+            KeystoreCrypto.decrypt(encoded.removePrefix(CIPHERTEXT_V2_PREFIX), aad)
+        } else {
+            try {
+                KeystoreCrypto.decrypt(encoded, aad)
+            } catch (_: KeystoreCrypto.CryptoException) {
+                KeystoreCrypto.decrypt(encoded)
+            }
+        }
+
+    /** Versioned AAD form only for new records; legacy fallback for old. */
+    private fun decryptHeaders(encoded: String, providerId: String): String =
+        decryptAad(encoded, providerHeadersAad(providerId))
+
+    /** Versioned AAD form only for new records; legacy fallback for old. */
+    private fun decryptApiKey(encoded: String, id: String, baseUrl: String, model: String): String =
+        decryptAad(encoded, providerKeyAad(id, baseUrl, model))
 
     suspend fun get(id: String): ProviderConfig? = dao.get(id)?.toDomain()
 
@@ -122,7 +136,7 @@ class ProviderRepository(private val dao: ProviderDao) {
         val stored = dao.get(config.id)
         val enc = when {
             apiKeyPlain != null && apiKeyPlain.isNotBlank() -> try {
-                KeystoreCrypto.encrypt(apiKeyPlain.trim(), providerKeyAad(config.id, config.baseUrl, config.model))
+                encryptAad(apiKeyPlain.trim(), providerKeyAad(config.id, config.baseUrl, config.model))
             } catch (e: KeystoreCrypto.CryptoException) {
                 return RepoResult.Err("Secure storage failed", e.message ?: "Android Keystore unavailable.")
             }
@@ -139,7 +153,7 @@ class ProviderRepository(private val dao: ProviderDao) {
         ) {
             runCatching {
                 val plain = decryptApiKey(enc, stored.id, stored.baseUrl, stored.model)
-                KeystoreCrypto.encrypt(plain, providerKeyAad(config.id, config.baseUrl, config.model))
+                encryptAad(plain, providerKeyAad(config.id, config.baseUrl, config.model))
             }.getOrDefault(enc)
         } else enc
         val final = config.copy(apiKeyEnc = finalEnc)
@@ -211,7 +225,7 @@ class ProviderRepository(private val dao: ProviderDao) {
         var migrated = 0
         dao.observeAll().firstOrNull().orEmpty().forEach { entity ->
             if (entity.extraHeadersEnc.isNullOrBlank() && entity.extraHeadersJson.isNotBlank() && entity.extraHeadersJson != "{}") {
-                val encoded = try { KeystoreCrypto.encrypt(entity.extraHeadersJson, providerHeadersAad(entity.id)) } catch (_: Exception) { return@forEach }
+                val encoded = try { encryptAad(entity.extraHeadersJson, providerHeadersAad(entity.id)) } catch (_: Exception) { return@forEach }
                 dao.update(entity.copy(extraHeadersJson = "{}", extraHeadersEnc = encoded))
                 migrated++
             }
@@ -264,7 +278,12 @@ class ProviderRepository(private val dao: ProviderDao) {
         return skipped
     }
 
-    companion object { private const val MAX_RESTORE_PROVIDERS = 100 }
+    companion object {
+        private const val MAX_RESTORE_PROVIDERS = 100
+
+        /** Prefix marking AAD-only ciphertexts (review A5). */
+        private const val CIPHERTEXT_V2_PREFIX = "v2:"
+    }
 
     /**
      * Build a runtime config with the decrypted key (memory only).
@@ -288,12 +307,14 @@ class ProviderRepository(private val dao: ProviderDao) {
         // read uses the AAD form. Best-effort — a failed rewrite never
         // blocks the chat; the legacy form still works next time.
         if (!encoded.isNullOrBlank()) {
-            val aadWorks = runCatching {
+            // Versioned records are already AAD-only; unversioned ones are
+            // migrated when they only decrypt via the legacy fallback.
+            val aadWorks = encoded.startsWith(CIPHERTEXT_V2_PREFIX) || runCatching {
                 KeystoreCrypto.decrypt(encoded, providerKeyAad(config.id, config.baseUrl, config.model)); true
             }.getOrDefault(false)
             if (!aadWorks) {
                 runCatching {
-                    val reEnc = KeystoreCrypto.encrypt(key, providerKeyAad(config.id, config.baseUrl, config.model))
+                    val reEnc = encryptAad(key, providerKeyAad(config.id, config.baseUrl, config.model))
                     dao.get(id)?.let { dao.update(it.copy(apiKeyEnc = reEnc)) }
                 }
             }
@@ -354,7 +375,7 @@ class ProviderRepository(private val dao: ProviderDao) {
         baseUrl = baseUrl,
         model = model,
         extraHeadersJson = "{}",
-        extraHeadersEnc = runCatching { KeystoreCrypto.encrypt(json.encodeToString(extraHeaders), providerHeadersAad(id)) }.getOrElse { throw it },
+        extraHeadersEnc = runCatching { encryptAad(json.encodeToString(extraHeaders), providerHeadersAad(id)) }.getOrElse { throw it },
         temperature = temperature,
         maxTokens = maxTokens,
         inputPricePerMillion = inputPricePerMillion,

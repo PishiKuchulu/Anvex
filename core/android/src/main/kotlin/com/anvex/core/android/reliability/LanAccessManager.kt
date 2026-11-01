@@ -18,7 +18,7 @@ import java.util.concurrent.Semaphore
  * agent execution endpoint and never exposes credentials, files or commands.
  */
 class LanAccessManager {
-    data class Status(val running: Boolean, val port: Int, val address: String, val tokenPreview: String?)
+    data class Status(val running: Boolean, val port: Int, val address: String, val tokenInfo: String?)
 
     private val running = AtomicBoolean(false)
     private var server: ServerSocket? = null
@@ -67,7 +67,14 @@ class LanAccessManager {
 
     @Volatile private var bindAddress: String = "127.0.0.1"
 
-    fun status(): Status = Status(running.get(), port, if (running.get()) "$bindAddress:$port" else "stopped", token?.take(8)?.plus("…"))
+    // Review A10: never surface any part of the token itself in UI —
+    // report only its strength (the token is 32 random bytes, hex-encoded).
+    fun status(): Status = Status(
+        running.get(),
+        port,
+        if (running.get()) "$bindAddress:$port" else "stopped",
+        token?.let { "256-bit token set" },
+    )
 
     private fun serve(
         socket: ServerSocket,

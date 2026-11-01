@@ -87,9 +87,20 @@ class AndroidBuildEngine(private val toolchain: ToolchainManager) {
         val extraEnv: Map<String, String>
         if (request.useProjectWrapper) {
             if (!request.riskScanAcknowledged) {
+                // Review D4: this gate used to demand acknowledgment of a
+                // "risk scan" that never ran — BuildScriptRiskScanner had
+                // no production caller. Run it for real over the project's
+                // build scripts and show the findings; acknowledging then
+                // means the user has seen them.
+                val findings = scanProjectBuildScripts(request.projectDir)
+                val detail = if (findings.isEmpty()) {
+                    "The build-script risk scan found no command/network execution patterns."
+                } else {
+                    findings.take(10).joinToString("\n") { "• ${it.path}: ${it.reason}" }
+                }
                 return BuildResult(
                     false, null,
-                    "Wrapper builds execute project-controlled code. Acknowledge the build-script risk scan before using ./gradlew.",
+                    "Wrapper builds execute project-controlled code. Review the build-script risk scan, then acknowledge it before using ./gradlew.\n$detail",
                     emptyList(),
                 )
             }
@@ -174,6 +185,29 @@ class AndroidBuildEngine(private val toolchain: ToolchainManager) {
             running = null
             BuildResult(false, null, e.message ?: e::class.simpleName ?: "Build failed.", log.toList())
         }
+    }
+
+    /** Review D4: run the engine's BuildScriptRiskScanner over the
+     * project's Gradle build scripts (bounded walk, bounded file size). */
+    private fun scanProjectBuildScripts(projectDir: File): List<com.anvex.core.engine.BuildScriptRiskScanner.Finding> {
+        val findings = ArrayList<com.anvex.core.engine.BuildScriptRiskScanner.Finding>()
+        projectDir.walkTopDown().maxDepth(4).forEach { f ->
+            if (findings.size >= 25) return findings
+            if (!f.isFile) return@forEach
+            val name = f.name
+            if (name != "build.gradle" && name != "build.gradle.kts" &&
+                name != "settings.gradle" && name != "settings.gradle.kts"
+            ) {
+                return@forEach
+            }
+            if (f.length() > 512 * 1024) return@forEach
+            val content = runCatching { f.readText() }.getOrNull() ?: return@forEach
+            findings += com.anvex.core.engine.BuildScriptRiskScanner.scan(
+                f.relativeTo(projectDir).path,
+                content,
+            )
+        }
+        return findings
     }
 
     private fun newestApk(projectDir: File, variant: String): File? {

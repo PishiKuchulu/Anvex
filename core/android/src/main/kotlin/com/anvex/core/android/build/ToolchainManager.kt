@@ -114,15 +114,32 @@ class ToolchainManager(private val context: Context) {
         }
         if (problems.isNotEmpty()) return ToolchainStatus(false, problems, manifest)
 
-        // Replace the current toolchain: old tree out, staged tree in.
-        root.deleteRecursively()
-        root.mkdirs()
+        // Review B7: build the new tree NEXT to the live one and swap by
+        // rename. The old flow deleted the working toolchain first, so a
+        // failed copy (disk full, interruption) left nothing working.
+        val parent = root.parentFile
+            ?: return ToolchainStatus(false, listOf("Toolchain directory has no parent."), manifest)
+        val incoming = File(parent, root.name + ".new")
+        val previous = File(parent, root.name + ".old")
+        incoming.deleteRecursively()
+        previous.deleteRecursively()
+        incoming.mkdirs()
         listOf("jdk", "sdk", "gradle").forEach { section ->
             File(staged, section).takeIf { it.isDirectory }?.let { src ->
-                src.copyRecursively(File(root, section), overwrite = true)
+                src.copyRecursively(File(incoming, section), overwrite = true)
             }
         }
-        File(staged, "toolchain.json").copyTo(File(root, "toolchain.json"), overwrite = true)
+        File(staged, "toolchain.json").copyTo(File(incoming, "toolchain.json"), overwrite = true)
+        if (root.exists() && !root.renameTo(previous)) {
+            incoming.deleteRecursively()
+            return ToolchainStatus(false, listOf("Could not move the existing toolchain aside."), manifest)
+        }
+        if (!incoming.renameTo(root)) {
+            previous.renameTo(root) // roll back
+            incoming.deleteRecursively()
+            return ToolchainStatus(false, listOf("Could not activate the new toolchain."), manifest)
+        }
+        previous.deleteRecursively()
         return status()
     }
 

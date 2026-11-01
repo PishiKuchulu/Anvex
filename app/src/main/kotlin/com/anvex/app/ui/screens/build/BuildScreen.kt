@@ -121,7 +121,14 @@ fun BuildScreen(nav: NavController, projectId: String) {
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { pickBundle.launch(arrayOf("application/zip")) }, enabled = !building, modifier = Modifier.weight(1f)) {
+                        // Review D4/F3: on Android 10+ the imported toolchain
+                        // can never execute (W^X), so don't let the user
+                        // download/import 100 MB+ into a dead end.
+                        Button(
+                            onClick = { pickBundle.launch(arrayOf("application/zip")) },
+                            enabled = !building && android.os.Build.VERSION.SDK_INT < 29,
+                            modifier = Modifier.weight(1f),
+                        ) {
                             Icon(Icons.Filled.Archive, null); Spacer(Modifier.width(6.dp)); Text(tr("Import bundle"))
                         }
                         OutlinedButton(

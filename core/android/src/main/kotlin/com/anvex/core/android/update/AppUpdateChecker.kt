@@ -23,6 +23,9 @@ data class AppUpdateInfo(
     val sizeBytes: Long,
     /** v4.10.1 (SEC-06): the release's published `<apk>.sha256` asset, when present. */
     val sha256Url: String? = null,
+    /** Review A7: the expected hash value, fetched best-effort so the
+     * update dialog can display it for out-of-band comparison. */
+    val expectedSha256: String? = null,
 )
 
 /**
@@ -54,6 +57,20 @@ object AppUpdateChecker {
         host == "github.com" ||
             host == "objects.githubusercontent.com" ||
             host == "release-assets.githubusercontent.com"
+
+    /**
+     * Review A7: fetch the expected SHA-256 text for [info] (best-effort;
+     * null on any failure). The URL passes the same release-URL guard the
+     * download itself uses, and the value is shape-validated.
+     */
+    suspend fun fetchExpectedSha256(info: AppUpdateInfo): String? = withContext(Dispatchers.IO) {
+        val url = info.sha256Url?.takeIf { it.isNotBlank() } ?: return@withContext null
+        runCatching {
+            requireAnvexReleaseUrl(url)
+            httpGet(url).trim().split(Regex("\\s+")).firstOrNull()?.lowercase()
+                ?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
+        }.getOrNull()
+    }
 
     /** The newest release strictly newer than [currentVersion], or null. */
     suspend fun fetchLatestNewerThan(currentVersion: String): AppUpdateInfo? =

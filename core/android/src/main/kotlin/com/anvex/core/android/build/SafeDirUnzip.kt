@@ -36,7 +36,10 @@ object SafeDirUnzip {
                     if (count >= MAX_ENTRIES) error("Bundle has too many entries (limit $MAX_ENTRIES).")
                     val raw = entry.name
                     // Reject absolute paths and any .. segment before touching the filesystem.
-                    if (raw.startsWith("/") || raw.contains('\\') && File(raw).isAbsolute) {
+                    // Review A6: the old condition relied on && binding
+                    // tighter than ||, which made the backslash branch
+                    // effectively dead; reject any absolute form plainly.
+                    if (raw.startsWith("/") || raw.startsWith("\\") || File(raw).isAbsolute) {
                         throw SecurityException("Absolute entry path: $raw")
                     }
                     val segments = raw.split('/').filter { it.isNotEmpty() }
@@ -71,8 +74,10 @@ object SafeDirUnzip {
                     }
                     total += written
                     if (total > MAX_TOTAL_BYTES) throw IllegalStateException("Bundle exceeds total size limit.")
-                    out.setReadable(true, false)
-                    out.setExecutable(raw.contains("/bin/"), false)
+                    // Review A6: ownerOnly = true — extracted files must
+                    // not become world-readable/executable.
+                    out.setReadable(true, true)
+                    out.setExecutable(raw.contains("/bin/"), true)
                     count++
                 } finally {
                     zip.closeEntry()

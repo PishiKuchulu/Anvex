@@ -59,7 +59,9 @@ object SkillGitInstaller {
             val commit = rootDir?.name?.substringAfterLast('-')?.takeIf { it.matches(Regex("[0-9a-f]{7,40}")) }
             val zip = repackageAsZip(packageRoot, File(staging, "package.zip"))
             val result = installer.installArchive(zip, expectedGitUrl = gitUrl)
-            return Installed(result.id, result.version, result.id, commit = commit, archiveSha256 = archiveSha256)
+            // Review B5: the display name comes from the package manifest
+            // (Result.name) — the id/slug was shown here before.
+            return Installed(result.id, result.version, result.name.ifBlank { result.id }, commit = commit, archiveSha256 = archiveSha256)
         } finally {
             staging.deleteRecursively()
         }

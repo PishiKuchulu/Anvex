@@ -363,6 +363,17 @@ class HarnessBridge(
         @JavascriptInterface
         fun readFile(path: String): String = runCatching {
             val safe = PathSanitizer.sanitizeOrNull(path) ?: return bridgeError("Unsafe path")
+            // Review A2: the bridge bypassed SensitivePaths entirely — every
+            // other surface (both servers, the shell, the agent tools) gates
+            // on it. Secrets and VCS/app internals are not readable through
+            // the bridge either; extracted attachments stay readable (they
+            // are this surface's legitimate input). 404-style wording so
+            // existence is not confirmed.
+            if (com.anvex.core.engine.SensitivePaths.isSensitive(safe) &&
+                !com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(safe)
+            ) {
+                return bridgeError("File not found: $safe")
+            }
             val fs = kotlinx.coroutines.runBlocking { graph.projects.fileSystemForAsync(projectId) }
             // M-07: the old code read the whole file into memory and only
             // then checked the size — a multi-MB file OOM'd first. Check
@@ -378,6 +389,11 @@ class HarnessBridge(
         @JavascriptInterface
         fun writeFile(path: String, content: String): String = runCatching {
             val safe = PathSanitizer.sanitizeOrNull(path) ?: return bridgeError("Unsafe path")
+            // Review A2: sensitive paths are never writable through the
+            // bridge (.env, everything under .git or .anvex state dirs).
+            if (com.anvex.core.engine.SensitivePaths.isSensitive(safe)) {
+                return bridgeError("Protected path")
+            }
             if (content.toByteArray(Charsets.UTF_8).size > MAX_BRIDGE_WRITE_BYTES) return bridgeError("Content too large for a bridge write.")
             val fs = kotlinx.coroutines.runBlocking { graph.projects.fileSystemForAsync(projectId) }
             val before = fs.readFile(safe)
@@ -391,6 +407,11 @@ class HarnessBridge(
         @JavascriptInterface
         fun deleteFile(path: String): String = runCatching {
             val safe = PathSanitizer.sanitizeOrNull(path) ?: return bridgeError("Unsafe path")
+            // Review A2: recursive delete of a sensitive tree (.git/,
+            // .anvex/) through the bridge would destroy history/secrets.
+            if (com.anvex.core.engine.SensitivePaths.isSensitive(safe)) {
+                return bridgeError("Protected path")
+            }
             val fs = kotlinx.coroutines.runBlocking { graph.projects.fileSystemForAsync(projectId) }
             if (!fs.delete(safe, true)) return bridgeError("Could not delete $safe")
             emitEvent("file_event") { put("path", safe); put("kind", "DELETED") }
@@ -400,6 +421,12 @@ class HarnessBridge(
         @JavascriptInterface
         fun analyzeFile(path: String): String = runCatching {
             val safe = PathSanitizer.sanitizeOrNull(path) ?: return bridgeError("Unsafe path")
+            // Review A2: same read gate as readFile.
+            if (com.anvex.core.engine.SensitivePaths.isSensitive(safe) &&
+                !com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(safe)
+            ) {
+                return bridgeError("File not found: $safe")
+            }
             val fs = kotlinx.coroutines.runBlocking { graph.projects.fileSystemForAsync(projectId) }
             val content = fs.readFile(safe) ?: return bridgeError("File not found: $safe")
             val result = LightDiagnostics.analyze(safe, content)

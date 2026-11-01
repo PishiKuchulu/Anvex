@@ -110,7 +110,7 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
 }
 
 private fun formatBytes(b: Long): String = when {
-    b >= 1024 * 1024 -> "%.1f MB".format(b / (1024.0 * 1024.0))
+    b >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", b / (1024.0 * 1024.0))
     b >= 1024 -> "${b / 1024} KB"
     else -> "$b B"
 }

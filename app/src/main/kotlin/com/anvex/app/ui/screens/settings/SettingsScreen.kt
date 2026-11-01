@@ -199,6 +199,8 @@ fun SettingsScreen(
                     nav = nav,
                     updateController = updateController,
                     onShowUpdateDialog = { showUpdateDialog = true },
+                    autoUpdateCheck = settings?.autoUpdateCheck ?: true,
+                    onAutoUpdateCheck = { v -> scope.launch { graph.settings.setAutoUpdateCheck(v) } },
                 )
             }
             androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
@@ -603,6 +605,8 @@ private fun DeveloperCategory(
     nav: NavController,
     updateController: com.anvex.app.ui.components.AppUpdateController,
     onShowUpdateDialog: () -> Unit,
+    autoUpdateCheck: Boolean,
+    onAutoUpdateCheck: (Boolean) -> Unit,
 ) {
     AnvexSectionHeader(tr("Developer & about"), tr("Diagnostics, recovery and credits"))
     SettingsRow(Icons.Filled.BugReport, tr("Debug panel"), tr("Runtime status, memory, logs and provider tests"), nav = nav, route = Routes.DEBUG)
@@ -614,6 +618,17 @@ private fun DeveloperCategory(
     // v4.7: in-app update check (GitHub Releases = the distribution channel).
     AnvexSectionHeader(tr("App update"), tr("New versions are published on GitHub Releases"))
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        // Review A8: opt-out for the automatic on-launch check.
+        ListItem(
+            headlineContent = { Text(tr("Automatic update check")) },
+            supportingContent = { Text(tr("Check GitHub Releases for a new version when the app starts")) },
+            trailingContent = {
+                androidx.compose.material3.Switch(
+                    checked = autoUpdateCheck,
+                    onCheckedChange = onAutoUpdateCheck,
+                )
+            },
+        )
         val updateState = updateController.state
         ListItem(
             headlineContent = { Text("Anvex ${updateController.currentVersion}") },

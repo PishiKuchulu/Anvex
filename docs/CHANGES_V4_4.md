@@ -1,3 +1,7 @@
+> **Historical delivery record — not the changelog.** The single
+> changelog is the root [`CHANGELOG.md`](../CHANGELOG.md); this file is
+> the per-file manifest of one past delivery round, kept for provenance.
+
 # CHANGES — Anvex 4.4.0 (round 3)
 
 This file lists every changed/added/removed file versus the delivered round-2 ZIP

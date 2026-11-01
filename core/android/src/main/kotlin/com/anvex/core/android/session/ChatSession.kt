@@ -137,6 +137,18 @@ class ChatSession(
     private var streamJob: Job? = null
     private var lastRevision = 0
 
+    /**
+     * Review B1: generation counter for the Stop→Send race. cancel()
+     * flips `streaming` off immediately so the user can send again at
+     * once, but the cancelled turn still runs its NonCancellable
+     * finalize() afterwards — without a guard, that stale finalize
+     * overwrote the NEW turn's state (streaming=false, empty text and
+     * artifacts). Each send() takes the next generation; finalize may
+     * only publish terminal UI state for the current generation (its
+     * persistence — message + journal — always runs).
+     */
+    @Volatile private var turnGeneration = 0
+
     /** Generated deliverables (ZIP/PDF/…) of the current turn, persisted into the message summary. */
     private val generatedRecords = java.util.Collections.synchronizedList(ArrayList<ActionRecord>())
 
@@ -182,7 +194,8 @@ class ChatSession(
         if (_state.value.streaming) return
         val text = userText.trim()
         if (text.isEmpty() && attachments.isEmpty()) return
-        streamJob = scope.launch { runStream(text, attachments, metadata) }
+        val generation = ++turnGeneration
+        streamJob = scope.launch { runStream(text, attachments, metadata, generation) }
     }
 
     fun cancel() {
@@ -210,7 +223,7 @@ class ChatSession(
 
     // ------------------------------------------------------------------ pipeline
 
-    private suspend fun runStream(userText: String, attachments: List<com.anvex.core.ai.ChatAttachment>, attachmentMetadata: List<AttachmentMeta>) {
+    private suspend fun runStream(userText: String, attachments: List<com.anvex.core.ai.ChatAttachment>, attachmentMetadata: List<AttachmentMeta>, generation: Int) {
         // B-1 fix: snapshot history BEFORE persisting the new user message so
         // the user turn is never duplicated in the request.
         val history = runCatching { historyProvider() }
@@ -615,6 +628,7 @@ class ChatSession(
                     canceled = canceled,
                     memoryOn = memoryOn,
                     reasoning = allReasoning.toString(),
+                    generation = generation,
                 )
             }
         }
@@ -786,7 +800,12 @@ class ChatSession(
         canceled: Boolean,
         memoryOn: Boolean,
         reasoning: String = "",
+        generation: Int,
     ) {
+        // Review B1: a superseded turn (Stop→Send) still persists its
+        // message and journal below, but must not publish terminal UI
+        // state over the newer turn that already owns the state flow.
+        val isCurrentTurn = generation == turnGeneration
         // Summary attribution: the last artifact opened during this response.
         val lastArtifact = _state.value.artifacts.lastOrNull()
         val summary = runner.summaryFor(
@@ -844,9 +863,11 @@ class ChatSession(
         )
         runCatching { chatRepo.upsert(assistantMessage) }
             .onFailure {
-                _state.value = _state.value.copy(
-                    engineError = "Chat history could not be saved: ${it.message?.take(160) ?: "storage error"}"
-                )
+                if (isCurrentTurn) {
+                    _state.value = _state.value.copy(
+                        engineError = "Chat history could not be saved: ${it.message?.take(160) ?: "storage error"}"
+                    )
+                }
             }
 
         // v1.1 §24: persist the mutation journal so changes survive restarts.
@@ -856,16 +877,18 @@ class ChatSession(
             // Journal persistence is best-effort; the in-session log still works.
         }
 
-        _state.value = _state.value.copy(
-            streaming = false,
-            streamText = "",
-            streamReasoning = "",
-            artifacts = emptyList(),
-            error = failure,
-            completedArtifact = finalSummary,
-            statusLine = null,
-            memoryNote = memoryNote,
-        )
+        if (isCurrentTurn) {
+            _state.value = _state.value.copy(
+                streaming = false,
+                streamText = "",
+                streamReasoning = "",
+                artifacts = emptyList(),
+                error = failure,
+                completedArtifact = finalSummary,
+                statusLine = null,
+                memoryNote = memoryNote,
+            )
+        }
         onProjectFilesChanged()
     }
 

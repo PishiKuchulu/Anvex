@@ -93,6 +93,9 @@ data class AppSettings(
     val agentEngine: AgentEngine = AgentEngine.NATIVE,
     /** v4.14 (Atelier): the selected accent for the Atelier theme. */
     val atelierAccent: AtelierAccent = AtelierAccent.ORANGE,
+    /** Review A8: the on-launch update check can be turned off; the
+     * manual Settings check always remains available. */
+    val autoUpdateCheck: Boolean = true,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -118,6 +121,7 @@ class SettingsRepository(private val context: Context) {
         val TERMUX_BRIDGE = booleanPreferencesKey("termux_bridge_enabled")
         val AGENT_ENGINE = stringPreferencesKey("agent_engine")
         val ATELIER_ACCENT = stringPreferencesKey("atelier_accent")
+        val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -142,6 +146,7 @@ class SettingsRepository(private val context: Context) {
             termuxBridgeEnabled = p[Keys.TERMUX_BRIDGE] ?: false,
             agentEngine = p[Keys.AGENT_ENGINE]?.let { runCatching { AgentEngine.valueOf(it) }.getOrNull() } ?: AgentEngine.NATIVE,
             atelierAccent = p[Keys.ATELIER_ACCENT]?.let { runCatching { AtelierAccent.valueOf(it) }.getOrNull() } ?: AtelierAccent.ORANGE,
+            autoUpdateCheck = p[Keys.AUTO_UPDATE_CHECK] ?: true,
         )
     }
 
@@ -163,6 +168,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setNodeBackend(v: NodeBackend) = context.dataStore.edit { it[Keys.NODE_BACKEND] = v.name }
     suspend fun setAgentEngine(v: AgentEngine) = context.dataStore.edit { it[Keys.AGENT_ENGINE] = v.name }
     suspend fun setAtelierAccent(v: AtelierAccent) = context.dataStore.edit { it[Keys.ATELIER_ACCENT] = v.name }
+    suspend fun setAutoUpdateCheck(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_UPDATE_CHECK] = v }
     suspend fun setTermuxBridgeEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TERMUX_BRIDGE] = v }
 
     suspend fun restoreFromBackup(encoded: String) {
@@ -180,6 +186,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.LAST_PROJECT] = s.lastProjectId; p[Keys.THINKING] = s.thinkingLevel.name; p[Keys.ONBOARDING] = s.onboardingSeen
             p[Keys.MEMORY_ENABLED] = s.memoryEnabled; p[Keys.CUSTOM_INSTRUCTIONS] = s.customInstructions.take(4_000)
             p[Keys.NODE_BACKEND] = s.nodeBackend.name; p[Keys.ATELIER_ACCENT] = s.atelierAccent.name
+            p[Keys.AUTO_UPDATE_CHECK] = s.autoUpdateCheck
         }
     }
 }

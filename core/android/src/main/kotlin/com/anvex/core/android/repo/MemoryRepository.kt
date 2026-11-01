@@ -21,7 +21,7 @@ import java.util.UUID
 
 /**
  * Long-term memory store. Kept as one app-private JSON file (atomic replace) on purpose:
- * the Room schema is frozen at v12 by the audit contract, and memory is small (<= 200 items).
+ * it stays out of the Room database entirely, and memory is small (<= 200 items).
  * Memory never leaves the device except inside the system prompt sent to the user's own provider.
  */
 class MemoryRepository(context: Context) {
@@ -40,7 +40,12 @@ class MemoryRepository(context: Context) {
     private fun persist(list: List<MemoryItem>) {
         val tmp = File(file.parentFile, "memories.json.tmp")
         tmp.writeText(json.encodeToString(serializer, list))
-        if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+        // Review B6: the old fallback deleted the live file and retried
+        // the rename — if the retry also failed, all long-term memory
+        // was gone. Rename is atomic on the same filesystem; on failure
+        // keep the old file intact (the in-memory state still advances,
+        // and the next successful persist rewrites the file).
+        tmp.renameTo(file)
         _items.value = list
     }
 

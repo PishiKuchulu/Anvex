@@ -1,3 +1,7 @@
+> **Historical delivery record — not the changelog.** The single
+> changelog is the root [`CHANGELOG.md`](../CHANGELOG.md); this file is
+> the per-file manifest of one past delivery round, kept for provenance.
+
 # CHANGES — Anvex 4.4.1 (OpenCode integration round)
 
 Every changed/added file versus the v4.4.0 delivery, with the architectural reason.

@@ -26,11 +26,11 @@ Bring any model. Build real projects. No PC, no backend, no Termux.
 
 ## What is Anvex?
 
-**Anvex** is a standalone Android app that turns your phone into an AI-powered development studio. Describe what you want, and the AI agent writes the project, edits files, previews the result, and packages it for you — **all on-device**.
+**Anvex** is a standalone Android app that turns your phone into an AI-powered development studio. Describe what you want, and the AI agent writes the project, edits files, previews the result, and packages it for you — **on-device**. One exception: building an APK on Android 10+ uses the optional GitHub Actions cloud build, because Android's W^X policy blocks on-device Gradle builds there.
 
 It started as an Android port of [bolt.diy](https://github.com/stackblitz-labs/bolt.diy) and has grown into a general-purpose, bring-your-own-model agent: plug in **any API key + base URL**, and you get a chat-driven coding workspace with memory, tools, and a real project file system.
 
-**Download:** get the latest signed APK from [Releases](https://github.com/PishiKuchulu/Anvex/releases).
+**Download:** get the latest signed release APK (the versioned `vX.Y.Z` releases) from [Releases](https://github.com/PishiKuchulu/Anvex/releases).
 
 ## 📸 Screenshots
 
@@ -52,7 +52,7 @@ It started as an Android port of [bolt.diy](https://github.com/stackblitz-labs/b
 - 📦 **Real file delivery** — export your project as a proper **ZIP** (or PDF) straight to your device, no HTML workarounds.
 - 🗂️ **Project workspace** — create a project with just a **name and a folder path**; existing folders with files are accepted.
 - 🔄 **GitHub sync** — back up and sync your projects to your own GitHub repository, with a built-in local git.
-- 🌍 **English & Persian UI** — full translation with proper RTL support.
+- 🌍 **English & Persian UI** — broad Persian translation with proper RTL support (a few strings may still appear in English).
 - 🔒 **Privacy-first** — your keys and projects stay on your device. No Anvex backend, no telemetry servers.
 
 <div align="center">
@@ -171,11 +171,11 @@ Inspired by [bolt.diy](https://github.com/stackblitz-labs/bolt.diy).
 
 ## معرفی Anvex
 
-اپلیکیشن **Anvex** گوشی شما را به یک استودیوی توسعه با هوش مصنوعی تبدیل می‌کند. فقط بگویید چه می‌خواهید؛ ایجنت هوش مصنوعی پروژه را می‌نویسد، فایل‌ها را ویرایش می‌کند، نتیجه را پیش‌نمایش می‌دهد و خروجی را برایتان بسته‌بندی می‌کند — **همه‌چیز روی خود گوشی**.
+اپلیکیشن **Anvex** گوشی شما را به یک استودیوی توسعه با هوش مصنوعی تبدیل می‌کند. فقط بگویید چه می‌خواهید؛ ایجنت هوش مصنوعی پروژه را می‌نویسد، فایل‌ها را ویرایش می‌کند، نتیجه را پیش‌نمایش می‌دهد و خروجی را برایتان بسته‌بندی می‌کند — **همه‌چیز روی خود گوشی**. تنها استثنا ساخت APK است: روی اندروید ۱۰ به بالا، به‌خاطر محدودیت سیستم‌عامل، ساخت APK با بیلد ابری گیت‌هاب انجام می‌شود.
 
 این پروژه با پورت اندرویدی [bolt.diy](https://github.com/stackblitz-labs/bolt.diy) شروع شد و حالا به یک ایجنت عمومی با قابلیت «مدل دلخواه خودتان» تبدیل شده است: **هر کلید API و آدرسی (URL)** را وارد کنید و یک محیط کدنویسی چت‌محور با حافظه، ابزارها و فایل‌سیستم واقعی پروژه داشته باشید.
 
-**دانلود:** آخرین نسخه امضاشده را از بخش [Releases](https://github.com/PishiKuchulu/Anvex/releases) بگیرید.
+**دانلود:** آخرین نسخه امضاشده (نسخه‌های دارای شماره نسخه) را از بخش [Releases](https://github.com/PishiKuchulu/Anvex/releases) بگیرید.
 
 ## 📸 اسکرین‌شات‌ها
 
@@ -197,7 +197,7 @@ Inspired by [bolt.diy](https://github.com/stackblitz-labs/bolt.diy).
 - 📦 **تحویل واقعی فایل** — خروجی **ZIP** (یا PDF) مستقیم روی گوشی، بدون ترفند فایل HTML.
 - 🗂️ **فضای کاری پروژه** — برای ساخت پروژه فقط **نام و مسیر پوشه** کافی است؛ پوشه‌ای که از قبل فایل دارد هم پذیرفته می‌شود.
 - 🔄 **همگام‌سازی با GitHub** — پشتیبان‌گیری و سینک پروژه‌ها با مخزن گیت‌هاب خودتان، همراه با گیت محلی داخلی.
-- 🌍 **رابط فارسی و انگلیسی** — ترجمه کامل با پشتیبانی درست از راست‌به‌چپ (RTL).
+- 🌍 **رابط فارسی و انگلیسی** — ترجمه گسترده فارسی با پشتیبانی درست از راست‌به‌چپ؛ ممکن است بعضی عبارت‌ها هنوز انگلیسی دیده شوند.
 - 🔒 **حریم خصوصی** — کلیدها و پروژه‌ها روی گوشی شما می‌مانند. بدون سرور و بدون ردیابی.
 
 ## 🧱 فناوری‌ها
@@ -250,6 +250,7 @@ cd Anvex
 
 - کلیدهای API فقط روی خود دستگاه ذخیره می‌شوند.
 - داده‌ها فقط به ارائه‌دهنده‌ای که **خودتان** تنظیم کرده‌اید ارسال می‌شود.
+- بررسی به‌روزرسانی: برنامه هنگام شروع، انتشارهای مخزن گیت‌هاب را برای نسخه جدید بررسی می‌کند؛ هیچ داده‌ای از دستگاه ارسال نمی‌شود و این بررسی از تنظیمات قابل خاموش‌کردن است.
 - برنامه چند مرحله سخت‌سازی امنیتی و بازبینی کد را گذرانده است.
 
 اگر آسیب‌پذیری پیدا کردید، لطفاً به‌جای Issue عمومی، از بخش Security Advisory در GitHub به‌صورت خصوصی گزارش دهید.

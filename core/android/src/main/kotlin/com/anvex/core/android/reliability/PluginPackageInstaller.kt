@@ -32,7 +32,7 @@ class PluginPackageInstaller(
         val capabilities: List<String> = emptyList(),
         val skillInstructions: String? = null,
     )
-    data class Result(val id: String, val version: String, val sha256: String, val packageDir: File)
+    data class Result(val id: String, val version: String, val sha256: String, val packageDir: File, val name: String = "")
 
     // L-05: ignoreUnknownKeys was false, so any new manifest field added
     // by a plugin author broke installation of an otherwise valid package.
@@ -129,7 +129,7 @@ class PluginPackageInstaller(
                 skillInstructions = manifest.skillInstructions,
                 skillCapabilitiesJson = json.encodeToString(manifest.capabilities),
             ))
-            return Result(manifest.id, manifest.version, sha, destination)
+            return Result(manifest.id, manifest.version, sha, destination, name = manifest.name)
         } catch (t: Throwable) {
             staging.deleteRecursively()
             throw t

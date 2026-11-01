@@ -280,6 +280,11 @@ class StaticPreviewServer(
             append("Content-Length: ").append(body.size).append("\r\n")
             append("Cache-Control: ").append(cacheControl).append("\r\n")
             append("X-Content-Type-Options: nosniff\r\n")
+            // Review A4: minimal CSP for arbitrary project content — it
+            // must not break legitimate project pages (they may load CDN
+            // assets), but plugin/base hijacking and third-party framing
+            // of the loopback origin are closed off.
+            append("Content-Security-Policy: object-src 'none'; base-uri 'none'; frame-ancestors 'self'\r\n")
             pendingCookie.get()?.let { append("Set-Cookie: ").append(it).append("\r\n") }
             append("Connection: close\r\n\r\n")
         }

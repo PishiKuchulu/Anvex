@@ -23,6 +23,10 @@ object SensitivePaths {
         ".netrc", ".dev.vars", ".htpasswd", "kubeconfig", "keystore.properties",
         "terraform.tfstate", "terraform.tfstate.backup", "terraform.tfvars",
         "secrets.yaml", "secrets.yml", "google-credentials.json",
+        // Review A11: two common secret-bearing names that escaped the
+        // list — Firebase's config (API keys/project identifiers) and
+        // the conventional properties-style secrets file.
+        "google-services.json", "secrets.properties",
     )
 
     /** Directories whose whole content is credential material. */

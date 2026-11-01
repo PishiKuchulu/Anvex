@@ -117,8 +117,17 @@ fun AnvexApp() {
     val updateController = androidx.compose.runtime.remember {
         com.anvex.app.ui.components.AppUpdateController(appContext)
     }
+    // Review C6: cancel the controller's scope when this composition
+    // leaves for good instead of leaking it for the process lifetime.
+    androidx.compose.runtime.DisposableEffect(updateController) {
+        onDispose { updateController.dispose() }
+    }
     var showUpdatePopup by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(Unit) { updateController.check() }
+    // Review A8: the launch-time check honors the user's auto-check
+    // setting once settings have loaded (manual checks are unaffected).
+    androidx.compose.runtime.LaunchedEffect(settings?.autoUpdateCheck) {
+        if (settings != null && settings.autoUpdateCheck) updateController.check()
+    }
     androidx.compose.runtime.LaunchedEffect(updateController.state) {
         if (updateController.state is com.anvex.app.ui.components.AppUpdateController.State.Available &&
             settings?.onboardingSeen != false

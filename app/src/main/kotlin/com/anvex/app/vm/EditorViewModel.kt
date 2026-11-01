@@ -85,17 +85,30 @@ class EditorViewModel(
 
     fun openFile(path: String) {
         val safe = PathSanitizer.sanitizeOrNull(path) ?: return
-        if (fs.isDirectory(safe)) return
         if (tabs.value.any { it.path == safe }) {
             activePath.value = safe
             graph.setActiveFile(projectId, safe)
             return
         }
-        val content = fs.readFile(safe) ?: ""
-        val readOnly = content.length > EDITABLE_LIMIT
-        tabs.value = tabs.value + Tab(safe, TextFieldValue(content), content, readOnly = readOnly)
-        activePath.value = safe
-        graph.setActiveFile(projectId, safe)
+        // Review B3: this used to read the whole file synchronously on
+        // the calling (main) thread and only then compare against the
+        // editable cap. The read now runs on IO and the size is known
+        // before the content is loaded.
+        viewModelScope.launch(Dispatchers.IO) {
+            if (fs.isDirectory(safe)) return@launch
+            val knownSize = fs.fileSize(safe)
+            val content = fs.readFile(safe) ?: ""
+            val readOnly = (knownSize != null && knownSize > EDITABLE_LIMIT) || content.length > EDITABLE_LIMIT
+            withContext(Dispatchers.Main.immediate) {
+                if (tabs.value.any { it.path == safe }) {
+                    activePath.value = safe
+                    return@withContext
+                }
+                tabs.value = tabs.value + Tab(safe, TextFieldValue(content), content, readOnly = readOnly)
+                activePath.value = safe
+                graph.setActiveFile(projectId, safe)
+            }
+        }
     }
 
     fun closeTab(path: String) {
@@ -326,7 +339,24 @@ class EditorViewModel(
     }
 
     override fun onCleared() {
-        tabs.value.filter { it.dirty }.forEach { saveNow(it.path) }
+        // Review B2: viewModelScope is already cancelled by the time
+        // onCleared() runs, so the old saveNow() calls here never
+        // executed — edits inside the 700 ms autosave debounce were
+        // silently lost when the editor was popped. Flush dirty tabs on
+        // an independent scope (same journaled write as saveNow, minus
+        // the UI updates that no longer matter).
+        val dirty = tabs.value.filter { it.dirty && !it.readOnly }
+        if (dirty.isNotEmpty()) {
+            kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + Dispatchers.IO,
+            ).launch {
+                dirty.forEach { tab ->
+                    val before = runCatching { fs.readFile(tab.path) }.getOrNull()
+                    runCatching { fs.writeFile(tab.path, tab.text.text) }
+                    runCatching { graph.recordUserEdit(projectId, tab.path, before, tab.text.text) }
+                }
+            }
+        }
         super.onCleared()
     }
 }

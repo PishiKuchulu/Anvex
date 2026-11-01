@@ -93,6 +93,12 @@ class AppUpdateController(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var downloadJob: Job? = null
 
+    /** Review C6: the controller's scope must not outlive the UI that
+     * owns it — AnvexApp disposes it via DisposableEffect. */
+    fun dispose() {
+        scope.cancel()
+    }
+
     init {
         // M-03: a 60–160 MB APK used to sit in cache/shared forever after
         // installation (the installer reads it via FileProvider, so it
@@ -116,7 +122,13 @@ class AppUpdateController(private val context: Context) {
         scope.launch {
             state = try {
                 AppUpdateChecker.fetchLatestNewerThan(currentVersion)
-                    ?.let { State.Available(it) }
+                    ?.let { found ->
+                        // Review A7: surface the expected hash in the
+                        // dialog so it can be compared out-of-band.
+                        State.Available(
+                            found.copy(expectedSha256 = AppUpdateChecker.fetchExpectedSha256(found)),
+                        )
+                    }
                     ?: State.UpToDate
             } catch (e: CancellationException) {
                 throw e
@@ -348,6 +360,17 @@ fun AppUpdateDialog(controller: AppUpdateController, onDismiss: () -> Unit) {
                             fontSize = 14.sp,
                         )
                     }
+                }
+                // Review A7: show the expected hash so it can be compared
+                // against the release page out-of-band.
+                info.expectedSha256?.let { sha ->
+                    Text(
+                        "${tr("SHA-256")}: $sha",
+                        color = UpdateSubtitle,
+                        fontSize = 11.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
                 if (state is AppUpdateController.State.Downloading) {
                     val total = if (state.total > 0) state.total else info.sizeBytes
