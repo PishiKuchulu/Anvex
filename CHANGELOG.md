@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.14.5 — Web tools refused every request behind Fake-IP VPNs
+
+Bug fix (user-reported): the agent's `fetch`/`search` tools failed for
+every URL with "Refusing to contact a private or local address." The
+SSRF guard treated the 198.18.0.0/15 benchmarking range as a local
+target — but that range is the standard Fake-IP pool of sing-box /
+Clash-style VPNs, where *every* public hostname resolves into it and
+the VPN core maps the placeholder back to the real host. Behind such a
+VPN the guard refused 100% of requests while protecting nothing.
+
+- `isPublicAddress`: 198.18.0.0/15 no longer blocked. NAT64
+  (64:ff9b::/96) and 6to4 (2002::/16) are no longer blanket-blocked
+  either — they are judged by the IPv4 address they embed (this also
+  un-breaks users on DNS64/NAT64 carriers).
+- The connect-time DNS hook now *filters* non-public answers out of a
+  resolution instead of failing on any, and the pre-flight check only
+  requires one public answer. Rebinding protection is unchanged: a
+  private address can still never reach the socket, and loopback,
+  RFC1918, link-local, ULA and CGNAT targets remain refused.
+- Regression tests cover the Fake-IP pool, embedded-address judging
+  and mixed public+private resolutions.
+
 ## 4.14.4 — External review #2, sections E/F/G
 
 Completes the second external review: sections E (build, dependencies,

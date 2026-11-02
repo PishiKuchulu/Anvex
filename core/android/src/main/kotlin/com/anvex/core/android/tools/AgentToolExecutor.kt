@@ -151,14 +151,18 @@ class AgentToolExecutor(
 
     // ------------------------------------------------------------------ helpers
 
-    /** Resolves through the system resolver but refuses any non-public result at connect time. */
+    /**
+     * Connect-time DNS filter: private/local answers are dropped, never connected to, and the
+     * lookup fails only when NO public answer remains. (Filtering instead of fail-on-any: a
+     * split-DNS or VPN resolver may legitimately return a stray non-public record alongside the
+     * public one; the rebinding protection is preserved because a private address can still
+     * never reach the socket.)
+     */
     internal object PublicOnlyDns : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
-            val all = Dns.SYSTEM.lookup(hostname)
-            for (a in all) {
-                if (!isPublicAddress(a)) throw UnknownHostException("Refusing to contact a private or local address.")
-            }
-            return all
+            val public = Dns.SYSTEM.lookup(hostname).filter { isPublicAddress(it) }
+            if (public.isEmpty()) throw UnknownHostException("Refusing to contact a private or local address.")
+            return public
         }
     }
 
@@ -167,9 +171,7 @@ class AgentToolExecutor(
         val host = url.host
         val addresses = resolver(host)
         require(addresses.isNotEmpty()) { "Host did not resolve." }
-        for (a in addresses) {
-            require(isPublicAddress(a)) { "Refusing to contact a private or local address." }
-        }
+        require(addresses.any { isPublicAddress(it) }) { "Refusing to contact a private or local address." }
     }
 
     private fun decodeDuckLink(href: String): String {
@@ -216,22 +218,33 @@ class AgentToolExecutor(
 /** True only for globally routable unicast addresses (no loopback/private/link-local/ULA/CGNAT/multicast). */
 internal fun isPublicAddress(a: InetAddress): Boolean {
     val bytes = a.address
+    // NAT64 (64:ff9b::/96) and 6to4 (2002::/16) embed the real IPv4 target; judge the embedded
+    // address instead of blanket-blocking the translation ranges (v4.14.5 — a blanket ban broke
+    // every fetch for users on DNS64/NAT64 carriers). The recursion terminates: the embedded
+    // address is IPv4, so it cannot re-enter this branch.
+    if (bytes.size == 16) {
+        val nat64 = bytes[0].toInt() == 0 && bytes[1].toInt() == 0x64 &&
+            bytes[2].toInt() == 0xFF && bytes[3].toInt() == 0x9B && (4..11).all { bytes[it].toInt() == 0 }
+        if (nat64) return isPublicAddress(InetAddress.getByAddress(bytes.copyOfRange(12, 16)))
+        val sixToFour = bytes[0].toInt() == 0x20 && bytes[1].toInt() == 0x02
+        if (sixToFour) return isPublicAddress(InetAddress.getByAddress(bytes.copyOfRange(2, 6)))
+    }
     val uniqueLocalV6 = bytes.size == 16 && (bytes[0].toInt() and 0xFE) == 0xFC
     val cgnat = bytes.size == 4 && (bytes[0].toInt() and 0xFF) == 100 && (bytes[1].toInt() and 0xC0) == 0x40
     // v4.10.1 (BUG-16): ranges the JDK predicates miss — 0.0.0.0/8 (only the
-    // exact 0.0.0.0 was covered), 192.0.0.0/24, 198.18.0.0/15 (benchmarking),
-    // 240.0.0.0/4 (reserved, incl. the limited broadcast), NAT64 64:ff9b::/96
-    // and 6to4 2002::/16 (both embed an IPv4 target that bypasses v4 checks).
+    // exact 0.0.0.0 was covered), 192.0.0.0/24 and 240.0.0.0/4 (reserved, incl.
+    // the limited broadcast).
+    // v4.14.5: 198.18.0.0/15 is NO LONGER blocked. It is the standard Fake-IP pool of
+    // sing-box/Clash-style VPNs (the default fakeip range): behind such a VPN every public
+    // hostname resolves into 198.18/15, and the VPN core maps the placeholder back to the real
+    // host — blocking the range refused 100% of agent fetches while protecting nothing, since
+    // no real LAN device is reachable at a benchmarking address off-tunnel.
     val v4Special = bytes.size == 4 && (
         (bytes[0].toInt() and 0xFF) == 0 ||
             ((bytes[0].toInt() and 0xFF) == 192 && (bytes[1].toInt() and 0xFF) == 0 && (bytes[2].toInt() and 0xFF) == 0) ||
-            ((bytes[0].toInt() and 0xFF) == 198 && (bytes[1].toInt() and 0xFE) == 18) ||
             ((bytes[0].toInt() and 0xF0) == 240)
         )
-    val nat64 = bytes.size == 16 && bytes[0].toInt() == 0 && bytes[1].toInt() == 0x64 &&
-        bytes[2].toInt() == 0xFF && bytes[3].toInt() == 0x9B
-    val sixToFour = bytes.size == 16 && bytes[0].toInt() == 0x20 && bytes[1].toInt() == 0x02
     // IPv4-mapped IPv6 (::ffff:a.b.c.d) is already unwrapped by InetAddress into Inet4Address.
     return !(a.isAnyLocalAddress || a.isLoopbackAddress || a.isLinkLocalAddress ||
-        a.isSiteLocalAddress || a.isMulticastAddress || uniqueLocalV6 || cgnat || v4Special || nat64 || sixToFour)
+        a.isSiteLocalAddress || a.isMulticastAddress || uniqueLocalV6 || cgnat || v4Special)
 }
