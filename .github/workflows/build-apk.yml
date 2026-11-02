@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload lint reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: anvex-lint-reports-${{ github.run_number }}-${{ github.run_attempt }}
           path: '**/build/reports/lint-results-*.html'
@@ -76,7 +76,7 @@ jobs:
 
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: anvex-test-reports-${{ github.run_number }}-${{ github.run_attempt }}
           path: '**/build/reports/tests/**'
@@ -137,7 +137,7 @@ jobs:
         run: python3 tools/write_apk_build_info.py app/build/outputs/apk/debug/app-universal-debug.apk
 
       - name: Upload verified APK and provenance
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: anvex-debug-apk-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
