@@ -223,10 +223,13 @@ internal fun isPublicAddress(a: InetAddress): Boolean {
     // every fetch for users on DNS64/NAT64 carriers). The recursion terminates: the embedded
     // address is IPv4, so it cannot re-enter this branch.
     if (bytes.size == 16) {
-        val nat64 = bytes[0].toInt() == 0 && bytes[1].toInt() == 0x64 &&
-            bytes[2].toInt() == 0xFF && bytes[3].toInt() == 0x9B && (4..11).all { bytes[it].toInt() == 0 }
+        // Byte comparisons must mask with 0xFF: Byte is signed, so 0xFF.toInt() is -1, not 255
+        // (the pre-4.14.5 NAT64 test compared unmasked and could never match).
+        val nat64 = (bytes[0].toInt() and 0xFF) == 0 && (bytes[1].toInt() and 0xFF) == 0x64 &&
+            (bytes[2].toInt() and 0xFF) == 0xFF && (bytes[3].toInt() and 0xFF) == 0x9B &&
+            (4..11).all { bytes[it].toInt() == 0 }
         if (nat64) return isPublicAddress(InetAddress.getByAddress(bytes.copyOfRange(12, 16)))
-        val sixToFour = bytes[0].toInt() == 0x20 && bytes[1].toInt() == 0x02
+        val sixToFour = (bytes[0].toInt() and 0xFF) == 0x20 && (bytes[1].toInt() and 0xFF) == 0x02
         if (sixToFour) return isPublicAddress(InetAddress.getByAddress(bytes.copyOfRange(2, 6)))
     }
     val uniqueLocalV6 = bytes.size == 16 && (bytes[0].toInt() and 0xFE) == 0xFC

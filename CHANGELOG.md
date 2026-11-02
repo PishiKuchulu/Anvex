@@ -13,7 +13,10 @@ VPN the guard refused 100% of requests while protecting nothing.
 - `isPublicAddress`: 198.18.0.0/15 no longer blocked. NAT64
   (64:ff9b::/96) and 6to4 (2002::/16) are no longer blanket-blocked
   either — they are judged by the IPv4 address they embed (this also
-  un-breaks users on DNS64/NAT64 carriers).
+  un-breaks users on DNS64/NAT64 carriers). Found on the way: the old
+  NAT64 range test compared signed bytes unmasked and could never
+  match, so it had never actually fired; the new test is covered by
+  unit tests on both the public and private embedded cases.
 - The connect-time DNS hook now *filters* non-public answers out of a
   resolution instead of failing on any, and the pre-flight check only
   requires one public answer. Rebinding protection is unchanged: a
