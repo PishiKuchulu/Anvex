@@ -388,7 +388,9 @@ class ChatSessionTest {
         session.send("review it")
         assertTrue(dao.assistantPersisted.await(15, TimeUnit.SECONDS))
 
-        assertEquals("# findings", fs.readFile("REPORT.md"))
+        // The bolt parser terminates file-action content with a newline
+        // (see BoltStreamParserTest), so compare trimmed.
+        assertEquals("# findings", fs.readFile("REPORT.md")?.trim())
         val assistant = dao.stored.values.last { it.role == "ASSISTANT" }
         assertFalse(assistant.content.contains("<|sep|>"))
         assertTrue(calls.get() >= 2)
