@@ -1,5 +1,6 @@
 package com.anvex.core.android.session
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,5 +52,22 @@ class IntentDetectionTest {
         assertFalse(isMarkupOnlyOrEmpty("Here is what the tool returned: <tool_results> ok"))
         assertFalse(isMarkupOnlyOrEmpty("<tool_results> The build passed."))
         assertFalse(isMarkupOnlyOrEmpty("Done — the report is in REPORT.md."))
+    }
+
+    @Test
+    fun userReportedPersianNarrationMatchesIntent() {
+        // The exact shape from the 2026-11-02 report: plan narration that
+        // previously matched no pattern, followed by an alien tool call.
+        assertTrue(looksLikeIntentOnly("مرحله‌به‌مرحله پیش می‌رم: اول ساختار کامل پروژه را می‌خوانم، بعد فایل‌های کلیدی را بررسی می‌کنم و در پایان گزارش را تحویل می‌دم."))
+    }
+
+    @Test
+    fun alienToolDialectIsDetectedAndStripped() {
+        val round = "اول ساختار پروژه را می‌خوانم.\nopen|>tools<|sep|><|open|>call tool=\"boltArtifact\"|>" +
+            "index=\"1\"<|sep|><|open|>argument key=\"id\" type=\"string\"<|sep|>research<|close|>argument"
+        assertTrue(containsUnparsedToolMarkup(round))
+        assertEquals("اول ساختار پروژه را می‌خوانم.", stripUnparsedToolMarkup(round))
+        assertFalse(containsUnparsedToolMarkup("Done — the report is written."))
+        assertFalse(containsUnparsedToolMarkup("Use a <boltArtifact> block to create the file."))
     }
 }

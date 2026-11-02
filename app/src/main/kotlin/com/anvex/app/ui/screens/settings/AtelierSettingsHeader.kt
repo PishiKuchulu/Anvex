@@ -46,19 +46,18 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 
 /**
- * Atelier Settings header (design screen 09): identity card, update
- * banner, light/dark/system preview cards and the six accent dots —
- * rendered above the classic category content only while the Atelier
- * style is active. Every control writes the same real settings the
- * classic rows write.
+ * Atelier Settings header (design screen 09): identity card and update
+ * banner, rendered above the classic category content only while the
+ * Atelier style is active. The light/dark/system preview cards and the
+ * six accent dots live in [AtelierAppearanceSection] inside the
+ * Appearance category — they moved off the main page into their own
+ * section at the user's request (2026-11-02).
  */
 @Composable
 fun AtelierSettingsHeader(
     settings: AppSettings?,
     projectCount: Int,
     updateState: com.anvex.app.ui.components.AppUpdateController.State,
-    onThemeMode: (ThemeMode) -> Unit,
-    onAccent: (AtelierAccent) -> Unit,
     onUpdateTap: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -163,7 +162,26 @@ fun AtelierSettingsHeader(
             }
             else -> Unit
         }
-        // Appearance: mode preview cards.
+        Spacer(Modifier.height(2.dp))
+    }
+}
+
+/**
+ * The Atelier appearance controls — light/dark/system preview cards and
+ * the six accent dots — rendered inside the Appearance settings category
+ * (their own section), NOT on the Settings main page.
+ */
+@Composable
+fun AtelierAppearanceSection(
+    settings: AppSettings?,
+    onThemeMode: (ThemeMode) -> Unit,
+    onAccent: (AtelierAccent) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        // Mode preview cards.
         Text(tr("Appearance"), style = MaterialTheme.typography.titleMedium)
         Row(
             modifier = Modifier.fillMaxWidth(),

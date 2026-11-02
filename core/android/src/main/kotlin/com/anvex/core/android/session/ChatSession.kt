@@ -325,6 +325,10 @@ class ChatSession(
                 // Markup-only/empty-round continuations (see the branch below):
                 // the model answered with nothing but harness markers.
                 var emptyRoundContinuations = 0
+                // Unparsed-tool-markup continuations (see the branch below): the
+                // model DID try to call a tool, but in a dialect the parser
+                // does not understand, so the round produced zero actions.
+                var markupContinuations = 0
                 var turnActionsExecuted = 0
                 var suppressRoundSeparator = false
                 while (true) {
@@ -556,6 +560,31 @@ class ChatSession(
                     val normalStop = roundFinishReason == null ||
                         roundFinishReason.equals("stop", true) ||
                         roundFinishReason.equals("end_turn", true)
+                    // Unparsed tool markup: the model attempted a tool call in
+                    // its own gateway dialect (special-token scaffolding the
+                    // bolt parser ignores), so the round executed nothing and
+                    // the raw scaffolding would otherwise end the turn as
+                    // visible "answer" text. Scrub the scaffolding out of the
+                    // visible prose and push a format-correction round that
+                    // makes it re-issue the call as <boltArtifact> actions.
+                    val unparsedMarkup = markupContinuations < MAX_MARKUP_CONTINUATIONS &&
+                        !canceled && failure == null && normalStop &&
+                        gathered.isEmpty() && turnActionsExecuted == 0 &&
+                        containsUnparsedToolMarkup(roundText.toString())
+                    if (unparsedMarkup && round < MAX_TOOL_ROUNDS) {
+                        markupContinuations++
+                        val cleaned = stripUnparsedToolMarkup(roundText.toString())
+                        prose.setLength(proseStart)
+                        if (cleaned.isNotBlank()) prose.append(cleaned)
+                        turns.add(ChatTurn(MessageRole.ASSISTANT, cleaned.ifBlank { "(tool call not understood)" }))
+                        turns.add(ChatTurn(MessageRole.USER, UNPARSED_MARKUP_PROMPT))
+                        round++
+                        _state.value = _state.value.copy(
+                            statusLine = "The model's tool call wasn't recognized — asking it to retry in the correct format…",
+                            streamText = MemoryTags.stripForDisplay(prose.toString()),
+                        )
+                        continue
+                    }
                     val intentOnly = intentContinuations < MAX_INTENT_CONTINUATIONS &&
                         !canceled && failure == null && normalStop &&
                         gathered.isEmpty() && turnActionsExecuted == 0 &&
@@ -612,8 +641,16 @@ class ChatSession(
 
             // A turn that ends on a markup-only reply (retries exhausted)
             // must not persist the raw harness tag as the message text.
+            // The same applies to alien tool scaffolding when every
+            // format-correction retry failed: the narration may stay, the
+            // scaffolding never does.
             val finalProse = prose.toString().let {
-                if (isMarkupOnlyOrEmpty(it)) "(The model returned an empty response.)" else it
+                when {
+                    isMarkupOnlyOrEmpty(it) -> "(The model returned an empty response.)"
+                    turnActionsExecuted == 0 && containsUnparsedToolMarkup(it) ->
+                        stripUnparsedToolMarkup(it).ifBlank { "(The model returned an empty response.)" }
+                    else -> it
+                }
             }
             // Finalization must survive cancellation: persist the partial result
             // under NonCancellable so the message, journal, and state are complete.
@@ -1041,6 +1078,13 @@ class ChatSession(
             "marker. Produce your real reply now: answer the user's request directly, using " +
             "the tool results you already received. Do not repeat the marker."
         const val MAX_EMPTY_CONTINUATIONS = 2
+        const val UNPARSED_MARKUP_PROMPT =
+            "Your tool call was NOT executed: it was written in a format this app does not " +
+            "understand, so it was discarded. Emit your actions ONLY in the documented format — " +
+            "<boltArtifact id=\"...\" title=\"...\"><boltAction type=\"file\" filePath=\"path\">" +
+            "content</boltAction></boltArtifact> (or type \"shell\" for commands) — with no " +
+            "special tokens or wrappers around it. Carry out the steps you announced now."
+        const val MAX_MARKUP_CONTINUATIONS = 2
         private const val MAX_TOOL_RESULT_CHARS = 60_000
     }
 }

@@ -70,6 +70,7 @@ import com.anvex.core.android.AppGraph
 import com.anvex.core.android.repo.AppLanguage
 import com.anvex.core.android.repo.NodeBackend
 import com.anvex.core.android.repo.ThemeMode
+import com.anvex.core.android.repo.AtelierAccent
 import com.anvex.core.android.repo.UiThemeStyle
 import com.anvex.core.model.Project
 import kotlinx.coroutines.launch
@@ -135,15 +136,13 @@ fun SettingsScreen(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
         ) {
             if (settings?.uiThemeStyle == UiThemeStyle.ATELIER) {
-                // Atelier Settings (design screen 09): identity, update
-                // banner, mode previews and accent dots above the classic
-                // category content.
+                // Atelier Settings (design screen 09): identity card and
+                // update banner above the classic category content. The mode
+                // previews and accent dots live in the Appearance category.
                 AtelierSettingsHeader(
                     settings = settings,
                     projectCount = projects.size,
                     updateState = updateController.state,
-                    onThemeMode = { mode -> vm.setTheme(mode) },
-                    onAccent = { accent -> scope.launch { graph.settings.setAtelierAccent(accent) } },
                     onUpdateTap = { showUpdateDialog = true },
                 )
             }
@@ -188,6 +187,7 @@ fun SettingsScreen(
                     settings = settings,
                     vm = vm,
                     showLanguageDialog = { showLanguageDialog = true },
+                    onAccent = { accent -> scope.launch { graph.settings.setAtelierAccent(accent) } },
                 )
                 "data" -> DataCategory(
                     cacheBytes = cacheBytes,
@@ -445,8 +445,20 @@ private fun AppearanceCategory(
     settings: com.anvex.core.android.repo.AppSettings?,
     vm: SettingsViewModel,
     showLanguageDialog: () -> Unit,
+    onAccent: (AtelierAccent) -> Unit,
 ) {
     AnvexSectionHeader(tr("Appearance"), tr("Make the workspace comfortable on your device"))
+    if (settings?.uiThemeStyle == UiThemeStyle.ATELIER) {
+        // The Atelier mode cards + accent dots live here, in their own
+        // section (moved off the Settings main page, user request 2026-11-02).
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+            AtelierAppearanceSection(
+                settings = settings,
+                onThemeMode = { mode -> vm.setTheme(mode) },
+                onAccent = onAccent,
+            )
+        }
+    }
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), onClick = showLanguageDialog) {
         ListItem(
             leadingContent = { AnvexIconTile(Icons.Filled.Language, modifier = Modifier.size(40.dp)) },
@@ -467,6 +479,8 @@ private fun AppearanceCategory(
     }
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Column(Modifier.padding(vertical = 4.dp)) {
+            // Atelier shows the mode preview cards above instead of this row.
+            if (settings?.uiThemeStyle != UiThemeStyle.ATELIER) {
             ListItem(
                 headlineContent = { Text(tr("Theme")) },
                 supportingContent = { Text(tr("Dark is the v4 default; System follows Android; Light stays fixed")) },
@@ -488,6 +502,7 @@ private fun AppearanceCategory(
                     }
                 },
             )
+            }
             ListItem(
                 headlineContent = { Text(tr("Style")) },
                 supportingContent = {

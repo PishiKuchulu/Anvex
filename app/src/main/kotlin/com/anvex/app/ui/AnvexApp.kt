@@ -169,10 +169,12 @@ fun AnvexApp() {
         contentColor = MaterialTheme.colorScheme.onSurface,
         bottomBar = {
             if (settings?.uiThemeStyle == com.anvex.core.android.repo.UiThemeStyle.ATELIER) {
-                // Atelier IA: a flat dock on the four main destinations only.
-                // Settings is reached from the Home avatar and Quick chat is a
-                // focused screen — neither carries the dock (per the design).
+                // Atelier IA: a flat dock on the main destinations. Settings is
+                // reached from the Home avatar. Chat joined the dock next to
+                // Projects at the user's request (2026-11-02), so the dock now
+                // also shows on the Quick chat screen.
                 if (currentRoute == Routes.HOME || currentRoute == Routes.PROJECTS ||
+                    currentRoute == Routes.DIRECT_CHAT ||
                     currentRoute == Routes.AGENT_CENTER || currentRoute == Routes.MEMORY
                 ) {
                     Box(Modifier.imePadding()) {
@@ -189,6 +191,12 @@ fun AnvexApp() {
                                     icon = Icons.Filled.Folder,
                                     selected = currentRoute == Routes.PROJECTS,
                                     onClick = { navController.navigateTop(Routes.PROJECTS) },
+                                ),
+                                com.anvex.app.ui.components.DockItem(
+                                    label = tr("Chat"),
+                                    icon = Icons.AutoMirrored.Filled.Chat,
+                                    selected = currentRoute == Routes.DIRECT_CHAT,
+                                    onClick = { navController.navigateTop(Routes.DIRECT_CHAT) },
                                 ),
                                 com.anvex.app.ui.components.DockItem(
                                     label = tr("Agent"),

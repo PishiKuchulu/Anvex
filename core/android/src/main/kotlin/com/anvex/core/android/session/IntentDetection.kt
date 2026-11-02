@@ -46,6 +46,36 @@ private val HARNESS_MARKERS = listOf(
     "<tool_calls>", "</tool_calls>",
 )
 
+/**
+ * Strong markers of a tool call emitted in a dialect the bolt parser does
+ * NOT understand — typically a gateway model's own scaffolding
+ * (`<|open|>tools<|sep|> … call tool="boltArtifact" … argument key="id"`).
+ * Such a round parses to zero actions, so without detection the turn ends
+ * as if the model had simply answered, with the raw scaffolding left
+ * visible in the message (user report, 2026-11-02). The markers are
+ * deliberately exotic: ordinary prose or code discussion does not contain
+ * them, and callers still gate on "zero actions executed".
+ */
+internal fun containsUnparsedToolMarkup(prose: String): Boolean {
+    val flat = prose.lowercase()
+    return UNPARSED_MARKUP_MARKERS.any { flat.contains(it) }
+}
+
+/** The round's prose with the alien tool scaffolding cut away (it is a tail in practice). */
+internal fun stripUnparsedToolMarkup(prose: String): String {
+    val flat = prose.lowercase()
+    val cut = UNPARSED_MARKUP_MARKERS
+        .map { flat.indexOf(it) }
+        .filter { it >= 0 }
+        .minOrNull() ?: return prose
+    return prose.substring(0, cut).trimEnd()
+}
+
+private val UNPARSED_MARKUP_MARKERS = listOf(
+    "<|sep|>", "<|open|>", "<|close|>", "<|tool",
+    "call tool=\"", "argument key=\"",
+)
+
 private val INTENT_PATTERNS = listOf(
     // English first-person intent / plan announcements.
     "i will ",
@@ -75,4 +105,9 @@ private val INTENT_PATTERNS = listOf(
     "میخواهم",
     "قرار است انجام",
     "باید اول",
+    // From a real user-reported narration (2026-11-02) that matched nothing:
+    // «مرحله‌به‌مرحله پیش می‌رم… بررسی می‌کنم… تحویل می‌دم».
+    "پیش میرم",
+    "بررسی میکنم",
+    "تحویل میدم",
 )

@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.14.6 — User-requested batch: project delete, multi-file attach, goo loader in Atelier, agent format recovery, Chat dock tab, Settings tidy-up
+
+Six changes dictated by the user on 2026-11-02:
+
+- **Delete on the Projects page.** The Atelier Projects list had no way
+  to delete a project (it was only reachable from the Home cards). Each
+  row now carries a delete button with the same confirmation dialog.
+- **Multi-file attach.** The file and image pickers in project chat,
+  Quick chat and the Knowledge panel now accept several files at once
+  (the existing 5-attachment cap in project chat still applies).
+- **Goo loader in Atelier.** While the agent is streaming, the Atelier
+  composer showed a static stop square; the animated goo thinking
+  indicator the other themes use is back, in both composers.
+- **Agent format recovery.** Some gateway models emit their tool call
+  in their own special-token dialect instead of `<boltArtifact>`
+  markup; the call parsed to nothing, the turn ended as if the model
+  had answered, and the raw scaffolding stayed visible in the message.
+  The loop now detects that scaffolding, scrubs it from the message,
+  and pushes a format-correction round (up to 2) telling the model to
+  re-issue the call in the documented format. Three Persian
+  intent-announcement patterns from a real reported narration were
+  added to the intent matcher as well. Covered by unit tests,
+  including the reported text.
+- **Chat tab in the Atelier dock.** The dock is now Home · Projects ·
+  Chat · Agent · Memory, and it also stays visible on the Quick chat
+  screen.
+- **Settings tidy-up.** The Appearance mode cards and Accent dots no
+  longer sit on the Settings main page; they live in the Appearance
+  category, and the classic Theme row steps aside for the cards while
+  Atelier is active.
+
 ## 4.14.5 — Web tools refused every request behind Fake-IP VPNs
 
 Bug fix (user-reported): the agent's `fetch`/`search` tools failed for

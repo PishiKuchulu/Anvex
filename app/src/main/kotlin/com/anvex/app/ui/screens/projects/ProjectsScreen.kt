@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -52,8 +53,10 @@ import com.anvex.core.model.Project
  * Atelier IA: Projects is its own top-level destination (the design splits
  * the old combined Home into a composer-first Home and a full project
  * list here). Data and actions come from the same [HomeViewModel] the
- * classic Home uses; project management (rename, pin, export, delete)
- * lives on Home's project cards and in each project's chat.
+ * classic Home uses. Delete lives on each row here (user request,
+ * 2026-11-02: the list offered no way to remove a project); the rest of
+ * project management (rename, pin, export) lives on Home's project cards
+ * and in each project's chat.
  */
 @Composable
 fun ProjectsScreen(nav: NavController) {
@@ -63,6 +66,7 @@ fun ProjectsScreen(nav: NavController) {
     val query by vm.query.collectAsState()
     val newUi by vm.newProjectUi.collectAsState()
     var showCreate by remember { mutableStateOf(false) }
+    var deleteProject by remember { mutableStateOf<Project?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
     // Same folder picking as Home's new-project dialog: the user chooses
     // where the project lives, not just its name.
@@ -136,6 +140,7 @@ fun ProjectsScreen(nav: NavController) {
                     project = project,
                     modifier = Modifier.animateItem(),
                     onClick = { nav.navigate(Routes.chat(project.id)) },
+                    onDelete = { deleteProject = project },
                 )
             }
         }
@@ -191,10 +196,26 @@ fun ProjectsScreen(nav: NavController) {
             },
         )
     }
+
+    deleteProject?.let { project ->
+        com.anvex.app.ui.components.ConfirmDialog(
+            title = tr("Delete project?"),
+            text = tr("The project and all its files, chats and history will be permanently deleted. This cannot be undone."),
+            confirmLabel = tr("Delete"),
+            destructive = true,
+            onConfirm = { vm.delete(project.id); deleteProject = null },
+            onDismiss = { deleteProject = null },
+        )
+    }
 }
 
 @Composable
-private fun ProjectRow(project: Project, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun ProjectRow(
+    project: Project,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
     AnvexCard(modifier = modifier.fillMaxWidth(), onClick = onClick) {
         Row(
             Modifier.padding(14.dp),
@@ -214,6 +235,13 @@ private fun ProjectRow(project: Project, modifier: Modifier = Modifier, onClick:
                     fontFamily = com.anvex.app.ui.theme.AnvexMono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = tr("Delete"),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

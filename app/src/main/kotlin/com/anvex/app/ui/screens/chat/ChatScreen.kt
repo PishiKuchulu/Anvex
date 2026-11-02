@@ -80,7 +80,6 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -197,8 +196,8 @@ fun ChatScreen(nav: NavController, projectId: String) {
     var pythonCode by remember { mutableStateOf<String?>(null) }
     var showKnowledge by remember { mutableStateOf(false) }
     val knowledgeFiles by vm.knowledgeFiles.collectAsState()
-    val knowledgePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.addKnowledgeFile(uri)
+    val knowledgePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        uris.forEach { vm.addKnowledgeFile(it) }
     }
     LaunchedEffect(showKnowledge) { if (showKnowledge) vm.refreshKnowledge() }
     val webOn by vm.webSearchOn.collectAsState()
@@ -308,11 +307,19 @@ fun ChatScreen(nav: NavController, projectId: String) {
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && attachments.size < 5) grantAttachment(uri)
+    // Multi-select (user request 2026-11-02): both pickers accept several files at once;
+    // the existing 5-attachment cap still applies across the whole selection.
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        for (uri in uris) {
+            if (attachments.size >= 5) break
+            grantAttachment(uri)
+        }
     }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && attachments.size < 5) grantAttachment(uri)
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        for (uri in uris) {
+            if (attachments.size >= 5) break
+            grantAttachment(uri)
+        }
     }
 
     LaunchedEffect(diffPath) {
@@ -968,26 +975,10 @@ private fun Composer(
                     ),
                     label = "sendReady",
                 )
-                if (streaming && atelier) {
-                    // Atelier streaming state: a filled stop square in the
-                    // accent circle (the design's stop treatment).
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(androidx.compose.foundation.shape.CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onCancel),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Filled.Stop,
-                            contentDescription = tr("Stop"),
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                } else if (streaming) {
-                    // Thinking state shows the goo loader (tap still cancels).
+                if (streaming) {
+                    // Thinking state shows the goo loader in EVERY theme (tap still
+                    // cancels). The Atelier stop-square variant was dropped at the
+                    // user's request (2026-11-02): the animation belongs here.
                     IconButton(onClick = onCancel) {
                         GooThinkingIcon(modifier = Modifier.size(32.dp))
                     }

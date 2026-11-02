@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Image
@@ -196,8 +195,9 @@ fun DirectChatScreen(nav: NavController) {
         if (pending.isNotBlank()) vm.send(pending, emptyList())
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
+    // Multi-select (user request 2026-11-02): files and photos can be picked several at once.
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        for (uri in uris) {
             runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -206,8 +206,8 @@ fun DirectChatScreen(nav: NavController) {
             attachments.add(uri)
         }
     }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) attachments.add(uri)
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        attachments.addAll(uris)
     }
     var cameraTarget by remember { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
@@ -705,29 +705,10 @@ fun DirectChatScreen(nav: NavController) {
                             }
                         }
                         Spacer(Modifier.width(8.dp))
-                        if (sessionState.streaming && atelierStyle) {
-                            // Atelier streaming state: stop square in the
-                            // accent circle, matching the agent composer.
-                            androidx.compose.foundation.layout.Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary)
-                                    .clickable(
-                                        role = androidx.compose.ui.semantics.Role.Button,
-                                        onClick = { vm.cancel() },
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Filled.Stop,
-                                    contentDescription = tr("Stop"),
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                        } else if (sessionState.streaming) {
-                            // Thinking state shows the goo loader (tap still cancels).
+                        if (sessionState.streaming) {
+                            // Thinking state shows the goo loader in EVERY theme (tap
+                            // still cancels) — Atelier included, at the user's request
+                            // (2026-11-02); its stop-square variant was dropped.
                             IconButton(onClick = { vm.cancel() }) {
                                 GooThinkingIcon(modifier = Modifier.size(32.dp))
                             }

@@ -359,6 +359,42 @@ class ChatSessionTest {
     }
 
     @Test
+    fun `alien tool dialect gets a format correction round and then executes`() {
+        val fs = InstrumentedFs(memoryFs())
+        val dao = FakeMessageDao()
+        val calls = java.util.concurrent.atomic.AtomicInteger(0)
+        val client = object : ProviderClient {
+            override val kind = ProviderKind.CUSTOM_OPENAI
+            override fun streamChat(request: ChatRequest): Flow<StreamEvent> {
+                val text = when (calls.incrementAndGet()) {
+                    1 -> "مرحله‌به‌مرحله پیش می‌رم: اول ساختار را بررسی می‌کنم.\n" +
+                        "open|>tools<|sep|><|open|>call tool=\"boltArtifact\"|>index=\"1\"<|sep|>" +
+                        "<|open|>argument key=\"id\" type=\"string\"<|sep|>research<|close|>argument"
+                    2 -> "<boltArtifact id=\"r\" title=\"Report\">" +
+                        "<boltAction type=\"file\" filePath=\"REPORT.md\"># findings</boltAction></boltArtifact>"
+                    else -> "Done."
+                }
+                return flowOf(
+                    *text.map { StreamEvent.Token(it.toString()) }.toTypedArray(),
+                    StreamEvent.Completed("stop"),
+                )
+            }
+            override suspend fun listModels(): List<ModelInfo> = emptyList()
+            override suspend fun validateConnection() = ValidationResult(true, 0, "ok")
+        }
+        val session = newSession(fs, dao, FakeMutationDao(), client)
+
+        session.send("review it")
+        assertTrue(dao.assistantPersisted.await(15, TimeUnit.SECONDS))
+
+        assertEquals("# findings", fs.readFile("REPORT.md"))
+        val assistant = dao.stored.values.last { it.role == "ASSISTANT" }
+        assertFalse(assistant.content.contains("<|sep|>"))
+        assertTrue(calls.get() >= 2)
+        session.close()
+    }
+
+    @Test
     fun `user history is requested once without duplicating the new user turn (B-1)`() {
         val fs = InstrumentedFs(memoryFs())
         val dao = FakeMessageDao()
