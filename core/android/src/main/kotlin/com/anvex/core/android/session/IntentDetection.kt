@@ -73,6 +73,10 @@ internal fun stripUnparsedToolMarkup(prose: String): String {
 
 private val UNPARSED_MARKUP_MARKERS = listOf(
     "<|sep|>", "<|open|>", "<|close|>", "<|tool",
+    // The reported dialect OPENS with a bare "open|>" (no leading "<"):
+    // "open|>tools<|sep|><|open|>call tool=…" — without this marker the
+    // strip left "open|>tools" behind in the message (CI test failure).
+    "open|>",
     "call tool=\"", "argument key=\"",
 )
 
