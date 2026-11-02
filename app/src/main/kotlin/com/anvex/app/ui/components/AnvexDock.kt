@@ -27,6 +27,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 
 /**
  * v4.4.5 (UX): the Command Deck dock — a floating, compact bottom bar that
@@ -72,7 +75,8 @@ fun AnvexDock(items: List<DockItem>) {
                             .weight(1f)
                             .alpha(if (item.enabled) 1f else 0.45f)
                             .clip(RoundedCornerShape(20.dp))
-                            .clickable(enabled = item.enabled, onClick = item.onClick)
+                            .clickable(enabled = item.enabled, role = Role.Tab, onClick = item.onClick)
+                            .semantics { this.selected = item.selected }
                             .padding(vertical = 2.dp),
                     ) {
                         Icon(

@@ -17,6 +17,14 @@ fun tr(english: String): String {
     return if (language == "fa") FA[english] ?: english else english
 }
 
+/**
+ * F1: `tr()` is @Composable-only, so services, notifications and ViewModels could never be
+ * translated. This is the same lookup for non-Compose code; callers resolve the language
+ * themselves ("fa" / anything else = English).
+ */
+fun trIn(language: String?, english: String): String =
+    if (language == "fa") FA[english] ?: english else english
+
 /** "fa" / "en" from the Settings language choice, or null to follow the system. Provided by MainActivity. */
 val LocalAppLanguage = androidx.compose.runtime.staticCompositionLocalOf<String?> { null }
 
@@ -56,7 +64,6 @@ private val FA: Map<String, String> = mapOf(
     "Add attachment" to "افزودن پیوست",
     "Voice input" to "ورودی صوتی",
     "Add to message" to "افزودن به پیام",
-    "Project files" to "فایل‌های پروژه",
     "Instructions, docs and project context" to "دستورالعمل‌ها، اسناد و کانتکست پروژه",
     "Attach file" to "الصاق فایل",
     "Attach" to "الصاق",
@@ -89,7 +96,6 @@ private val FA: Map<String, String> = mapOf(
     "Agent Workspace" to "فضای کاری عامل",
     "Agent workspace" to "فضای کاری عامل",
     "All long-running work is durable, cancellable and recoverable where the task declares resumability." to "همه‌ی کارهای طولانی پایدار، قابل لغو و در صورت امکان قابل ادامه هستند.",
-    "Allow" to "اجازه",
     "Allow once" to "یک‌بار اجازه بده",
     "Allow tool call?" to "اجرای ابزار مجاز باشد؟",
     "Anvex" to "Anvex",
@@ -184,7 +190,6 @@ private val FA: Map<String, String> = mapOf(
     "Delete all" to "حذف همه",
     "Delete all chat messages; project files remain" to "حذف همه‌ی پیام‌ها؛ فایل‌های پروژه باقی می‌مانند",
     "Delete all conversations?" to "همه‌ی گفتگوها حذف شوند؟",
-    "Deny" to "رد",
     "Deterministic checks are informational; unavailable runtime capabilities remain explicit limitations." to "بررسی‌های قطعی جنبه‌ی اطلاع‌رسانی دارند؛ قابلیت‌های ناموجود به‌صورت محدودیت آشکار می‌مانند.",
     "Developer" to "توسعه‌دهنده",
     "Developer Center" to "مرکز توسعه‌دهنده",
@@ -478,6 +483,47 @@ private val FA: Map<String, String> = mapOf(
     "Review" to "بازبینی",
     "Send as new branch" to "ارسال به‌عنوان شاخه جدید",
     "Send" to "ارسال",
+    "0.7" to "0.7",
+    "8192" to "8192",
+    "SHA-256" to "SHA-256",
+    "ls -la" to "ls -la",
+    "•" to "•",
+    "›" to "›",
+    "Back" to "بازگشت",
+    "Delete permanently?" to "حذف دائمی؟",
+    "Delete project?" to "پروژه حذف شود؟",
+    "Delete provider?" to "ارائه‌دهنده حذف شود؟",
+    "No projects yet — create one from Home." to "هنوز پروژه‌ای نیست — از صفحه‌ی خانه یکی بساز.",
+    "On Android 10 and newer, on-device Gradle builds are blocked by the system (W^X policy). The cloud build below is the working path." to "در اندروید ۱۰ و جدیدتر، سیستم ساخت Gradle روی خود دستگاه را مسدود می‌کند (سیاست W^X). ساخت ابری پایین‌تر راه کارآمد است.",
+    "Providers" to "ارائه‌دهنده‌ها",
+    "Remove MCP server?" to "سرور MCP حذف شود؟",
+    "Remove file?" to "فایل حذف شود؟",
+    "Remove skill?" to "مهارت حذف شود؟",
+    "Remove toolchain?" to "ابزار ساخت حذف شود؟",
+    "Some saved providers could not be loaded. Re-add them, or remove the broken entries:" to "برخی ارائه‌دهنده‌های ذخیره‌شده بارگذاری نشدند. دوباره اضافه‌شان کنید یا موارد خراب را حذف کنید:",
+    "The imported Android JDK/SDK/Gradle bundle will be deleted from this device. You will need to import it again to build." to "بسته‌ی واردشده‌ی Android JDK/SDK/Gradle از این دستگاه حذف می‌شود. برای ساخت باید دوباره واردش کنید.",
+    "The knowledge file will be permanently removed from this project." to "فایل دانش برای همیشه از این پروژه حذف می‌شود.",
+    "The project and all its files, chats and history will be permanently deleted. This cannot be undone." to "پروژه و همه‌ی فایل‌ها، گفتگوها و تاریخچه‌اش برای همیشه حذف می‌شود. این کار قابل بازگشت نیست.",
+    "The provider and its stored encrypted credentials will be permanently deleted." to "ارائه‌دهنده و اعتبارنامه‌های رمزنگاری‌شده‌ی ذخیره‌شده‌اش برای همیشه حذف می‌شود.",
+    "The server's name, URL and stored token will be permanently deleted." to "نام، نشانی و توکن ذخیره‌شده‌ی سرور برای همیشه حذف می‌شود.",
+    "The skill's files will be permanently deleted." to "فایل‌های این مهارت برای همیشه حذف می‌شود.",
+    "This cannot be undone." to "این کار قابل بازگشت نیست.",
+    "This will permanently delete" to "این کار برای همیشه حذف می‌کند",
+    "e.g. claude-3-5-sonnet-latest" to "مثلاً claude-3-5-sonnet-latest",
+    "Agent runtime" to "اجرای عامل",
+    "Agent events" to "رویدادهای عامل",
+    "Agent runtime active" to "اجرای عامل فعال است",
+    "Agent task completed" to "کار عامل تمام شد",
+    "Agent task failed" to "کار عامل ناموفق بود",
+    "Agent needs approval" to "عامل منتظر تأیید است",
+    "Agent task interrupted" to "کار عامل متوقف شد",
+    "Anvex Agent" to "عامل Anvex",
+    "Orange" to "نارنجی",
+    "Blue" to "آبی",
+    "Green" to "سبز",
+    "Violet" to "بنفش",
+    "Rose" to "صورتی",
+    "Teal" to "فیروزه‌ای",
     "Run command" to "اجرای فرمان",
     "The model hit its output limit in the middle of a file or command. The unfinished part was discarded (nothing half-written was applied). Ask it to continue, or raise the max output tokens." to "مدل وسط یک فایل یا فرمان به سقف خروجی رسید. بخش ناتمام دور ریخته شد (هیچ چیز نیمه‌کاره اعمال نشد). از مدل بخواهید ادامه بده یا سقف توکن خروجی را بالا ببرید.",
     "The response ended in the middle of a file or command. The unfinished part was discarded (nothing half-written was applied). Ask it to continue." to "پاسخ وسط یک فایل یا فرمان قطع شد. بخش ناتمام دور ریخته شد (هیچ چیز نیمه‌کاره اعمال نشد). از مدل بخواهید ادامه بده.",

@@ -40,6 +40,10 @@ import com.anvex.app.ui.theme.AtelierAccentPresets
 import com.anvex.core.android.repo.AppSettings
 import com.anvex.core.android.repo.AtelierAccent
 import com.anvex.core.android.repo.ThemeMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 
 /**
  * Atelier Settings header (design screen 09): identity card, update
@@ -212,6 +216,10 @@ fun AtelierSettingsHeader(
                 val preset = AtelierAccentPresets[accent]
                 val dot = preset?.gradStartLight ?: MaterialTheme.colorScheme.primary
                 val selected = accent == currentAccent
+                val isSelected = selected // capture: SemanticsPropertyReceiver.selected would shadow it
+                // F2: the swatch is a colour-only control; TalkBack needs a name, a role and the state.
+                val accentName = tr(accent.name.lowercase().replaceFirstChar { it.uppercase() })
+                val accentDescription = "${tr("Accent")}: $accentName"
                 Box(
                     modifier = Modifier.size(40.dp).clip(CircleShape)
                         .then(
@@ -221,7 +229,11 @@ fun AtelierSettingsHeader(
                                 Modifier
                             },
                         )
-                        .clickable { onAccent(accent) },
+                        .clickable(role = Role.RadioButton) { onAccent(accent) }
+                        .semantics {
+                            contentDescription = accentDescription
+                            this.selected = isSelected
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
@@ -252,6 +264,7 @@ private fun ModePreviewCard(
     onClick: () -> Unit,
     preview: @Composable () -> Unit,
 ) {
+    val isSelected = selected
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -264,7 +277,8 @@ private fun ModePreviewCard(
                 },
             )
             .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick),
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .semantics { this.selected = isSelected },
     ) {
         Column(
             modifier = Modifier.padding(8.dp),

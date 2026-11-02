@@ -27,6 +27,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 
 /**
  * Atelier («کارگاه») dock: the design replaces the floating pill bar with a
@@ -62,7 +65,8 @@ fun AtelierDock(items: List<DockItem>) {
                             .weight(1f)
                             .alpha(if (item.enabled) 1f else 0.45f)
                             .clip(RoundedCornerShape(12.dp))
-                            .clickable(enabled = item.enabled, onClick = item.onClick)
+                            .clickable(enabled = item.enabled, role = Role.Tab, onClick = item.onClick)
+                            .semantics { this.selected = item.selected }
                             .padding(top = 2.dp, bottom = 2.dp),
                     ) {
                         Box(

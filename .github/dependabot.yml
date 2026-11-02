@@ -8,6 +8,10 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # E2: SHA-pinned actions only stay current if bumps are cheap to review — one grouped PR.
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:

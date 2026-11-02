@@ -81,5 +81,40 @@ The required manifest fields are: `platform: "android"` and a non-empty `abi` (f
 
 ## Room schema snapshots
 
-`core/android` uses `exportSchema = true` and the migration chain currently runs through schema version 12.
-Historical v2 and current v12 snapshots are checked in. The schema gate verifies that the current snapshot is version-matched and that migrations 1→12 are declared. Do not hand-edit Room identity hashes; regenerate snapshots with Room/KSP in a configured Gradle environment when the schema changes.
+`core/android` uses `exportSchema = true`. The database is at **schema version 13**; the migration chain
+`MIGRATION_1_2 … MIGRATION_12_13` is declared in `Database.kt`.
+
+Checked-in snapshots (`core/android/schemas/com.anvex.core.android.db.AnvexDatabase/`): **2.json, 12.json, 13.json**.
+Snapshots 3–11 do not exist, and there is no `MigrationTestHelper` test, so migrations 2→12 are verified only
+structurally:
+
+* `tools/verify_room_schema_snapshots.py` (run in CI) checks that the current snapshot matches the declared
+  `version` and that every `MIGRATION_n_n+1` for `n = 1 … version-1` is *declared*. It cannot tell whether a
+  migration's SQL is correct.
+* A real migration test (open an old-version database, migrate, validate) needs the old snapshot as input.
+
+Do not hand-write the missing snapshots or edit Room identity hashes — a fabricated snapshot would make a
+migration test pass against a schema that never existed. To backfill one version `N` honestly:
+
+1. `git checkout` the release tag whose `AnvexDatabase` has `version = N`.
+2. In a configured Gradle environment run `./gradlew :core:android:kspDebugKotlin` (Room/KSP writes
+   `schemas/…/N.json`).
+3. Copy that file back into the current tree, then add a `MigrationTestHelper` test for the `N → N+1` step.
+
+Start with the migrations that rewrite tables (not just `ADD COLUMN`) — those are where data loss hides.
+
+## Building on a low-memory machine
+
+`gradle.properties` is tuned for CI and the Kotlin compile of the whole project:
+`org.gradle.jvmargs=-Xmx4g …` and `kotlin.daemon.jvmargs=-Xmx4g`, so a full build can use around 8 GB for the
+two daemons. On a machine with less than ~12 GB of RAM override them per invocation (nothing needs editing):
+
+```bash
+./gradlew :app:assembleDebug \
+  -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m" \
+  -Dkotlin.daemon.jvmargs=-Xmx2g \
+  -Dorg.gradle.parallel=false
+```
+
+Expect a slower build; if the Kotlin daemon is killed ("OutOfMemoryError" / "daemon disappeared") raise
+`kotlin.daemon.jvmargs` first.

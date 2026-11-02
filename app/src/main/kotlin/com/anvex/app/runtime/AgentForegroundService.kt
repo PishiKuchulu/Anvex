@@ -12,12 +12,16 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.anvex.app.R
+import com.anvex.app.i18n.trIn
 import com.anvex.core.android.AppGraph
+import com.anvex.core.android.repo.AppLanguage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * Keeps long-running agent orchestration eligible for Android foreground execution.
@@ -33,16 +37,33 @@ class AgentForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var seenTaskStates = HashMap<Long, String>()
 
+    /** F1: notification text follows the in-app language ("fa" or "en"), kept fresh by a collector. */
+    @Volatile private var language: String = "en"
+
+    private fun resolveLanguage(choice: AppLanguage?): String = when (choice) {
+        AppLanguage.PERSIAN -> "fa"
+        AppLanguage.ENGLISH -> "en"
+        else -> resources.configuration.locales.get(0).language
+    }
+
     override fun onCreate() {
         super.onCreate()
+        // One short DataStore read so the very first (mandatory) foreground notification is already
+        // in the right language; the collector below keeps it current afterwards.
+        language = resolveLanguage(
+            runCatching { runBlocking { AppGraph.get().settings.settings.first().language } }.getOrNull(),
+        )
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Agent runtime", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL, trIn(language, "Agent runtime"), NotificationManager.IMPORTANCE_LOW),
         )
         nm.createNotificationChannel(
-            NotificationChannel(EVENT_CHANNEL, "Agent events", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(EVENT_CHANNEL, trIn(language, "Agent events"), NotificationManager.IMPORTANCE_DEFAULT),
         )
-        startForeground(NOTIFICATION_ID, notification("Agent runtime active"))
+        startForeground(NOTIFICATION_ID, notification(trIn(language, "Agent runtime active")))
+        scope.launch {
+            runCatching { AppGraph.get().settings.settings.collect { language = resolveLanguage(it.language) } }
+        }
         WatchdogState.markHeartbeat()
         scope.launch {
             while (true) {
@@ -84,10 +105,10 @@ class AgentForegroundService : Service() {
                         task.state in setOf("COMPLETED", "FAILED", "WAITING_APPROVAL", "INTERRUPTED")
                     ) {
                         val (title, text) = when (task.state) {
-                            "COMPLETED" -> "Agent task completed" to (task.detail ?: task.label)
-                            "FAILED" -> "Agent task failed" to (task.detail ?: task.label)
-                            "WAITING_APPROVAL" -> "Agent needs approval" to (task.detail ?: task.label)
-                            else -> "Agent task interrupted" to (task.detail ?: task.label)
+                            "COMPLETED" -> trIn(language, "Agent task completed") to (task.detail ?: task.label)
+                            "FAILED" -> trIn(language, "Agent task failed") to (task.detail ?: task.label)
+                            "WAITING_APPROVAL" -> trIn(language, "Agent needs approval") to (task.detail ?: task.label)
+                            else -> trIn(language, "Agent task interrupted") to (task.detail ?: task.label)
                         }
                         notifyEvent(nm, task.id.toInt(), title, text)
                     }
@@ -122,7 +143,7 @@ class AgentForegroundService : Service() {
 
     private fun notification(text: String): Notification = NotificationCompat.Builder(this, CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_agent)
-        .setContentTitle("Anvex Agent")
+        .setContentTitle(trIn(language, "Anvex Agent"))
         .setContentText(text)
         .setOngoing(true)
         .build()

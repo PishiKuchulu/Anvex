@@ -148,6 +148,7 @@ import com.anvex.core.model.MessageRole
 import com.anvex.core.model.ThinkingLevel
 import com.anvex.app.vm.ChatViewModel
 import com.anvex.app.i18n.tr
+import androidx.compose.ui.semantics.Role
 
 @OptIn(ExperimentalMaterial3Api::class)
 /**
@@ -1087,7 +1088,7 @@ private fun AttachOption(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(AnvexDimens.radiusMedium))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

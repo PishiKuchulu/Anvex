@@ -42,6 +42,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.navigation.NavController
 import com.anvex.app.ui.Routes
 import com.anvex.app.i18n.tr
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 
 enum class ProjectTab { CHAT, EDITOR, PREVIEW, BUILD, HARNESS }
 
@@ -262,6 +265,7 @@ private fun AtelierProjectModes(
     ) {
         modes.forEach { (tab, label) ->
             val selected = tab == current
+            val isSelected = selected
             androidx.compose.foundation.layout.Box(
                 modifier = Modifier
                     .weight(1f)
@@ -270,7 +274,8 @@ private fun AtelierProjectModes(
                         if (selected) MaterialTheme.colorScheme.surface
                         else androidx.compose.ui.graphics.Color.Transparent,
                     )
-                    .clickable { onSelect(tab) }
+                    .clickable(role = Role.Tab) { onSelect(tab) }
+                    .semantics { this.selected = isSelected }
                     .padding(vertical = 8.dp),
                 contentAlignment = androidx.compose.ui.Alignment.Center,
             ) {

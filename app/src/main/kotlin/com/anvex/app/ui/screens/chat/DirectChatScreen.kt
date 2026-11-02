@@ -107,6 +107,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
+import androidx.compose.ui.semantics.Role
 
 /**
  * In-memory hand-off for the Atelier home composer's "quick chat" mode:
@@ -977,7 +978,7 @@ private fun AttachRow(icon: androidx.compose.ui.graphics.vector.ImageVector, lab
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

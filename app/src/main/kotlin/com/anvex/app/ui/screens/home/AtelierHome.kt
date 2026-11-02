@@ -68,6 +68,9 @@ import com.anvex.core.model.Project
 import com.anvex.core.model.ProjectType
 import com.anvex.core.model.ProviderConfig
 import com.anvex.core.model.TaskRunItem
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 
 /**
  * Atelier («کارگاه») Home, per design screen 01: a big composer with a
@@ -452,12 +455,14 @@ private fun AtelierComposer(
 
 @Composable
 private fun RowScope.ComposerMode(label: String, selected: Boolean, onClick: () -> Unit) {
+    val isSelected = selected
     Box(
         Modifier
             .weight(1f)
             .clip(RoundedCornerShape(16.dp))
             .background(if (selected) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent)
-            .clickable(onClick = onClick)
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .semantics { this.selected = isSelected }
             .padding(vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {

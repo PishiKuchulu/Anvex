@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.anvex.app.i18n.tr
+import androidx.compose.ui.semantics.Role
 
 /**
  * v4.6: the long-press message menu the chat was missing — Reply, Copy,
@@ -97,7 +98,7 @@ private fun MessageActionRow(icon: ImageVector, label: String, onClick: () -> Un
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

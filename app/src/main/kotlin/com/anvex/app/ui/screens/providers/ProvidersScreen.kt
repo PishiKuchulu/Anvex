@@ -59,6 +59,7 @@ import com.anvex.core.model.ProviderKind
 import com.anvex.app.i18n.tr
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.semantics.Role
 
 /**
  * Provider/model management (brief §13): list, add, edit, delete, test
@@ -753,7 +754,7 @@ private fun KeyLinkRow(label: String, hint: String, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = 10.dp, horizontal = 4.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {

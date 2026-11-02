@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.anvex.app.ui.theme.LocalBoltExtras
+import androidx.compose.ui.semantics.Role
 
 /**
  * v4.2 "Nebula" building blocks. Everything reads its colors from [LocalBoltExtras] and the
@@ -113,7 +114,7 @@ fun GradientButton(
             .height(48.dp)
             .clip(shape)
             .then(fill)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,

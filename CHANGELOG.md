@@ -1,5 +1,52 @@
 # Changelog
 
+## 4.14.4 — External review #2, sections E/F/G
+
+Completes the second external review: sections E (build, dependencies,
+supply chain), F (UI, accessibility, i18n) and G (tests, monitoring)
+were verified against 4.14.3 and the confirmed findings fixed. The
+fixes were prepared by the reviewing model as a patch and re-audited
+line-by-line before landing; one reviewer amendment was applied on top
+(semantics values are captured into locals before `semantics {}` blocks
+so a same-named semantics property can never shadow them).
+
+- **E1:** weekly OSV dependency audit (`tools/osv_audit_catalog.py` +
+  `dependency-audit` workflow) checks every pinned coordinate in the
+  version catalog against published advisories. Report-only; no
+  dependency was upgraded blind — upgrades land one at a time after
+  this audit has a baseline.
+- **E2:** floating action tags in the emulator-smoke, libnode-release
+  and poc-libnode workflows are pinned to the same reviewed SHAs the
+  main build already uses (`android-emulator-runner` still floats — no
+  verified SHA was available; Dependabot now groups action bumps into
+  one PR so pins stay current).
+- **E3:** the emulator smoke suite (all six instrumented classes) now
+  also runs nightly instead of only by manual dispatch.
+- **E4:** `docs/BUILD.md` documents the Room schema snapshots honestly
+  (2, 12, 13 exist; 3–11 were never exported and must not be
+  hand-authored) and how to regenerate them properly.
+- **E5:** rejected — the committed keystore is already documented as a
+  public debug key in the README and the build script.
+- **E6:** low-memory build notes added to `docs/BUILD.md`; a baseline
+  profile still needs a macrobenchmark module and a device.
+- **F1:** 27 user-facing strings that silently fell back to English in
+  the Persian UI (including every destructive-action confirmation) now
+  have translations; 3 duplicate dictionary keys removed; a new
+  `TranslationCoverageTest` fails CI if a `tr("…")` literal ever lacks
+  a Persian entry again; `AgentForegroundService` notifications follow
+  the in-app language via a new non-Compose `trIn` lookup.
+- **F2:** accessibility semantics — buttons, dock/project tabs and
+  radio-style controls (composer mode, theme previews, Atelier accent
+  swatches) now expose proper roles and selected state; the
+  colour-only accent swatches gained spoken names.
+- **F3:** already fixed in 4.14.3. **F4:** no change — whether Quick
+  chat and project Chat stay separate is a product decision.
+- **G1–G4:** no code. The review's test/monitoring gaps are recorded
+  as follow-ups, not silently "fixed": view-model tests need the
+  planned pure-logic extraction first, crash reporting stays out on
+  privacy grounds, and the silent-`runCatching` sweep is queued as its
+  own change.
+
 ## 4.14.3 — External review #2 fixes
 
 A second external static review (47 findings against 4.14.2) was
