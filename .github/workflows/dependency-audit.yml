@@ -1,0 +1,29 @@
+name: Dependency audit (OSV)
+
+# E1: Dependabot opens update PRs, but nothing checked whether a version we ACTUALLY ship has a
+# published advisory. This job asks the public OSV database about every pinned coordinate in
+# gradle/libs.versions.toml (see tools/osv_audit_catalog.py — stdlib only, no third-party action).
+#
+# Report-only on purpose: the result is written to the job summary. Once the current backlog is
+# cleared, add `--fail` to the script line to make new advisories block merges.
+
+on:
+  schedule:
+    - cron: "41 3 * * 1"      # Mondays 03:41 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "gradle/libs.versions.toml"
+      - "tools/osv_audit_catalog.py"
+
+permissions:
+  contents: read
+
+jobs:
+  osv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # same SHA as build-apk.yml
+      - name: Audit pinned versions against OSV
+        run: python3 tools/osv_audit_catalog.py
