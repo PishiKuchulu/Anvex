@@ -255,6 +255,10 @@ class ChatSession(
         var failure: AiError? = null
         var canceled = false
         var memoryOn = false
+        // Declared OUTSIDE the streaming coroutineScope: the finalize step
+        // (after the scope) also reads it, to decide whether leftover alien
+        // tool scaffolding may be stripped from the persisted prose.
+        var turnActionsExecuted = 0
 
         coroutineScope {
             try {
@@ -329,7 +333,6 @@ class ChatSession(
                 // model DID try to call a tool, but in a dialect the parser
                 // does not understand, so the round produced zero actions.
                 var markupContinuations = 0
-                var turnActionsExecuted = 0
                 var suppressRoundSeparator = false
                 while (true) {
                     val roundId = if (round == 0) assistantId else "$assistantId-r$round"
