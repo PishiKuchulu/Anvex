@@ -90,10 +90,66 @@ class AgentToolExecutor(
             !com.anvex.core.engine.SensitivePaths.isSensitive(it) ||
                 com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(it)
         }
-        if (visible.isEmpty()) return ToolResult(true, "(no files)")
-        val shown = visible.take(MAX_LIST_ENTRIES).joinToString("\n") { "$it (${fs.fileSize(it) ?: 0} bytes)" }
-        val more = if (visible.size > MAX_LIST_ENTRIES) "\n…and ${visible.size - MAX_LIST_ENTRIES} more" else ""
-        return ToolResult(true, shown + more)
+        if (visible.isEmpty()) {
+            // Distinguish "not here" from "here but empty/hidden": a model
+            // told only "(no files)" cannot tell a typo'd path from an empty
+            // folder, and may report the folder as missing from the project.
+            return if (prefix.isNotEmpty() && !fs.exists(prefix)) {
+                ToolResult(true, "Path not found in this workspace: '$prefix'. Nothing was listed — check the path, or list a parent folder.")
+            } else {
+                ToolResult(true, "(no files)")
+            }
+        }
+        val scope = prefix.ifEmpty { "." }
+        if (visible.size <= MAX_LIST_ENTRIES) {
+            val body = visible.joinToString("\n") { "$it (${fs.fileSize(it) ?: 0} bytes)" }
+            return ToolResult(true, "Listing ${visible.size} file(s) under '$scope':\n$body")
+        }
+        // Over the cap, a flat first-slice is actively misleading: it is
+        // alphabetical, so late-sorting subtrees (res/, resources/…) vanish
+        // entirely and a reviewing model concludes they do not exist
+        // (2026-11-02 incident: an 899-file tree read as "res is empty").
+        // Answer with a directory summary instead — every folder under the
+        // scope with its recursive file count fits in a few dozen lines no
+        // matter how large the tree is, so nothing can silently disappear.
+        val parents = visible.map { it.substringBeforeLast('/', "") }.toSet()
+        if (parents.size <= 1) {
+            // One huge flat folder: no sub-structure to summarize.
+            val shown = visible.take(MAX_LIST_ENTRIES).joinToString("\n") { "$it (${fs.fileSize(it) ?: 0} bytes)" }
+            return ToolResult(
+                true,
+                "Listing ${visible.size} file(s) under '$scope' (single folder, showing first ${MAX_LIST_ENTRIES}):\n" +
+                    "$shown\n…and ${visible.size - MAX_LIST_ENTRIES} more file(s) in this same folder. " +
+                    "This listing is PARTIAL — files not shown still exist.",
+            )
+        }
+        val counts = sortedMapOf<String, Int>()
+        visible.forEach { path ->
+            // Count the file into every ancestor folder down to (and
+            // including) the queried scope; files directly in the scope
+            // count under the scope itself.
+            var dir = path.substringBeforeLast('/', "")
+            while (true) {
+                val inScope = prefix.isEmpty() || dir == prefix || dir.startsWith("$prefix/")
+                if (!inScope) break
+                val key = dir.ifEmpty { "." }
+                counts[key] = (counts[key] ?: 0) + 1
+                if (dir.isEmpty() || dir == prefix) break
+                dir = dir.substringBeforeLast('/', "")
+            }
+        }
+        val out = StringBuilder()
+        out.append("Listing ").append(visible.size).append(" file(s) under '").append(scope)
+            .append("' — too many to list individually, so here is every folder with its file count:\n")
+        val dirs = counts.keys.toList()
+        dirs.take(MAX_LIST_SUMMARY_DIRS).forEach { d -> out.append(d).append("/ — ").append(counts.getValue(d)).append(" file(s)\n") }
+        if (dirs.size > MAX_LIST_SUMMARY_DIRS) {
+            out.append("…folder summary truncated at ").append(MAX_LIST_SUMMARY_DIRS)
+                .append(" of ").append(dirs.size).append(" folders; list a subfolder for its summary.\n")
+        }
+        out.append("This is a PARTIAL view: list any folder above directly to see its files. ")
+            .append("Never conclude a file or folder is missing from a partial listing.")
+        return ToolResult(true, out.toString())
     }
 
     // ------------------------------------------------------------------ web tools
@@ -210,6 +266,7 @@ class AgentToolExecutor(
         const val MAX_FETCH_CHARS = 40_000
         const val MAX_READ_CHARS = 60_000
         const val MAX_LIST_ENTRIES = 300
+        const val MAX_LIST_SUMMARY_DIRS = 150
         const val MAX_SEARCH_RESULTS = 8
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) Anvex"
     }

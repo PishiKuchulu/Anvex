@@ -254,7 +254,11 @@ class ArtifactManager(private val context: Context) {
                     "pdf" -> "application/pdf"
                     "json" -> "application/json"
                     "mp4" -> "video/mp4"
-                    "md", "txt" -> "text/plain"
+                    // "md" must stay text/markdown (as the packager stamps it):
+                    // downgrading it to text/plain here made MediaStore append
+                    // ".txt" on save-to-Downloads ("report.md.txt", user report).
+                    "md" -> "text/markdown"
+                    "txt" -> "text/plain"
                     else -> return@mapNotNull null
                 }
                 val format = when (file.extension.lowercase()) {

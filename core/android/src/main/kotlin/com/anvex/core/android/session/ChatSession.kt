@@ -957,7 +957,15 @@ class ChatSession(
         return buildString {
             append("<tool_results>\n")
             items.forEach { o ->
-                val body = o.text.take(per).replace("</tool_result", "</ tool_result")
+                // Never clip silently: a result cut without a marker is
+                // indistinguishable from a complete one, and models have
+                // concluded "missing" from exactly that (2026-11-02).
+                val clippedNote = if (o.text.length > per) {
+                    "\n…[clipped: this result is ${o.text.length} chars; only the first $per are shown]"
+                } else {
+                    ""
+                }
+                val body = o.text.take(per).replace("</tool_result", "</ tool_result") + clippedNote
                 append("<tool_result name=\"").append(o.tool).append("\" target=\"")
                     .append(o.target.take(200).replace("\"", "'")).append("\" ok=\"").append(o.ok).append("\">\n")
                     .append(body).append("\n</tool_result>\n")

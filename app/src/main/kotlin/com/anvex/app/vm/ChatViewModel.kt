@@ -414,15 +414,16 @@ class ChatViewModel(
                         ?: return@withContext PreparedAttachments(emptyList(), emptyList(),
                             "Cannot save $name to the project workspace.")
                     val inspection = inspectZip(bytes)
-                    val extractedDir = extractZipToWorkspace(fs, bytes, safeName)
+                    val extraction = extractZipToWorkspace(fs, bytes, safeName)
                     payloads += com.anvex.core.ai.ChatAttachment(
                         name = name,
                         mimeType = mime,
                         text = buildString {
                             append("The user attached a binary ZIP archive named ").append(name).append(".\n")
                             append("The original archive was saved in the project at: ").append(workspacePath).append("\n")
-                            if (extractedDir != null) {
-                                append("The archive was also extracted into the project at: ").append(extractedDir).append(".\n")
+                            if (extraction != null) {
+                                append("The archive was also extracted into the project at: ").append(extraction.dir).append(".\n")
+                                append(extraction.summaryLine()).append("\n")
                                 append("Read the extracted files from there with ls/cat; do not try to unzip the archive (no unzip tool exists).\n")
                             }
                             append(inspection)
@@ -492,38 +493,21 @@ class ChatViewModel(
      * excerpts — and the agent's shell whitelist has no `unzip` or `find`,
      * so it could never actually open the archive (it reported exactly
      * that). Extract the text entries into the project so ls/cat work.
-     * Bounded like inspectZip, zip-slip-guarded via PathSanitizer;
-     * non-text entries stay in the archive only. Null on any failure —
-     * the manifest/excerpts path still applies then.
+     * The walk itself lives in [com.anvex.app.project.ArchiveTextExtractor],
+     * which reports completeness explicitly: the original inline version
+     * silently stopped at 200 entries / 2 MB, amputating an 899-entry
+     * review archive (its res/ tree and Gradle root files never reached
+     * the workspace, and the model reported them as missing — 2026-11-02).
+     * Null on any failure — the manifest/excerpts path still applies then.
      */
     private fun extractZipToWorkspace(
         fs: com.anvex.core.engine.ProjectFileSystem,
         bytes: ByteArray,
         safeName: String,
-    ): String? {
+    ): com.anvex.app.project.ArchiveTextExtractor.Outcome? {
         val dir = ".anvex/attachments/${attachmentDigest(bytes)}-extracted"
         return runCatching {
-            fs.mkdirs(dir)
-            var entries = 0
-            var extracted = 0L
-            java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes)).use { zip ->
-                var entry = zip.nextEntry
-                while (entry != null && entries < MAX_ZIP_ENTRIES && extracted < MAX_ZIP_EXTRACTED_BYTES) {
-                    entries++
-                    val safe = runCatching { com.anvex.core.engine.PathSanitizer.sanitize(entry.name) }.getOrNull()
-                    if (safe != null && !entry.isDirectory && isTextExtension(safe)) {
-                        val parent = safe.substringBeforeLast('/', "")
-                        if (parent.isNotEmpty()) fs.mkdirs("$dir/$parent")
-                        val remaining = (MAX_ZIP_EXTRACTED_BYTES - extracted).coerceAtMost(512 * 1024L)
-                        val data = readBounded(zip, remaining)
-                        extracted += data.size
-                        if (data.isNotEmpty()) fs.writeFileBytes("$dir/$safe", data)
-                    }
-                    zip.closeEntry()
-                    entry = zip.nextEntry
-                }
-            }
-            dir
+            com.anvex.app.project.ArchiveTextExtractor.extract(fs, bytes, dir)
         }.getOrNull()
     }
 
@@ -597,9 +581,6 @@ class ChatViewModel(
         private const val MAX_TOTAL_ATTACHMENT_BYTES = 20L * 1024 * 1024
         private const val MAX_TEXT_CHARS = 1_000_000
         private const val MAX_ATTACHMENT_CONTEXT_CHARS = 120_000
-        // v4.10.5: bounds for zip extraction (same as inspectZip's).
-        private const val MAX_ZIP_ENTRIES = 200
-        private const val MAX_ZIP_EXTRACTED_BYTES = 2L * 1024 * 1024
     }
 
     fun cancel() {

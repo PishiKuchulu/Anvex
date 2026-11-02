@@ -590,6 +590,9 @@ class DirectChatViewModel : ViewModel() {
                     }
                     entry = zip.nextEntry
                 }
+                if (entry != null) {
+                    sb.append("...[inspection limit reached — the archive contains more entries than are listed here; absence from this list is not evidence of absence from the archive]\n")
+                }
                 sb.append("\n$entries entries listed.\n")
                 sb.toString().take(MAX_ATTACHMENT_CONTEXT_CHARS)
             }

@@ -1,5 +1,8 @@
 package com.anvex.core.android.tools
 
+import com.anvex.core.engine.BoltAction
+import com.anvex.core.engine.ProjectFileSystem
+import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -57,5 +60,84 @@ class AgentToolExecutorTest {
         val text = executor("93.184.216.34").htmlToText("<html><head><title>x</title></head><body><script>evil()</script><p>Hello &amp; <b>world</b></p></body></html>")
         assertEquals("Hello & world", text)
         assertFalse(text.contains("evil"))
+    }
+
+    // ---- list tool: a capped view must never read as a complete tree ----
+    // (2026-11-02 incident: an 899-file extracted archive listed flat with a
+    // 300-entry alphabetical cap; the res/ subtree sorted past the slice and
+    // the reviewing model reported it as missing.)
+
+    private class ListFs(files: Map<String, String>) : ProjectFileSystem {
+        private val files = files.toSortedMap()
+        override fun mkdirs(relativePath: String) {}
+        override fun exists(relativePath: String): Boolean =
+            files.keys.any { it == relativePath || it.startsWith("$relativePath/") }
+        override fun isDirectory(relativePath: String): Boolean =
+            files.keys.any { it.startsWith("$relativePath/") }
+        override fun writeFile(relativePath: String, content: String) {}
+        override fun writeFileBytes(relativePath: String, bytes: ByteArray) {}
+        override fun readFile(relativePath: String): String? = files[relativePath]
+        override fun readFileBytes(relativePath: String): ByteArray? =
+            files[relativePath]?.toByteArray(Charsets.UTF_8)
+        override fun appendFile(relativePath: String, content: String) {}
+        override fun delete(relativePath: String, recursive: Boolean): Boolean = false
+        override fun list(relativePath: String): List<ProjectFileSystem.FileEntry> = emptyList()
+        override fun move(from: String, to: String): Boolean = false
+        override fun copy(from: String, to: String): Boolean = false
+        override fun walk(): List<String> = files.keys.toList()
+    }
+
+    private fun listTool(fs: ProjectFileSystem, path: String): String = runBlocking {
+        AgentToolExecutor(resolver = { listOf(InetAddress.getByName("93.184.216.34")) })
+            .run(BoltAction.ToolAction("list", path), fs, webAllowed = false).text
+    }
+
+    @Test fun cappedListingBecomesDirectorySummaryThatStillNamesLateFolders() {
+        val files = buildMap {
+            repeat(400) { put("app/src/main/java/com/tuned/pkg/F%03d.kt".format(it), "x") }
+            repeat(120) { put("app/src/main/res/values/R%03d.xml".format(it), "x") }
+            put("settings.gradle.kts", "x")
+        }
+        val text = listTool(ListFs(files), ".")
+        assertTrue(text.startsWith("Listing 521 file(s)"))
+        // The res subtree — alphabetically past any flat 300-slice — is named
+        // with its exact count, so it cannot be reported as missing.
+        assertTrue(text.contains("app/src/main/res/ — 120 file(s)"))
+        assertTrue(text.contains("app/src/main/res/values/ — 120 file(s)"))
+        assertTrue(text.contains("PARTIAL"))
+        assertFalse(text.contains("F399.kt"))
+    }
+
+    @Test fun smallListingStaysFlatWithHeader() {
+        val fs = ListFs(mapOf("a.txt" to "1", "dir/b.txt" to "2", "dir/c.txt" to "3"))
+        val text = listTool(fs, ".")
+        assertTrue(text.startsWith("Listing 3 file(s) under '.':"))
+        assertTrue(text.contains("dir/b.txt (1 bytes)"))
+        assertFalse(text.contains("PARTIAL"))
+    }
+
+    @Test fun subfolderListingShowsItsOwnFiles() {
+        val files = buildMap {
+            repeat(400) { put("src/main/F%03d.kt".format(it), "x") }
+            repeat(5) { put("src/res/R$it.xml", "x") }
+        }
+        val text = listTool(ListFs(files), "src/res")
+        assertTrue(text.startsWith("Listing 5 file(s) under 'src/res':"))
+        assertTrue(text.contains("src/res/R4.xml"))
+        assertFalse(text.contains("PARTIAL"))
+    }
+
+    @Test fun missingPathIsReportedAsNotFound() {
+        val text = listTool(ListFs(mapOf("a.txt" to "1")), "no/such/dir")
+        assertTrue(text.contains("Path not found in this workspace"))
+    }
+
+    @Test fun singleHugeFolderStaysFlatButMarkedPartial() {
+        val files = buildMap { repeat(400) { put("docs/D%03d.md".format(it), "x") } }
+        val text = listTool(ListFs(files), ".")
+        assertTrue(text.contains("PARTIAL"))
+        assertTrue(text.contains("…and 100 more file(s) in this same folder"))
+        assertTrue(text.contains("docs/D000.md"))
+        assertFalse(text.contains("docs/D399.md"))
     }
 }

@@ -1,5 +1,38 @@
 # Changelog
 
+## 4.14.7 — Deliverables open in-app and keep their names; the agent can no longer be shown a partial view as if it were complete
+
+Two user reports from 2026-11-02:
+
+- **Deliverables: Open button + real file names.** A generated file
+  (report, document) could only be Saved or Shared — tapping it showed
+  nothing, so its content could not be read inside the app. The card now
+  has an Open action: Markdown/text/JSON open in an in-app viewer
+  (Markdown rendered), PDF and MP4 open in the system viewer. Also, a
+  Markdown deliverable saved to Downloads landed as `name.md.txt`:
+  re-listed artifacts downgraded `.md` to `text/plain`, and MediaStore
+  appends the canonical extension of the MIME type. `.md` now stays
+  `text/markdown` end to end, so the saved file keeps its real name.
+- **No more silent partial views.** Reviewing an attached source ZIP,
+  the agent reported the project's `res/` folder and Gradle root files
+  as missing — because the tree it was given really did not contain
+  them: ZIP extraction silently stopped at 200 entries / 2 MB (that
+  archive's `res/` starts at entry 588 and its Gradle files sit at
+  887–895; only 142 text files were ever written), the extracted-text
+  extension set lacked `properties` (so `gradle.properties` could never
+  appear at all), the file-listing tool cut off flat at 300 entries,
+  and clipped tool results carried no marker. All four are fixed:
+  extraction now scans the whole archive (20k entries / 64 MB),
+  skips oversize files whole and names them, drops an
+  `_EXTRACTION_REPORT.txt` into the extracted tree, and states
+  COMPLETE or PARTIAL up front; the listing tool answers large scopes
+  with per-folder file counts and an explicit partial warning (and
+  distinguishes "path not found" from "empty"); clipped tool results
+  are marked as clipped. The system prompt also gains the
+  absence-of-evidence rule: what a partial view does not show is not
+  thereby missing. Covered by new unit tests for the extractor and
+  the listing tool.
+
 ## 4.14.6 — User-requested batch: project delete, multi-file attach, goo loader in Atelier, agent format recovery, Chat dock tab, Settings tidy-up
 
 Six changes dictated by the user on 2026-11-02:
