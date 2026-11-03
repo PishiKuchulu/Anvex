@@ -338,7 +338,7 @@ class GitHubRepository(private val context: android.content.Context) {
             } catch (e: Exception) {
                 for ((path, before) in backups.asReversed()) {
                     runCatching {
-                        if (before != null) fs.writeFileBytes(path, before) else fs.delete(path)
+                        if (before != null) fs.writeFileBytes(path, before) else fs.delete(path, recursive = false)
                     }
                 }
                 throw e

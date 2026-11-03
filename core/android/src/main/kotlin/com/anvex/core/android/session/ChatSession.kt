@@ -918,6 +918,8 @@ class ChatSession(
                     reasoning = allReasoning.toString(),
                     generation = generation,
                     turnArtifact = turnArtifacts.lastOrNull(),
+                    responderProviderId = responderProviderId,
+                    responderModel = responderModel,
                 )
             }
         }
@@ -1099,6 +1101,8 @@ class ChatSession(
         reasoning: String = "",
         generation: Int,
         turnArtifact: Pair<String, String>? = null,
+        responderProviderId: String? = null,
+        responderModel: String? = null,
     ) {
         // Review B1: a superseded turn (Stop→Send) still persists its
         // message and journal below, but must not publish terminal UI

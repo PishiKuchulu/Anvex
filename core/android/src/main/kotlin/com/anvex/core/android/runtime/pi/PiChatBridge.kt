@@ -59,7 +59,7 @@ class PiChatBridge(
         extraExtensions: List<String> = emptyList(),
         onSnapshot: (Snapshot) -> Unit = {},
     ): TurnOutcome {
-        turnMutexes.computeIfAbsent(chatKey) { kotlinx.coroutines.sync.Mutex() }
+        return turnMutexes.computeIfAbsent(chatKey) { kotlinx.coroutines.sync.Mutex() }
             .withLock { runTurnLocked(chatKey = chatKey, projectRoot = projectRoot, prompt = prompt, providerName = providerName, modelId = modelId, thinkingLevel = thinkingLevel, apiKey = apiKey, modelsJson = modelsJson, approvalPrompt = approvalPrompt, extraExtensions = extraExtensions, onSnapshot = onSnapshot) }
     }
 
