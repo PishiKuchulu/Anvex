@@ -118,7 +118,7 @@ fun ConflictResolverScreen(navController: NavHostController, projectId: String, 
                     when (segment) {
                         is ConflictSegment.Text -> {
                             if (segment.lines.any { it.isNotBlank() }) {
-                                Surface(tonalElevation = 1.dp, Modifier.fillMaxWidth()) {
+                                Surface(modifier = Modifier.fillMaxWidth(), tonalElevation = 1.dp) {
                                     Text(
                                         segment.lines.joinToString("\n"),
                                         Modifier.padding(10.dp),
@@ -135,7 +135,8 @@ fun ConflictResolverScreen(navController: NavHostController, projectId: String, 
                                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("${tr("Conflict")} ${index + 1}", style = MaterialTheme.typography.titleSmall)
                                     StageBlock(tr("Ours") + " (${segment.oursLabel})", segment.ours, MaterialTheme.colorScheme.primary)
-                                    if (segment.base != null) StageBlock(tr("Base"), segment.base, MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val baseLines = segment.base
+                                    if (baseLines != null) StageBlock(tr("Base"), baseLines, MaterialTheme.colorScheme.onSurfaceVariant)
                                     StageBlock(tr("Theirs") + " (${segment.theirsLabel})", segment.theirs, MaterialTheme.colorScheme.tertiary)
                                     PickRow(
                                         hasBase = segment.base != null,
@@ -189,7 +190,7 @@ fun ConflictResolverScreen(navController: NavHostController, projectId: String, 
 private fun StageBlock(title: String, lines: List<String>, color: androidx.compose.ui.graphics.Color) {
     Column {
         Text(title, style = MaterialTheme.typography.labelMedium, color = color)
-        Surface(tonalElevation = 1.dp, Modifier.fillMaxWidth()) {
+        Surface(modifier = Modifier.fillMaxWidth(), tonalElevation = 1.dp) {
             Text(
                 lines.joinToString("\n").ifBlank { "∅" },
                 Modifier.padding(8.dp),
