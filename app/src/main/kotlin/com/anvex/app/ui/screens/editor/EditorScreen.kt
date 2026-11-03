@@ -57,6 +57,8 @@ import com.anvex.app.i18n.tr
 fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
     val vm: EditorViewModel = viewModel(key = "editor-$projectId") { EditorViewModel(projectId) }
     val tabs by vm.tabs.collectAsState()
+    val tsStates by vm.tsStates.collectAsState()
+    val foldedMap by vm.foldedRanges.collectAsState()
     val activePath by vm.activePath.collectAsState()
     val project by vm.project.collectAsState()
     val treeRevision by vm.treeRevision.collectAsState()
@@ -194,6 +196,11 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                         vm.findMatches(activeTab.path, searchQuery).map { it until it + searchQuery.length }
                     } else emptyList(),
                     readOnly = activeTab.readOnly,
+                    tsSpans = tsStates[activeTab.path]?.takeIf { it.text == activeTab.text.text }?.document?.spans ?: emptyList(),
+                    tsText = tsStates[activeTab.path]?.text,
+                    folds = tsStates[activeTab.path]?.takeIf { it.text == activeTab.text.text }?.document?.folds ?: emptyList(),
+                    folded = foldedMap.let { vm.foldedFor(activeTab.path, activeTab.text.text) },
+                    onToggleFold = { range -> vm.toggleFold(activeTab.path, activeTab.text.text, range) },
                 )
             }
 

@@ -140,6 +140,89 @@ fun highlight(
     }
 }
 
+/** Span style for a Tree-sitter highlight kind, from the same palettes as the regex highlighter. */
+fun tsSpanStyle(kind: com.anvex.core.engine.codeintel.HighlightKind, colors: HighlightColors): SpanStyle =
+    when (kind) {
+        com.anvex.core.engine.codeintel.HighlightKind.KEYWORD -> SpanStyle(color = colors.keyword)
+        com.anvex.core.engine.codeintel.HighlightKind.STRING -> SpanStyle(color = colors.string)
+        com.anvex.core.engine.codeintel.HighlightKind.COMMENT ->
+            SpanStyle(color = colors.comment, fontStyle = FontStyle.Italic)
+        com.anvex.core.engine.codeintel.HighlightKind.NUMBER -> SpanStyle(color = colors.number)
+        com.anvex.core.engine.codeintel.HighlightKind.TYPE ->
+            SpanStyle(color = colors.key, fontWeight = FontWeight.SemiBold)
+        com.anvex.core.engine.codeintel.HighlightKind.FUNCTION -> SpanStyle(color = colors.attribute)
+        com.anvex.core.engine.codeintel.HighlightKind.PROPERTY -> SpanStyle(color = colors.key)
+        com.anvex.core.engine.codeintel.HighlightKind.CONSTANT -> SpanStyle(color = colors.number)
+    }
+
+/** Builds the styled text from Tree-sitter spans (char offsets into [text]). */
+fun highlightWithTs(
+    text: String,
+    spans: List<com.anvex.core.engine.codeintel.HighlightSpan>,
+    colors: HighlightColors,
+    searchRanges: List<IntRange> = emptyList(),
+): AnnotatedString = buildAnnotatedString {
+    append(text)
+    for (span in spans) {
+        if (span.start in 0 until span.end && span.end <= text.length) {
+            addStyle(tsSpanStyle(span.kind, colors), span.start, span.end)
+        }
+    }
+    for (r in searchRanges) {
+        addStyle(SpanStyle(background = colors.searchBackground), r.first, (r.last + 1).coerceAtMost(length))
+    }
+}
+
+/**
+ * The editor's unified transformation (F2a, P4): Tree-sitter spans when
+ * they belong to the exact current text, the regex highlighter
+ * otherwise, and — when [projection] is non-null — folded regions are
+ * projected out of the visible text with the projection's offset
+ * mapping (styles are carried over, clipped at fold boundaries).
+ */
+class EditorTransformation(
+    private val language: CodeLanguage,
+    private val colors: HighlightColors,
+    private val searchRanges: List<IntRange> = emptyList(),
+    private val tsSpans: List<com.anvex.core.engine.codeintel.HighlightSpan> = emptyList(),
+    private val tsText: String? = null,
+    private val projection: com.anvex.core.engine.codeintel.FoldProjection? = null,
+) : VisualTransformation {
+
+    private var cacheKey: String? = null
+    private var cacheValue: TransformedText? = null
+
+    override fun filter(text: AnnotatedString): TransformedText {
+        if (cacheKey == text.text) cacheValue?.let { return it }
+        val original = text.text
+        val styled = if (tsText == original && tsSpans.isNotEmpty()) {
+            highlightWithTs(original, tsSpans, colors, searchRanges)
+        } else {
+            highlight(original, language, colors, searchRanges)
+        }
+        val proj = projection
+        val result = if (proj == null) {
+            TransformedText(styled, OffsetMapping.Identity)
+        } else {
+            val visible = buildAnnotatedString {
+                append(proj.visibleText)
+                for (item in styled.spanStyles) {
+                    val start = proj.originalToVisible(item.start)
+                    val end = proj.originalToVisible(item.end)
+                    if (end > start) addStyle(item.item, start, end)
+                }
+            }
+            TransformedText(visible, object : OffsetMapping {
+                override fun originalToTransformed(offset: Int): Int = proj.originalToVisible(offset)
+                override fun transformedToOriginal(offset: Int): Int = proj.visibleToOriginal(offset)
+            })
+        }
+        cacheKey = original
+        cacheValue = result
+        return result
+    }
+}
+
 private fun patternFor(language: CodeLanguage): Regex? = when (language) {
     CodeLanguage.JS, CodeLanguage.JSX -> jsPattern
     CodeLanguage.TS, CodeLanguage.TSX -> tsPattern

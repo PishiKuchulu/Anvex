@@ -42,16 +42,30 @@ fun CodeEditorField(
     modifier: Modifier = Modifier,
     searchRanges: List<IntRange> = emptyList(),
     readOnly: Boolean = false,
+    // F2a (P4): Tree-sitter spans for the exact text in [tsText], the
+    // foldable ranges of the current parse, the user's folded set, and
+    // the gutter toggle callback. All defaulted — without them the
+    // field behaves exactly as before (regex highlighting, no folds).
+    tsSpans: List<com.anvex.core.engine.codeintel.HighlightSpan> = emptyList(),
+    tsText: String? = null,
+    folds: List<com.anvex.core.engine.codeintel.FoldRange> = emptyList(),
+    folded: Set<com.anvex.core.engine.codeintel.FoldRange> = emptySet(),
+    onToggleFold: (com.anvex.core.engine.codeintel.FoldRange) -> Unit = {},
 ) {
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
     val colors = rememberHighlightColors()
+    val projection = remember(value.text, folded) {
+        com.anvex.core.engine.codeintel.FoldProjection.of(value.text, folded)
+    }
     // Highlight cutoff: one shared constant with SyntaxTransformation —
     // the field used to gate on a second, larger limit in the view
     // model, so files between the two rendered highlighted anyway.
     val highlightEnabled = value.text.length <= HIGHLIGHT_LIMIT
-    val transformation = if (highlightEnabled) {
-        remember(language, colors, searchRanges) { SyntaxTransformation(language, colors, searchRanges) }
+    val transformation = if (highlightEnabled || tsText == value.text || projection != null) {
+        remember(language, colors, searchRanges, tsSpans, tsText, projection) {
+            EditorTransformation(language, colors, searchRanges, tsSpans, tsText, projection)
+        }
     } else {
         androidx.compose.ui.text.input.VisualTransformation.None
     }
@@ -76,11 +90,23 @@ fun CodeEditorField(
     // tr() is @Composable — hoisted here; the semantics lambda below is not.
     val editorDescription = tr("Editor")
     Row(modifier = modifier.verticalScroll(verticalScroll)) {
-        LineNumberGutter(
-            lineCount = lineCount,
-            fontSizeSp = fontSizeSp,
-            style = style,
-        )
+        if (projection != null || folds.isNotEmpty()) {
+            FoldGutter(
+                projection = projection,
+                lineCount = lineCount,
+                folds = folds,
+                folded = folded,
+                fontSizeSp = fontSizeSp,
+                style = style,
+                onToggleFold = onToggleFold,
+            )
+        } else {
+            LineNumberGutter(
+                lineCount = lineCount,
+                fontSizeSp = fontSizeSp,
+                style = style,
+            )
+        }
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
@@ -120,6 +146,65 @@ private fun LineNumberGutter(lineCount: Int, fontSizeSp: Int, style: TextStyle) 
         modifier = Modifier
             .width(gutterWidth)
             .padding(end = 8.dp),
+    )
+}
+
+/**
+ * F2a (P4): the gutter when the current parse offers fold ranges. Shows
+ * only visible line numbers (folded regions collapse to their first
+ * line), a ▾/▸ marker on fold-start lines, and toggles the fold when a
+ * fold-start line is tapped.
+ */
+@Composable
+private fun FoldGutter(
+    projection: com.anvex.core.engine.codeintel.FoldProjection?,
+    lineCount: Int,
+    folds: List<com.anvex.core.engine.codeintel.FoldRange>,
+    folded: Set<com.anvex.core.engine.codeintel.FoldRange>,
+    fontSizeSp: Int,
+    style: TextStyle,
+    onToggleFold: (com.anvex.core.engine.codeintel.FoldRange) -> Unit,
+) {
+    val visibleLines = projection?.visibleLines ?: (0 until lineCount).toList()
+    val foldStartLines = remember(folds) { folds.map { it.startLine }.toSet() }
+    val layoutState = remember {
+        androidx.compose.runtime.mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null)
+    }
+    val numbers: AnnotatedString = remember(visibleLines, foldStartLines, folded) {
+        buildAnnotatedString {
+            for (line in visibleLines) {
+                append((line + 1).toString())
+                when {
+                    folded.any { it.startLine == line } -> append(" ▸")
+                    line in foldStartLines -> append(" ▾")
+                }
+                append('\n')
+            }
+        }
+    }
+    val digits = lineCount.toString().length
+    val gutterWidth = (digits * fontSizeSp * 0.62f + fontSizeSp * 0.9f + 16f).dp.coerceAtLeast(52.dp)
+    androidx.compose.foundation.text.BasicText(
+        text = numbers,
+        style = style.copy(
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+        ),
+        onTextLayout = { layoutState.value = it },
+        modifier = Modifier
+            .width(gutterWidth)
+            .padding(end = 8.dp)
+            .androidx.compose.ui.input.pointer.pointerInput(visibleLines, folds) {
+                androidx.compose.foundation.gestures.detectTapGestures { offset ->
+                    val result = layoutState.value ?: return@detectTapGestures
+                    val index = result.getLineForVerticalPosition(offset.y)
+                    if (index in visibleLines.indices) {
+                        val originalLine = visibleLines[index]
+                        val fold = folds.firstOrNull { it.startLine == originalLine }
+                        if (fold != null) onToggleFold(fold)
+                    }
+                }
+            },
     )
 }
 

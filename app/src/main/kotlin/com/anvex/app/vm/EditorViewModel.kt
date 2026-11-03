@@ -53,6 +53,69 @@ class EditorViewModel(
     }
 
     val tabs = MutableStateFlow<List<Tab>>(emptyList())
+
+    // ---- F2a (P4): Tree-sitter highlighting + folds -------------------
+    private val codeIntelligence by lazy { graph.androidRuntime.codeIntelligence() }
+    private val tsJobs = mutableMapOf<String, Job>()
+    private val tsParsed = mutableMapOf<String, com.anvex.core.engine.codeintel.ParsedDocument>()
+    private val tsParsedSource = mutableMapOf<String, String>()
+
+    /** A Tree-sitter document and the exact text it was parsed from. */
+    data class TsUiState(
+        val text: String,
+        val document: com.anvex.core.engine.codeintel.ParsedDocument,
+    )
+
+    val tsStates = MutableStateFlow<Map<String, TsUiState>>(emptyMap())
+
+    /** Folded ranges keyed by path + content hash (a text change expires them). */
+    val foldedRanges =
+        MutableStateFlow<Map<String, Set<com.anvex.core.engine.codeintel.FoldRange>>>(emptyMap())
+
+    fun tsStateFor(path: String): TsUiState? = tsStates.value[path]
+
+    fun foldedFor(path: String, text: String): Set<com.anvex.core.engine.codeintel.FoldRange> =
+        foldedRanges.value[foldKey(path, text)] ?: emptySet()
+
+    private fun foldKey(path: String, text: String): String = "$path#${text.hashCode()}"
+
+    fun toggleFold(
+        path: String,
+        text: String,
+        range: com.anvex.core.engine.codeintel.FoldRange,
+    ) {
+        val key = foldKey(path, text)
+        val current = foldedRanges.value[key] ?: emptySet()
+        foldedRanges.value = foldedRanges.value +
+            (key to if (range in current) current - range else current + range)
+    }
+
+    private fun grammarFor(path: String): String? =
+        when (com.anvex.app.ui.editor.CodeLanguage.fromPath(path)) {
+            com.anvex.app.ui.editor.CodeLanguage.KOTLIN -> "kotlin"
+            com.anvex.app.ui.editor.CodeLanguage.JAVA -> "java"
+            com.anvex.app.ui.editor.CodeLanguage.TS -> "typescript"
+            com.anvex.app.ui.editor.CodeLanguage.TSX -> "tsx"
+            com.anvex.app.ui.editor.CodeLanguage.PYTHON -> "python"
+            else -> null
+        }
+
+    private fun scheduleTsParse(path: String, text: String) {
+        val language = grammarFor(path) ?: return
+        if (!codeIntelligence.available || !codeIntelligence.supports(language)) return
+        tsJobs.remove(path)?.cancel()
+        tsJobs[path] = viewModelScope.launch {
+            delay(120)
+            val doc = runCatching {
+                codeIntelligence.parse(tsParsed[path], tsParsedSource[path], language, text)
+            }.getOrNull() ?: return@launch
+            // Publish only when the tab still holds this exact text.
+            if (tabs.value.firstOrNull { it.path == path }?.text?.text != text) return@launch
+            tsParsed[path] = doc
+            tsParsedSource[path] = text
+            tsStates.value = tsStates.value + (path to TsUiState(text, doc))
+        }
+    }
     val activePath = MutableStateFlow<String?>(null)
 
     val treeRevision = MutableStateFlow(0)
@@ -121,12 +184,17 @@ class EditorViewModel(
                 tabs.value = tabs.value + Tab(safe, TextFieldValue(content), content, readOnly = readOnly)
                 activePath.value = safe
                 graph.setActiveFile(projectId, safe)
+                if (!readOnly) scheduleTsParse(safe, content)
             }
         }
     }
 
     fun closeTab(path: String) {
         val t = tabs.value.firstOrNull { it.path == path } ?: return
+        tsJobs.remove(path)?.cancel()
+        tsParsed.remove(path)?.let { codeIntelligence.release(it) }
+        tsParsedSource.remove(path)
+        tsStates.value = tsStates.value - path
         if (t.dirty) saveNow(t.path)
         tabs.value = tabs.value.filterNot { it.path == path }
         if (activePath.value == path) {
@@ -168,6 +236,7 @@ class EditorViewModel(
                 tab.copy(text = field)
             }
         }
+        scheduleTsParse(path, field.text)
         scheduleSave(path)
     }
 
