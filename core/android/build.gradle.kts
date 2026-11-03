@@ -140,6 +140,70 @@ val downloadTreeSitter = tasks.register("downloadTreeSitter") {
 }
 tasks.named("preBuild") { dependsOn(downloadTreeSitter) }
 
+// -----------------------------------------------------------------------------
+// P7 (F6) native vector store: SQLite 3.50.4 amalgamation + sqlite-vec 0.1.9
+// (single-file extension, statically linked via SQLITE_CORE). Same integrity
+// pattern: pinned URL + pinned SHA-256, extracted next to the module, never
+// committed. Host spike (gcc build + live vec0 KNN query) passed pre-adoption.
+// -----------------------------------------------------------------------------
+val downloadRagLibs = tasks.register("downloadRagLibs") {
+    val outDir = layout.buildDirectory.dir("rag-archives").get().asFile
+    val distDir = layout.projectDirectory.dir("rag-dist").asFile
+    val marker = File(distDir, ".anvex-rag-libs.ok")
+    outputs.file(marker)
+    outputs.upToDateWhen { marker.exists() }
+    doLast {
+        data class Pin(val name: String, val url: String, val sha: String)
+        val pins = listOf(
+            Pin(
+                "sqlite.zip",
+                "https://www.sqlite.org/2025/sqlite-amalgamation-3500400.zip",
+                "1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032",
+            ),
+            Pin(
+                "sqlite-vec.tar.gz",
+                "https://github.com/asg017/sqlite-vec/archive/refs/tags/v0.1.9.tar.gz",
+                "9823e737d9934dcbe85dff75d3fca81018a9beee803d70fa77b16faab5d61dc9",
+            ),
+        )
+        outDir.mkdirs(); distDir.mkdirs()
+        fun shaOf(f: File): String =
+            java.security.MessageDigest.getInstance("SHA-256").digest(f.readBytes())
+                .joinToString("") { "%02x".format(it) }
+        for (pin in pins) {
+            val file = File(outDir, pin.name)
+            if (!file.exists() || shaOf(file) != pin.sha) {
+                logger.lifecycle("Anvex: downloading ${pin.name}")
+                java.net.URL(pin.url).openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+                check(shaOf(file) == pin.sha) { "SHA-256 mismatch for ${pin.name}" }
+            }
+        }
+        fun unzip(zip: File, dest: File) {
+            java.util.zip.ZipFile(zip).use { zf ->
+                val entries = zf.entries()
+                while (entries.hasMoreElements()) {
+                    val e = entries.nextElement()
+                    val out = File(dest, e.name)
+                    if (e.isDirectory) out.mkdirs() else {
+                        out.parentFile?.mkdirs()
+                        zf.getInputStream(e).use { input -> out.outputStream().use { input.copyTo(it) } }
+                    }
+                }
+            }
+        }
+        fun untar(tgz: File, dest: File) {
+            val proc = ProcessBuilder("tar", "-xzf", tgz.absolutePath, "-C", dest.absolutePath)
+                .redirectErrorStream(true).start()
+            val outText = proc.inputStream.readBytes().decodeToString()
+            check(proc.waitFor() == 0) { "tar failed for ${tgz.name}: $outText" }
+        }
+        unzip(File(outDir, "sqlite.zip"), distDir)
+        untar(File(outDir, "sqlite-vec.tar.gz"), distDir)
+        marker.writeText("sqlite 3.50.4 + sqlite-vec 0.1.9\n")
+    }
+}
+tasks.named("preBuild") { dependsOn(downloadRagLibs) }
+
 android {
     namespace = "com.anvex.core.android"
     compileSdk = 35

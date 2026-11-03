@@ -147,3 +147,43 @@ if(EXISTS ${ANVEX_TS_DIST}/tree-sitter-0.25.8.tar.gz AND
 else()
     message(WARNING "tree-sitter tarballs not found — skipping anvex-ts (Tree-sitter highlighting unavailable)")
 endif()
+
+# libanvex-vec.so — P7 (F6): SQLite 3.50.4 amalgamation + sqlite-vec 0.1.9
+# statically linked (downloadRagLibs, SHA-256 pinned). sqlite-vec's header
+# is generated from its .tmpl by upstream's Makefile via envsubst of six
+# version variables; that generation is reproduced here.
+set(ANVEX_SQLITE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../rag-dist/sqlite-amalgamation-3500400)
+set(ANVEX_VEC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../rag-dist/sqlite-vec-0.1.9)
+if(EXISTS ${ANVEX_SQLITE_DIR}/sqlite3.c AND EXISTS ${ANVEX_VEC_DIR}/sqlite-vec.c)
+    file(READ ${ANVEX_VEC_DIR}/VERSION ANVEX_VEC_VERSION)
+    string(STRIP "${ANVEX_VEC_VERSION}" ANVEX_VEC_VERSION)
+    string(REPLACE "." ";" ANVEX_VEC_PARTS "${ANVEX_VEC_VERSION}")
+    list(GET ANVEX_VEC_PARTS 0 ANVEX_VEC_MAJOR)
+    list(GET ANVEX_VEC_PARTS 1 ANVEX_VEC_MINOR)
+    list(GET ANVEX_VEC_PARTS 2 ANVEX_VEC_PATCH)
+    string(REGEX REPLACE "-.*$" "" ANVEX_VEC_PATCH "${ANVEX_VEC_PATCH}")
+    file(READ ${ANVEX_VEC_DIR}/sqlite-vec.h.tmpl ANVEX_VEC_H)
+    string(REPLACE "\${VERSION}" "${ANVEX_VEC_VERSION}" ANVEX_VEC_H "${ANVEX_VEC_H}")
+    string(REPLACE "\${VERSION_MAJOR}" "${ANVEX_VEC_MAJOR}" ANVEX_VEC_H "${ANVEX_VEC_H}")
+    string(REPLACE "\${VERSION_MINOR}" "${ANVEX_VEC_MINOR}" ANVEX_VEC_H "${ANVEX_VEC_H}")
+    string(REPLACE "\${VERSION_PATCH}" "${ANVEX_VEC_PATCH}" ANVEX_VEC_H "${ANVEX_VEC_H}")
+    string(REPLACE "\${DATE}" "pinned" ANVEX_VEC_H "${ANVEX_VEC_H}")
+    string(REPLACE "\${SOURCE}" "pinned" ANVEX_VEC_H "${ANVEX_VEC_H}")
+    file(WRITE ${CMAKE_BINARY_DIR}/anvex-gen/sqlite-vec.h "${ANVEX_VEC_H}")
+    add_library(anvex-vec SHARED
+                vec/vec_bridge.cpp
+                ${ANVEX_SQLITE_DIR}/sqlite3.c
+                ${ANVEX_VEC_DIR}/sqlite-vec.c)
+    target_include_directories(anvex-vec PRIVATE
+                               ${ANVEX_SQLITE_DIR}
+                               ${CMAKE_BINARY_DIR}/anvex-gen)
+    target_compile_definitions(anvex-vec PRIVATE
+                               SQLITE_CORE
+                               SQLITE_VEC_STATIC
+                               SQLITE_OMIT_LOAD_EXTENSION)
+    target_link_options(anvex-vec PRIVATE "-Wl,-z,max-page-size=16384")
+    target_link_libraries(anvex-vec ${log-lib})
+    message(STATUS "Anvex: anvex-vec target enabled (sqlite-vec ${ANVEX_VEC_VERSION})")
+else()
+    message(WARNING "rag libs not found — skipping anvex-vec (RAG vector store unavailable)")
+endif()
