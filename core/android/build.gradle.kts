@@ -10,6 +10,16 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------
+// NATIVE FETCH PATTERN (desktop-grade upgrade, P0): every third-party native
+// artifact this project consumes (libnode today; libgit2 + mbedTLS in P3,
+// Tree-sitter grammars in P4, sqlite3 + sqlite-vec in P7) is fetched by a
+// Gradle task in this file following the exact shape of downloadNodeLibs:
+//   1. a pinned release URL (never a moving branch or "latest" link),
+//   2. a pinned SHA-256, verified BEFORE extraction; mismatch fails the build,
+//   3. extraction into a gitignored directory under this module,
+//   4. a marker file so the fetch runs once; preBuild depends on the task.
+// Nothing third-party and binary is ever committed to git.
+// ---------------------------------------------------------------------------
 // Bundled Node.js 24 runtime (real Node.js on-device). Since 4.8.0 the
 // libnode package is Anvex's own: Node 24.22.1 (LTS) built for bionic via
 // Termux nodejs-lts with --shared, plus its DT_NEEDED dependency closure,

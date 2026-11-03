@@ -136,3 +136,79 @@ dependencies {
 
     testImplementation(libs.junit)
 }
+
+// ---------------------------------------------------------------------------
+// Native smoke gate (desktop-grade upgrade, P0): runs as a finalizer of
+// assembleDebug in CI. For every ABI the universal debug APK must contain
+// each Anvex native library; every Anvex-built library must carry 16 KB
+// LOAD alignment (Android 15+ page size) and export its JNI entry points.
+// libnode.so is prebuilt (presence-checked only — its alignment was
+// verified when the package was produced). A missing or misaligned library
+// fails the build here instead of crashing on a device.
+// ---------------------------------------------------------------------------
+val verifyNativeLibs = tasks.register("verifyNativeLibs") {
+    description = "Smoke-checks bundled native libraries inside the universal debug APK."
+    val apkFile = layout.buildDirectory.file("outputs/apk/debug/app-universal-debug.apk")
+    inputs.file(apkFile)
+    onlyIf { apkFile.get().asFile.isFile }
+    doLast {
+        val abis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        // Anvex-built libraries: presence + 16K alignment + JNI symbol.
+        val ownLibs = mapOf(
+            "libanvex-node.so" to "Java_com_anvex_core_android_runtime_node_NodeBridge_startNodeWithArguments",
+            "libanvex-pty.so" to "Java_com_anvex_core_android_runtime_pty_PtyBridge_nativePtyVersion",
+        )
+        fun elfLoadAligns(bytes: ByteArray): List<Long> {
+            check(bytes.size > 64 && bytes[0] == 0x7F.toByte() && bytes[1] == 'E'.code.toByte()) { "not an ELF file" }
+            val is64 = bytes[4].toInt() == 2
+            val littleEndian = bytes[5].toInt() == 1
+            check(littleEndian) { "big-endian ELF not expected" }
+            fun u16(off: Int) = (bytes[off].toInt() and 0xFF) or ((bytes[off + 1].toInt() and 0xFF) shl 8)
+            fun u32(off: Int): Long {
+                var v = 0L
+                for (i in 0..3) v = v or ((bytes[off + i].toLong() and 0xFF) shl (8 * i))
+                return v
+            }
+            fun u64(off: Int): Long {
+                var v = 0L
+                for (i in 0..7) v = v or ((bytes[off + i].toLong() and 0xFF) shl (8 * i))
+                return v
+            }
+            val phOff: Long
+            val phEntSize: Int
+            val phNum: Int
+            if (is64) {
+                phOff = u64(32); phEntSize = u16(54); phNum = u16(56)
+            } else {
+                phOff = u32(28); phEntSize = u16(42); phNum = u16(44)
+            }
+            val aligns = mutableListOf<Long>()
+            for (i in 0 until phNum) {
+                val base = (phOff + i * phEntSize).toInt()
+                if (u32(base) == 1L) { // PT_LOAD
+                    aligns += if (is64) u64(base + 48) else u32(base + 24)
+                }
+            }
+            return aligns
+        }
+        java.util.zip.ZipFile(apkFile.get().asFile).use { zip ->
+            for (abi in abis) {
+                val nodeEntry = zip.getEntry("lib/$abi/libnode.so")
+                check(nodeEntry != null) { "libnode.so missing for $abi in universal APK" }
+                for ((lib, symbol) in ownLibs) {
+                    val entry = zip.getEntry("lib/$abi/$lib")
+                    check(entry != null) { "$lib missing for $abi in universal APK" }
+                    val bytes = zip.getInputStream(entry).readBytes()
+                    val aligns = elfLoadAligns(bytes)
+                    check(aligns.isNotEmpty() && aligns.all { it >= 0x4000L }) {
+                        "$lib ($abi) LOAD alignments $aligns are below 16 KB"
+                    }
+                    val text = String(bytes, Charsets.ISO_8859_1)
+                    check(text.contains(symbol)) { "$lib ($abi) does not export $symbol" }
+                }
+            }
+        }
+        println("verifyNativeLibs: all native libraries present, 16K-aligned, JNI symbols exported.")
+    }
+}
+tasks.named("assembleDebug") { finalizedBy(verifyNativeLibs) }

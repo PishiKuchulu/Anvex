@@ -31,3 +31,25 @@ target_link_options(anvex-node PRIVATE "LINKER:-z,max-page-size=16384")
 target_link_libraries(anvex-node
                       libnode
                       ${log-lib})
+
+# ---------------------------------------------------------------------------
+# Desktop-grade upgrade (P0): this file is now the multi-target native root.
+# Each feature library is a small, separately loadable .so so a missing or
+# broken optional library (git, tree-sitter, vectors) can never take down
+# the Node bridge or the app; Kotlin loaders treat every one of them as
+# failure-tolerant. Every Anvex-built library carries the 16 KB page
+# alignment linker flag, and the CI smoke gate (verifyNativeLibs in
+# app/build.gradle.kts) checks presence per ABI + LOAD alignment + JNI
+# symbols inside the built APK.
+#
+#   anvex-pty  — F3 PTY bridge (P0: probe only; forkpty lands in P2)
+#   anvex-git  — F1 libgit2 bridge (P3)
+#   anvex-ts   — F2 Tree-sitter bridge (P4)
+#   anvex-vec  — F6 sqlite-vec bridge (P7)
+# ---------------------------------------------------------------------------
+
+add_library(anvex-pty SHARED
+            pty/pty_bridge.cpp)
+target_link_options(anvex-pty PRIVATE "LINKER:-z,max-page-size=16384")
+target_link_libraries(anvex-pty
+                      ${log-lib})
