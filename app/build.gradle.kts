@@ -188,7 +188,11 @@ val verifyNativeLibs = tasks.register("verifyNativeLibs") {
             for (i in 0 until phNum) {
                 val base = (phOff + i * phEntSize).toInt()
                 if (u32(base) == 1L) { // PT_LOAD
-                    aligns += if (is64) u64(base + 48) else u32(base + 24)
+                    // p_align offset: ELF64 phdr has it at +48; ELF32 at +28
+                    // (type+0, offset+4, vaddr+8, paddr+12, filesz+16,
+                    // memsz+20, flags+24, align+28). Reading +24 on ELF32
+                    // yields p_flags (5/6) — the CI round-3 false failure.
+                    aligns += if (is64) u64(base + 48) else u32(base + 28)
                 }
             }
             return aligns
