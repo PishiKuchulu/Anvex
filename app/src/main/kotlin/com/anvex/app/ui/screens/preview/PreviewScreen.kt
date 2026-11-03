@@ -397,11 +397,88 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                     if (p.type == ProjectType.VITE || p.type == ProjectType.UNKNOWN) {
                         Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
                             Text(
-                                tr("This project needs a bundler/dev server (npm run dev), which cannot run on Android. Static files are still editable and exportable; preview supports HTML/CSS/JS and React (via CDN) projects."),
+                                tr("This project may need a bundler/dev server (npm run dev). Use the Dev server origin below when the project has one; static files stay editable and exportable either way."),
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                             )
                         }
+                    }
+                }
+                // F5a (P5): origin switch — static files vs the live dev server.
+                val origin by vm.origin.collectAsState()
+                val devState by vm.devState.collectAsState()
+                LaunchedEffect(origin, devState) {
+                    while (origin == PreviewViewModel.PreviewOrigin.DEV &&
+                        devState is com.anvex.core.android.server.DevServerState.Running
+                    ) {
+                        vm.noteDevAlive()
+                        kotlinx.coroutines.delay(60_000)
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = origin == PreviewViewModel.PreviewOrigin.STATIC,
+                        onClick = { vm.setOrigin(PreviewViewModel.PreviewOrigin.STATIC) },
+                        label = { Text(tr("Static")) },
+                    )
+                    FilterChip(
+                        selected = origin == PreviewViewModel.PreviewOrigin.DEV,
+                        onClick = { vm.setOrigin(PreviewViewModel.PreviewOrigin.DEV) },
+                        label = { Text(tr("Dev server")) },
+                    )
+                    when (val state = devState) {
+                        is com.anvex.core.android.server.DevServerState.Running -> {
+                            Text(
+                                state.url,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { vm.stopDevServer() }) { Text(tr("Stop")) }
+                        }
+                        is com.anvex.core.android.server.DevServerState.Starting -> {
+                            Text(
+                                tr("Starting dev server…"),
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        is com.anvex.core.android.server.DevServerState.Failed -> {
+                            Text(
+                                state.message,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { vm.startDevServer() }) { Text(tr("Retry")) }
+                        }
+                        com.anvex.core.android.server.DevServerState.Idle -> {
+                            if (origin == PreviewViewModel.PreviewOrigin.DEV) {
+                                TextButton(onClick = { vm.startDevServer() }) { Text(tr("Start dev server")) }
+                            }
+                        }
+                    }
+                }
+                if (origin == PreviewViewModel.PreviewOrigin.DEV) {
+                    val devLines = when (val state = devState) {
+                        is com.anvex.core.android.server.DevServerState.Running -> state.lines
+                        is com.anvex.core.android.server.DevServerState.Starting -> state.lines
+                        is com.anvex.core.android.server.DevServerState.Failed -> state.lines
+                        com.anvex.core.android.server.DevServerState.Idle -> emptyList()
+                    }
+                    if (devLines.isNotEmpty()) {
+                        Text(
+                            devLines.takeLast(6).joinToString("\n"),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                        )
                     }
                 }
                 url?.let { entryUrl ->

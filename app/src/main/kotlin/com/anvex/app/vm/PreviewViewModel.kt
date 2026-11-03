@@ -3,6 +3,7 @@ package com.anvex.app.vm
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anvex.core.android.AppGraph
+import com.anvex.core.android.server.DevServerState
 import com.anvex.core.android.server.StaticPreviewServer
 import com.anvex.core.engine.PreviewHarness
 import com.anvex.core.model.Project
@@ -58,6 +59,52 @@ class PreviewViewModel(
     val lastError: StateFlow<String?> = _lastError
 
     val refreshTick = MutableStateFlow(0)
+
+    // ---- F5a (P5): dev-server origin ----------------------------------
+    enum class PreviewOrigin { STATIC, DEV }
+
+    val origin = MutableStateFlow(PreviewOrigin.STATIC)
+
+    private val devManager by lazy { graph.androidRuntime.devServerManager() }
+
+    val devState: StateFlow<DevServerState> = devManager?.state
+        ?: MutableStateFlow(
+            DevServerState.Failed(projectId, "Dev servers are unavailable on this device.", emptyList()),
+        )
+
+    init {
+        viewModelScope.launch {
+            devState.collect { state ->
+                if (origin.value == PreviewOrigin.DEV) {
+                    _url.value = (state as? DevServerState.Running)?.url
+                }
+            }
+        }
+    }
+
+    fun setOrigin(value: PreviewOrigin) {
+        origin.value = value
+        if (value == PreviewOrigin.DEV) {
+            _url.value = (devState.value as? DevServerState.Running)?.url
+            noteDevAlive()
+        }
+    }
+
+    fun startDevServer() {
+        viewModelScope.launch { devManager?.start(projectId) }
+    }
+
+    fun stopDevServer() {
+        viewModelScope.launch {
+            devManager?.stop()
+            if (origin.value == PreviewOrigin.DEV) _url.value = null
+        }
+    }
+
+    /** Heartbeat for the manager's 30-minute no-preview auto-stop. */
+    fun noteDevAlive() {
+        devManager?.notePreviewAlive()
+    }
 
     private var startJob: kotlinx.coroutines.Job? = null
 

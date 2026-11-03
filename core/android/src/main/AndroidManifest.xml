@@ -7,5 +7,13 @@
             android:name="com.anvex.core.android.runtime.node.NodeExecService"
             android:exported="false"
             android:process=":node" />
+        <!-- F5a: persistent dev-server host. Its own process because
+             libnode starts once per process; foreground so a running
+             dev server is visible and Doze-exempt while in use. -->
+        <service
+            android:name="com.anvex.core.android.runtime.server.NodeServerService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:process=":devserver" />
     </application>
 </manifest>

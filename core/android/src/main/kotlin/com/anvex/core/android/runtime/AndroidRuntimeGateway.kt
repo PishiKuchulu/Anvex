@@ -85,6 +85,10 @@ class AndroidRuntimeGateway(
     fun codeIntelligence(): com.anvex.core.engine.codeintel.CodeIntelligence =
         com.anvex.core.android.runtime.ts.TreeSitterCodeIntelligence()
 
+    /** F5a: dev-server manager driving the persistent :devserver Node host. */
+    fun devServerManager(): com.anvex.core.android.server.DevServerManager? =
+        context?.let { com.anvex.core.android.server.DevServerManager(it, this) }
+
     private suspend fun realRoot(projectId: String): File? {
         if (projectId == HOME_PROJECT_ID) return homeDir?.also { it.mkdirs() }
         val fs = projects.fileSystemForAsync(projectId)
