@@ -152,8 +152,8 @@ endif()
 # statically linked (downloadRagLibs, SHA-256 pinned). sqlite-vec's header
 # is generated from its .tmpl by upstream's Makefile via envsubst of six
 # version variables; that generation is reproduced here.
-set(ANVEX_SQLITE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../rag-dist/sqlite-amalgamation-3500400)
-set(ANVEX_VEC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../rag-dist/sqlite-vec-0.1.9)
+set(ANVEX_SQLITE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../rag-dist/sqlite-amalgamation-3500400)
+set(ANVEX_VEC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../rag-dist/sqlite-vec-0.1.9)
 if(EXISTS ${ANVEX_SQLITE_DIR}/sqlite3.c AND EXISTS ${ANVEX_VEC_DIR}/sqlite-vec.c)
     file(READ ${ANVEX_VEC_DIR}/VERSION ANVEX_VEC_VERSION)
     string(STRIP "${ANVEX_VEC_VERSION}" ANVEX_VEC_VERSION)
