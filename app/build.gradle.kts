@@ -1,3 +1,5 @@
+import java.util.zip.ZipFile
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -191,7 +193,7 @@ val verifyNativeLibs = tasks.register("verifyNativeLibs") {
             }
             return aligns
         }
-        java.util.zip.ZipFile(apkFile.get().asFile).use { zip ->
+        ZipFile(apkFile.get().asFile).use { zip ->
             for (abi in abis) {
                 val nodeEntry = zip.getEntry("lib/$abi/libnode.so")
                 check(nodeEntry != null) { "libnode.so missing for $abi in universal APK" }
