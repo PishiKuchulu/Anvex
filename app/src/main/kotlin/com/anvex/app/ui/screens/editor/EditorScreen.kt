@@ -134,7 +134,10 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                     // P-07 (audit 2026-11-03): the VM calls are suspend +
                     // IO-bound now; they run in the search bar's own
                     // coroutine scope instead of blocking composition.
-                    onReplaceAll = suspend { vm.projectReplaceAll(searchQuery, replaceText) },
+                    onReplaceAll = suspend {
+                        vm.projectReplaceAll(searchQuery, replaceText)
+                        Unit
+                    },
                     onClose = { showSearch = false },
                     onResult = { path -> vm.openFile(path) },
                     resultsProvider = suspend { vm.projectSearch(searchQuery) },

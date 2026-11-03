@@ -97,6 +97,20 @@ class ChatSessionTest {
         override suspend fun firstForProject(projectId: String) = stored.values.firstOrNull()
         override suspend fun countForProject(projectId: String): Int = 0
         override suspend fun lastMessageTime(projectId: String): Long? = null
+        // Windowed queries (audit 2026-11-03): same in-memory semantics as
+        // the full-history members above, over the fake's stored rows.
+        override fun observeRecentForProject(projectId: String, limit: Int): Flow<List<com.anvex.core.android.db.MessageEntity>> = emptyFlow()
+        override suspend fun recentForProject(projectId: String, limit: Int): List<com.anvex.core.android.db.MessageEntity> =
+            stored.values.filter { it.projectId == projectId }
+                .sortedWith(compareBy({ it.createdAt }, { it.id })).takeLast(limit)
+        override suspend fun olderForProject(projectId: String, beforeCreatedAt: Long, beforeId: String, limit: Int): List<com.anvex.core.android.db.MessageEntity> =
+            stored.values.filter {
+                it.projectId == projectId &&
+                    (it.createdAt < beforeCreatedAt || (it.createdAt == beforeCreatedAt && it.id < beforeId))
+            }.sortedWith(compareByDescending<com.anvex.core.android.db.MessageEntity> { it.createdAt }.thenByDescending { it.id }).take(limit)
+        override suspend fun directConversationSummaries(): List<com.anvex.core.android.db.DirectConversationRow> = emptyList()
+        override suspend fun byIds(ids: List<String>): List<com.anvex.core.android.db.MessageEntity> = ids.mapNotNull { stored[it] }
+        override suspend fun usageRows(): List<com.anvex.core.android.db.UsageRow> = emptyList()
     }
 
     private class FakeMutationDao : MutationDao {

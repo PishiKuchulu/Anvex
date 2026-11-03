@@ -104,6 +104,7 @@ import com.anvex.app.ui.components.isRtlText
 import com.anvex.app.ui.components.quotedReplyText
 import com.anvex.app.vm.DirectChatViewModel
 import com.anvex.core.android.AppGraph
+import com.anvex.core.android.repo.AppSettings
 import com.anvex.core.model.ChatMessage
 import com.anvex.core.model.MessageRole
 import kotlinx.coroutines.launch
@@ -179,7 +180,7 @@ fun DirectChatScreen(nav: NavController) {
     val webAvail by vm.webSearchAvailable.collectAsState()
     val attachmentError by vm.attachmentError.collectAsState()
     // Wiring gap 6: chatFontSize scales the message typography below.
-    val appSettings by AppGraph.get().settings.settings.collectAsState()
+    val appSettings by AppGraph.get().settings.settings.collectAsState(initial = AppSettings())
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()

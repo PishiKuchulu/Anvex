@@ -65,6 +65,7 @@ import com.anvex.app.ui.components.ProjectScaffold
 import com.anvex.app.ui.components.ProjectTab
 import com.anvex.app.vm.PreviewViewModel
 import com.anvex.core.android.AppGraph
+import com.anvex.core.android.repo.AppSettings
 import com.anvex.core.model.ProjectType
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -101,7 +102,7 @@ fun PreviewScreen(nav: NavController, projectId: String) {
     // now persists through SettingsRepository.setPreviewConsoleVisible
     // (the seeding below applies the persisted value once per entry;
     // in-session toggles are never overwritten by it).
-    val appSettings by AppGraph.get().settings.settings.collectAsState()
+    val appSettings by AppGraph.get().settings.settings.collectAsState(initial = AppSettings())
     var showConsole by remember { mutableStateOf(false) }
     var consoleSeeded by remember { mutableStateOf(false) }
     LaunchedEffect(appSettings.previewConsoleVisible) {

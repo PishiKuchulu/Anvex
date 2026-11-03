@@ -12,6 +12,7 @@ import com.anvex.app.ui.components.FileVersion
 import com.anvex.app.ui.components.RestoreOutcome
 import com.anvex.app.ui.components.VersionSheet
 import com.anvex.core.android.AppGraph
+import com.anvex.core.android.repo.AppSettings
 import com.anvex.core.model.AttachmentKind
 import com.anvex.core.model.ProviderConfig
 import kotlinx.coroutines.withContext
@@ -180,7 +181,6 @@ internal fun LazyListState.isPinnedToBottom(): Boolean {
     return last.offset + last.size <= info.viewportEndOffset + 4
 }
 
-@Composable
 /**
  * Wiring gap 6: the persisted chat font size (AppSettings.chatFontSize,
  * 12–22) scales the message typography. MarkdownText and the streaming
@@ -213,6 +213,7 @@ internal fun rememberScaledChatTypography(chatFontSize: Int): androidx.compose.m
     }
 }
 
+@Composable
 fun ChatScreen(nav: NavController, projectId: String) {
     // The ViewModel is owned by the ACTIVITY, not by this destination:
     // scoped to the chat destination itself, leaving the chat — even for
@@ -239,7 +240,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
     // (gap 5) — streamUi deliberately excludes them.
     val sessionUi by vm.sessionState.collectAsState()
     // Wiring gap 6: chatFontSize scales the message typography below.
-    val appSettings by AppGraph.get().settings.settings.collectAsState()
+    val appSettings by AppGraph.get().settings.settings.collectAsState(initial = AppSettings())
     val project by vm.project.collectAsState()
     val noProvider by vm.noProviderConfigured.collectAsState()
     val attachmentError by vm.attachmentError.collectAsState()

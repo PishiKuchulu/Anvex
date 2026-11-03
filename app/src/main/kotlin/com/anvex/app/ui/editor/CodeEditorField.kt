@@ -73,6 +73,8 @@ fun CodeEditorField(
         ),
     )
 
+    // tr() is @Composable — hoisted here; the semantics lambda below is not.
+    val editorDescription = tr("Editor")
     Row(modifier = modifier.verticalScroll(verticalScroll)) {
         LineNumberGutter(
             lineCount = lineCount,
@@ -90,7 +92,7 @@ fun CodeEditorField(
                 .horizontalScroll(horizontalScroll)
                 // UI #3 (audit 2026-11-03): the editor surface itself
                 // was undescribed — TalkBack landed on a bare field.
-                .semantics { contentDescription = "${tr("Editor")} · ${language.name}" },
+                .semantics { contentDescription = "$editorDescription · ${language.name}" },
         )
     }
 }

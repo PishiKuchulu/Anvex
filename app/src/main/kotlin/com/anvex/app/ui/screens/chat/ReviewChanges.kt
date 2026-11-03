@@ -191,7 +191,7 @@ fun ReviewChangesSheet(
                             modifier = Modifier.clip(RoundedCornerShape(999.dp))
                                 // UI #4: tab semantics — the selected file is
                                 // announced as selected to TalkBack.
-                                .semantics { selected = isSel }
+                                .semantics { this.selected = isSel }
                                 .clickable(role = Role.Tab) { selectedPath = change.path },
                         ) {
                             Row(
