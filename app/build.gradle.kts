@@ -160,6 +160,7 @@ val verifyNativeLibs = tasks.register("verifyNativeLibs") {
             "libanvex-node.so" to "Java_com_anvex_core_android_runtime_node_NodeBridge_startNodeWithArguments",
             "libanvex-pty.so" to "Java_com_anvex_core_android_runtime_pty_PtyBridge_nativePtyVersion",
             "libanvex-git.so" to "Java_com_anvex_core_android_runtime_git_GitBridge_nativeGitVersion",
+            "libanvex-ts.so" to "Java_com_anvex_core_android_runtime_ts_TsBridge_nativeTsVersion",
         )
         fun elfLoadAligns(bytes: ByteArray): List<Long> {
             check(bytes.size > 64 && bytes[0] == 0x7F.toByte() && bytes[1] == 'E'.code.toByte()) { "not an ELF file" }

@@ -81,6 +81,10 @@ class AndroidRuntimeGateway(
     fun gitMirrorDirectory(projectId: String): File? =
         context?.let { com.anvex.core.android.runtime.git.GitMirror.dir(it, projectId) }
 
+    /** F2a: Tree-sitter code intelligence (regex highlighter when unavailable). */
+    fun codeIntelligence(): com.anvex.core.engine.codeintel.CodeIntelligence =
+        com.anvex.core.android.runtime.ts.TreeSitterCodeIntelligence()
+
     private suspend fun realRoot(projectId: String): File? {
         if (projectId == HOME_PROJECT_ID) return homeDir?.also { it.mkdirs() }
         val fs = projects.fileSystemForAsync(projectId)

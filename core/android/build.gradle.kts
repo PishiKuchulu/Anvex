@@ -100,6 +100,46 @@ val downloadLibgit2 = tasks.register("downloadLibgit2") {
 }
 tasks.named("preBuild") { dependsOn(downloadLibgit2) }
 
+// Tree-sitter (F2a, P4): core runtime 0.25.8 + five grammar source
+// tarballs (Kotlin, Java, TypeScript, TSX, Python — all LANGUAGE_VERSION
+// 14, inside the core's supported 13..15). Same pinned fetch pattern;
+// extraction happens at CMake configure time via file(ARCHIVE_EXTRACT).
+// Everything is compiled into libanvex-ts.so by src/main/cpp/CMakeLists.txt.
+val tsLibsDir = layout.projectDirectory.dir("ts-dist").asFile
+val tsLibsMarker = File(tsLibsDir, ".anvex-tree-sitter-0.25.8.ok")
+val downloadTreeSitter = tasks.register("downloadTreeSitter") {
+    description = "Downloads and hash-verifies the tree-sitter core + grammar tarballs."
+    outputs.file(tsLibsMarker)
+    onlyIf { !tsLibsMarker.isFile }
+    doLast {
+        val artifacts = listOf(
+            Triple("tree-sitter-0.25.8.tar.gz", "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.25.8.tar.gz", "178b575244d967f4920a4642408dc4edf6de96948d37d7f06e5b78acee9c0b4e"),
+            Triple("ts-kotlin-0.3.8.tar.gz", "https://github.com/fwcd/tree-sitter-kotlin/archive/refs/tags/0.3.8.tar.gz", "7dd60975786bf9cb4be6a5176f5ccb5fed505f9929a012da30762505b1015669"),
+            Triple("ts-java-0.23.5.tar.gz", "https://github.com/tree-sitter/tree-sitter-java/archive/refs/tags/v0.23.5.tar.gz", "cb199e0faae4b2c08425f88cbb51c1a9319612e7b96315a174a624db9bf3d9f0"),
+            Triple("ts-typescript-0.23.2.tar.gz", "https://github.com/tree-sitter/tree-sitter-typescript/archive/refs/tags/v0.23.2.tar.gz", "2c4ce711ae8d1218a3b2f899189298159d672870b5b34dff5d937bed2f3e8983"),
+            Triple("ts-python-0.23.6.tar.gz", "https://github.com/tree-sitter/tree-sitter-python/archive/refs/tags/v0.23.6.tar.gz", "630a0f45eccd9b69a66a07bf47d1568e96a9c855a2f30e0921c8af7121e8af96"),
+        )
+        tsLibsDir.mkdirs()
+        for ((name, url, expectedSha256) in artifacts) {
+            val file = File(tsLibsDir, name)
+            URL(url).openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            check(actual == expectedSha256) { "tree-sitter artifact $name SHA-256 mismatch: $actual" }
+        }
+        tsLibsMarker.writeText("tree-sitter 0.25.8 + grammars kotlin 0.3.8 / java 0.23.5 / typescript 0.23.2 / python 0.23.6\n")
+    }
+}
+tasks.named("preBuild") { dependsOn(downloadTreeSitter) }
+
 android {
     namespace = "com.anvex.core.android"
     compileSdk = 35

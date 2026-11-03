@@ -91,3 +91,54 @@ if(EXISTS ${ANVEX_LIBGIT2_TARBALL})
 else()
     message(WARNING "libgit2 tarball not found — skipping anvex-git (Git features unavailable)")
 endif()
+
+# ---------------------------------------------------------------------------
+# anvex-ts — F2a (P4): tree-sitter 0.25.8 core (lib/src/lib.c amalgamation)
+# + five grammars compiled in (Kotlin 0.3.8, Java 0.23.5, TypeScript +
+# TSX 0.23.2, Python 0.23.6; all LANGUAGE_VERSION 14). Tarballs are
+# fetched + SHA-256-verified by the downloadTreeSitter Gradle task into
+# ts-dist/ and extracted here at configure time. If any tarball is absent
+# the target is skipped and the Kotlin TsBridge reports itself
+# unavailable (the editor keeps its regex highlighter).
+# ---------------------------------------------------------------------------
+set(ANVEX_TS_DIST ${CMAKE_CURRENT_SOURCE_DIR}/../../../ts-dist)
+set(ANVEX_TS_EXTRACT ${CMAKE_BINARY_DIR}/ts-extract)
+set(ANVEX_TS_CORE ${ANVEX_TS_EXTRACT}/tree-sitter-0.25.8)
+set(ANVEX_TS_KOTLIN ${ANVEX_TS_EXTRACT}/tree-sitter-kotlin-0.3.8)
+set(ANVEX_TS_JAVA ${ANVEX_TS_EXTRACT}/tree-sitter-java-0.23.5)
+set(ANVEX_TS_TSX ${ANVEX_TS_EXTRACT}/tree-sitter-typescript-0.23.2)
+set(ANVEX_TS_PYTHON ${ANVEX_TS_EXTRACT}/tree-sitter-python-0.23.6)
+if(EXISTS ${ANVEX_TS_DIST}/tree-sitter-0.25.8.tar.gz AND
+   EXISTS ${ANVEX_TS_DIST}/ts-kotlin-0.3.8.tar.gz AND
+   EXISTS ${ANVEX_TS_DIST}/ts-java-0.23.5.tar.gz AND
+   EXISTS ${ANVEX_TS_DIST}/ts-typescript-0.23.2.tar.gz AND
+   EXISTS ${ANVEX_TS_DIST}/ts-python-0.23.6.tar.gz)
+    foreach(ANVEX_TS_TARBALL tree-sitter-0.25.8.tar.gz ts-kotlin-0.3.8.tar.gz
+            ts-java-0.23.5.tar.gz ts-typescript-0.23.2.tar.gz ts-python-0.23.6.tar.gz)
+        if(NOT EXISTS ${ANVEX_TS_EXTRACT}/.extracted-${ANVEX_TS_TARBALL})
+            file(ARCHIVE_EXTRACT INPUT ${ANVEX_TS_DIST}/${ANVEX_TS_TARBALL}
+                 DESTINATION ${ANVEX_TS_EXTRACT})
+            file(WRITE ${ANVEX_TS_EXTRACT}/.extracted-${ANVEX_TS_TARBALL} "ok\n")
+        endif()
+    endforeach()
+    add_library(anvex-ts SHARED
+                ts/ts_bridge.cpp
+                ${ANVEX_TS_CORE}/lib/src/lib.c
+                ${ANVEX_TS_KOTLIN}/src/parser.c
+                ${ANVEX_TS_KOTLIN}/src/scanner.c
+                ${ANVEX_TS_JAVA}/src/parser.c
+                ${ANVEX_TS_TSX}/typescript/src/parser.c
+                ${ANVEX_TS_TSX}/typescript/src/scanner.c
+                ${ANVEX_TS_TSX}/tsx/src/parser.c
+                ${ANVEX_TS_TSX}/tsx/src/scanner.c
+                ${ANVEX_TS_PYTHON}/src/parser.c
+                ${ANVEX_TS_PYTHON}/src/scanner.c)
+    target_include_directories(anvex-ts PRIVATE
+                ${ANVEX_TS_CORE}/lib/include
+                ${ANVEX_TS_CORE}/lib/src)
+    target_link_options(anvex-ts PRIVATE "LINKER:-z,max-page-size=16384")
+    target_link_libraries(anvex-ts
+                          ${log-lib})
+else()
+    message(WARNING "tree-sitter tarballs not found — skipping anvex-ts (Tree-sitter highlighting unavailable)")
+endif()
