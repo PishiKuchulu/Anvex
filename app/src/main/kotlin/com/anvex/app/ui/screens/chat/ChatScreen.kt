@@ -13,6 +13,7 @@ import com.anvex.app.ui.components.RestoreOutcome
 import com.anvex.app.ui.components.VersionSheet
 import com.anvex.core.android.AppGraph
 import com.anvex.core.android.repo.AppSettings
+import com.anvex.core.engine.BatchMutation
 import com.anvex.core.model.AttachmentKind
 import com.anvex.core.model.ProviderConfig
 import kotlinx.coroutines.withContext
@@ -722,10 +723,13 @@ fun ChatScreen(nav: NavController, projectId: String) {
             // Atelier: the design's full Review Changes screen over all of
             // the last response's recorded mutations.
             ReviewChangesSheet(
-                changes = pendingChangesCached,
-                journalDropped = vm.droppedMutations(),
+                batch = BatchMutation.of(
+                    batchId = pendingChangesCached.firstOrNull()?.messageId ?: "latest",
+                    mutations = pendingChangesCached,
+                    droppedCount = vm.droppedMutations(),
+                ),
                 initialPath = path,
-                onRevert = { p -> vm.revertChange(p) },
+                onRevert = { p, cb -> vm.revertChange(p, cb) },
                 onOpenEditor = { p -> diffPath = null; nav.navigate(Routes.editor(projectId, p)) },
                 onDismiss = { diffPath = null },
             )

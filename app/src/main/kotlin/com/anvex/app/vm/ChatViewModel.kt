@@ -1282,6 +1282,19 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * F4 (batch review): revert with a result callback — the review screen
+     * marks a file Reverted only when its journal revert actually succeeded,
+     * never optimistically.
+     */
+    fun revertChange(path: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = _session.value?.revertChange(path) ?: false
+            graph.projects.refreshType(projectId)
+            onResult(ok)
+        }
+    }
+
     // ---- version history (architect review item 3) ----------------------------
 
     /**
