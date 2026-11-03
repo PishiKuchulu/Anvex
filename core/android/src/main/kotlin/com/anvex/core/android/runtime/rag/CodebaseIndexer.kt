@@ -67,7 +67,10 @@ class CodebaseIndexer(
             val grammar = grammarFor(path)
             val folds = if (grammar != null && codeIntelligence != null) {
                 runCatching {
-                    codeIntelligence.parse(path, grammar, text)?.folds ?: emptyList()
+                    val doc = codeIntelligence.parse(null, null, grammar, text)
+                    val found = doc?.folds ?: emptyList()
+                    if (doc != null) codeIntelligence.release(doc)
+                    found
                 }.getOrDefault(emptyList())
             } else {
                 emptyList()
