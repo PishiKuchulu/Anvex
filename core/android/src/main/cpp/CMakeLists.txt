@@ -135,7 +135,12 @@ if(EXISTS ${ANVEX_TS_DIST}/tree-sitter-0.25.8.tar.gz AND
                 ${ANVEX_TS_PYTHON}/src/scanner.c)
     target_include_directories(anvex-ts PRIVATE
                 ${ANVEX_TS_CORE}/lib/include
-                ${ANVEX_TS_CORE}/lib/src)
+                ${ANVEX_TS_CORE}/lib/src
+                # The TypeScript/TSX scanners include ../../common/scanner.h,
+                # whose "tree_sitter/parser.h" does not resolve relative to
+                # common/ — it lives in typescript/src/tree_sitter/ (the
+                # tsx copy is byte-identical), so expose that dir.
+                ${ANVEX_TS_TSX}/typescript/src)
     target_link_options(anvex-ts PRIVATE "LINKER:-z,max-page-size=16384")
     target_link_libraries(anvex-ts
                           ${log-lib})
