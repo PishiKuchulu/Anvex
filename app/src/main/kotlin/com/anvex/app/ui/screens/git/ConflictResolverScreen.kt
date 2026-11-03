@@ -159,10 +159,15 @@ fun ConflictResolverScreen(navController: NavHostController, projectId: String, 
                 // ------- stage mode -------
                 val st = stages
                 if (st != null) {
+                    // Local captures: smart casts on the stage properties do
+                    // not flow into the onClick lambdas, plain vals do.
+                    val oursText = st.ours
+                    val theirsText = st.theirs
+                    val baseText = st.ancestor
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (st.ours != null) OutlinedButton(onClick = { editorText = st.ours }) { Text(tr("Use ours")) }
-                        if (st.theirs != null) OutlinedButton(onClick = { editorText = st.theirs }) { Text(tr("Use theirs")) }
-                        if (st.ancestor != null) OutlinedButton(onClick = { editorText = st.ancestor!! }) { Text(tr("Use base")) }
+                        if (oursText != null) OutlinedButton(onClick = { editorText = oursText }) { Text(tr("Use ours")) }
+                        if (theirsText != null) OutlinedButton(onClick = { editorText = theirsText }) { Text(tr("Use theirs")) }
+                        if (baseText != null) OutlinedButton(onClick = { editorText = baseText }) { Text(tr("Use base")) }
                     }
                 }
                 OutlinedTextField(
