@@ -1,5 +1,6 @@
 package com.anvex.app.ui.editor
 
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -9,10 +10,13 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -167,9 +171,7 @@ private fun FoldGutter(
 ) {
     val visibleLines = projection?.visibleLines ?: (0 until lineCount).toList()
     val foldStartLines = remember(folds) { folds.map { it.startLine }.toSet() }
-    val layoutState = remember {
-        androidx.compose.runtime.mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null)
-    }
+    val layoutState = remember { mutableStateOf<TextLayoutResult?>(null) }
     val numbers: AnnotatedString = remember(visibleLines, foldStartLines, folded) {
         buildAnnotatedString {
             for (line in visibleLines) {
@@ -194,8 +196,8 @@ private fun FoldGutter(
         modifier = Modifier
             .width(gutterWidth)
             .padding(end = 8.dp)
-            .androidx.compose.ui.input.pointer.pointerInput(visibleLines, folds) {
-                androidx.compose.foundation.gestures.detectTapGestures { offset ->
+            .pointerInput(visibleLines, folds) {
+                detectTapGestures { offset ->
                     val result = layoutState.value ?: return@detectTapGestures
                     val index = result.getLineForVerticalPosition(offset.y)
                     if (index in visibleLines.indices) {
