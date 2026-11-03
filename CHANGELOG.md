@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.14.8 — Sends register instantly and agents keep working when you leave the chat
+
+Two user reports from 2026-11-03:
+
+- **Sends appeared to hang for 20 seconds to 4 minutes.** On SAF-backed
+  projects, building the per-send project context asked the documents
+  provider for every listed file's size one path at a time, and the tree
+  walk itself re-resolved every directory from the root — hundreds of
+  provider round-trips before the message was even recorded. File sizes
+  now ride along a single document-ID traversal (`walkWithSizes`), the
+  context builder and the agent's list tool consume them, and `send()`
+  publishes a "Preparing…" state immediately instead of after context
+  construction.
+- **The agent stopped when leaving the chat.** The chat view models were
+  scoped to their navigation destination, so leaving the section
+  destroyed them and closed the session mid-turn. Both chat screens now
+  resolve their view model against the activity, so a running turn
+  survives in-app navigation and ends only with the activity itself.
+
 ## 4.14.7 — Deliverables open in-app and keep their names; the agent can no longer be shown a partial view as if it were complete
 
 Two user reports from 2026-11-02:

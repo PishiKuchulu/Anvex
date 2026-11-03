@@ -55,12 +55,18 @@ object ContextBuilder {
     ): String {
         val maxListChars = (maxTotalChars / 4).coerceAtLeast(4_000)
         return runCatching {
-            val all = fs.walk().filter { !excluded(it) }
+            // Sizes ride along with the walk: a per-path fileSize() here
+            // re-resolves every listed file through the storage backend
+            // (on SAF workspaces, hundreds of provider round-trips inside
+            // a single chat send — minutes on a slow provider).
+            val sized = fs.walkWithSizes().filter { !excluded(it.first) }
+            val all = sized.map { it.first }
             if (all.isEmpty()) {
                 return@runCatching "The project is currently empty. Create all files from scratch.".let {
                     if (diffNote != null) "$it\n$diffNote" else it
                 }
             }
+            val sizeOf = sized.toMap()
 
             val sb = StringBuilder()
             sb.append("Project file list (").append(all.size).append(" files):\n")
@@ -70,7 +76,7 @@ object ContextBuilder {
             var listed = 0
             // Shallow paths first so the top-level structure stays visible when the list is cut.
             for (path in all.sortedWith(compareBy({ it.count { c -> c == '/' } }, { it }))) {
-                val line = "- $path (${fs.fileSize(path) ?: 0L} bytes)\n"
+                val line = "- $path (${sizeOf[path] ?: 0L} bytes)\n"
                 if (sb.length + line.length > maxListChars) break
                 sb.append(line)
                 listed++

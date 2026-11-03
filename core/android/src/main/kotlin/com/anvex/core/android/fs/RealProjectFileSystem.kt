@@ -196,6 +196,18 @@ class RealProjectFileSystem(private val root: File) : ProjectFileSystem {
             .toList()
     }
 
+    override fun walkWithSizes(): List<Pair<String, Long?>> {
+        if (!root.exists()) return emptyList()
+        // Same traversal discipline as walk() (M-07), with sizes captured
+        // from the File handles the walk already visits.
+        return root.walkTopDown()
+            .onEnter { it == root || !isSymlink(it) }
+            .filter { it.isFile && !isSymlink(it) }
+            .map { it.relativeTo(root).invariantSeparatorsPath to it.length() }
+            .sortedBy { it.first }
+            .toList()
+    }
+
     fun rootDirectory(): File = root
 
     fun sizeBytes(): Long = root.walkTopDown().onEnter { it == root || !isSymlink(it) }.filter { it.isFile && !isSymlink(it) }.sumOf { it.length() }

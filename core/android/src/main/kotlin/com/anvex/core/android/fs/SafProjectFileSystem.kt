@@ -212,17 +212,52 @@ class SafProjectFileSystem(
         return true
     }
 
-    override fun walk(): List<String> {
-        val out = ArrayList<String>()
-        fun visit(dir: String, depth: Int) {
+    override fun walk(): List<String> = traverseWithSizes().map { it.first }
+
+    override fun walkWithSizes(): List<Pair<String, Long?>> = traverseWithSizes()
+
+    private data class ChildRow(val docId: String, val name: String, val isDir: Boolean, val size: Long?)
+
+    /**
+     * One children query per directory, traversed by document ID. The old
+     * path-based walk re-resolved every directory from the root through
+     * [document] — a chain of linear child scans per node — and callers
+     * then paid a second re-resolution per file size; on a slow SAF
+     * provider a large tree took minutes inside a single chat send
+     * (user report, 2026-11-03). Rows are collected before recursing so
+     * no cursor stays open across nested queries.
+     */
+    private fun traverseWithSizes(): List<Pair<String, Long?>> {
+        val out = ArrayList<Pair<String, Long?>>()
+        fun visit(dirId: String, prefix: String, depth: Int) {
             if (depth > 64 || out.size >= 20_000) return
-            list(dir).forEach { e ->
-                if (out.size >= 20_000) return@forEach
-                val path = if (dir.isBlank()) e.name else "$dir/${e.name}"
-                if (e.isDirectory) visit(path, depth + 1) else out += path
+            val uri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, dirId)
+            val rows = ArrayList<ChildRow>()
+            resolver.query(uri, arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_SIZE,
+            ), null, null, null)?.use { c ->
+                val id = c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val mime = c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                val display = c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val size = c.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                while (c.moveToNext()) {
+                    val name = c.getString(display) ?: continue
+                    val docId = c.getString(id) ?: continue
+                    val isDir = c.getString(mime) == DocumentsContract.Document.MIME_TYPE_DIR
+                    val sz = if (isDir || size < 0 || c.isNull(size)) null else c.getLong(size).coerceAtLeast(0L)
+                    rows += ChildRow(docId, name, isDir, sz)
+                }
+            }
+            for (row in rows) {
+                if (out.size >= 20_000) return
+                val path = if (prefix.isBlank()) row.name else "$prefix/${row.name}"
+                if (row.isDir) visit(row.docId, path, depth + 1) else out += path to row.size
             }
         }
-        visit("", 0)
+        visit(rootDocumentId, "", 0)
         return out
     }
 

@@ -138,7 +138,15 @@ object DirectChatHandoff {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DirectChatScreen(nav: NavController) {
-    val vm: DirectChatViewModel = viewModel()
+    // Activity-owned, like the project ChatScreen: a destination-scoped
+    // ViewModel was destroyed when the user left the tab, killing the
+    // in-flight turn (user report, 2026-11-03).
+    val activity = androidx.compose.ui.platform.LocalContext.current as? androidx.activity.ComponentActivity
+    val vm: DirectChatViewModel = if (activity != null) {
+        viewModel(viewModelStoreOwner = activity) { DirectChatViewModel() }
+    } else {
+        viewModel()
+    }
     val conversations by vm.conversations.collectAsState()
     val archivedConversations by vm.archivedConversations.collectAsState()
     val visibleConversations by vm.visibleConversations.collectAsState()

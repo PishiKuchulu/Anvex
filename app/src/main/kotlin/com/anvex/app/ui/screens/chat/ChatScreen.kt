@@ -177,7 +177,19 @@ internal fun LazyListState.isPinnedToBottom(): Boolean {
 
 @Composable
 fun ChatScreen(nav: NavController, projectId: String) {
-    val vm: ChatViewModel = viewModel(key = "chat-$projectId") { ChatViewModel(projectId) }
+    // The ViewModel is owned by the ACTIVITY, not by this destination:
+    // scoped to the chat destination itself, leaving the chat — even for
+    // a sibling tab of the same project — destroyed the ViewModel, whose
+    // onCleared closed the session and killed the agent mid-turn
+    // (user report, 2026-11-03). Activity-owned, a chat (and its running
+    // turn) survives all in-app navigation and is cleared only when the
+    // activity itself finishes.
+    val activity = androidx.compose.ui.platform.LocalContext.current as? androidx.activity.ComponentActivity
+    val vm: ChatViewModel = if (activity != null) {
+        viewModel(viewModelStoreOwner = activity, key = "chat-$projectId") { ChatViewModel(projectId) }
+    } else {
+        viewModel(key = "chat-$projectId") { ChatViewModel(projectId) }
+    }
     val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
         com.anvex.core.android.repo.UiThemeStyle.ATELIER
     val messages by vm.messages.collectAsState()

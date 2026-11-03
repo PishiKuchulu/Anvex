@@ -87,6 +87,25 @@ class AgentToolExecutorTest {
         override fun walk(): List<String> = files.keys.toList()
     }
 
+    @Test fun listingNeverCallsPerPathFileSize() {
+        // Same contract as ContextBuilder (2026-11-03): sizes must ride
+        // along with the walk, not be re-resolved per listed path.
+        var fileSizeCalls = 0
+        val fs = object : ProjectFileSystem by ListFs(mapOf("a.txt" to "1", "dir/b.txt" to "22")) {
+            override fun walkWithSizes(): List<Pair<String, Long?>> =
+                listOf("a.txt" to 1L, "dir/b.txt" to 2L)
+
+            override fun fileSize(relativePath: String): Long? {
+                fileSizeCalls++
+                return null
+            }
+        }
+        val text = listTool(fs, ".")
+        assertEquals(0, fileSizeCalls)
+        assertTrue(text.contains("a.txt (1 bytes)"))
+        assertTrue(text.contains("dir/b.txt (2 bytes)"))
+    }
+
     private fun listTool(fs: ProjectFileSystem, path: String): String = runBlocking {
         AgentToolExecutor(resolver = { listOf(InetAddress.getByName("93.184.216.34")) })
             .run(BoltAction.ToolAction("list", path), fs, webAllowed = false).text

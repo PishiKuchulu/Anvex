@@ -44,6 +44,16 @@ interface ProjectFileSystem {
     /** All relative file paths (bounded walk, files only). */
     fun walk(): List<String>
 
+    /**
+     * One traversal returning each file's size alongside its path (null
+     * when the backend cannot know without extra work). Callers that need
+     * sizes for many files must use this instead of [fileSize] per path:
+     * on SAF-backed workspaces a per-path lookup re-resolves the path
+     * through the documents provider and turns one listing into hundreds
+     * of IPC round-trips.
+     */
+    fun walkWithSizes(): List<Pair<String, Long?>> = walk().map { it to fileSize(it) }
+
     /** Cheap metadata lookup. Implementations should not load file contents. */
     fun fileSize(relativePath: String): Long? = readFileBytes(relativePath)?.size?.toLong()
 

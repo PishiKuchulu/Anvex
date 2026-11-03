@@ -195,6 +195,12 @@ class ChatSession(
         val text = userText.trim()
         if (text.isEmpty() && attachments.isEmpty()) return
         val generation = ++turnGeneration
+        // Show the working state NOW, synchronously: everything runStream
+        // does before its own state write (history load, context build over
+        // the project tree — minutes on a slow SAF provider) was invisible
+        // to the user, who saw their message "not register" at all
+        // (user report, 2026-11-03).
+        _state.value = UiState(streaming = true, statusLine = "Preparing…")
         streamJob = scope.launch { runStream(text, attachments, metadata, generation) }
     }
 

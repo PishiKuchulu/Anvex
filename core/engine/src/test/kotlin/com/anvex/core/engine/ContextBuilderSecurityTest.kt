@@ -1,5 +1,6 @@
 package com.anvex.core.engine
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,5 +32,32 @@ class ContextBuilderSecurityTest {
         val big = ContextBuilder.build(fs, maxTotalChars = 96_000)
         assertTrue(small.length <= 8_000)
         assertTrue(big.length > small.length)
+    }
+
+    @Test fun contextBuildNeverCallsPerPathFileSize() {
+        // Regression (2026-11-03): the file-list block asked fileSize() for
+        // every listed path. On SAF-backed workspaces each call re-resolves
+        // the path through the documents provider, so one chat send paid
+        // hundreds of IPC round-trips and appeared to hang for minutes.
+        // Sizes must ride along with the walk (walkWithSizes) instead.
+        var fileSizeCalls = 0
+        val backing = FakeFs()
+        // A backend with native traversal sizes (as the SAF and local
+        // implementations now provide): per-path lookups must not occur.
+        val fs = object : ProjectFileSystem by backing {
+            override fun walkWithSizes(): List<Pair<String, Long?>> =
+                backing.files.map { (path, content) -> path to content.toByteArray().size.toLong() }.sortedBy { it.first }
+
+            override fun fileSize(relativePath: String): Long? {
+                fileSizeCalls++
+                return backing.fileSize(relativePath)
+            }
+        }
+        repeat(60) { backing.writeFile("src/pkg/F%02d.kt".format(it), "class F$it") }
+        backing.writeFile("README.md", "hello")
+        val context = ContextBuilder.build(fs)
+        assertEquals(0, fileSizeCalls)
+        assertTrue(context.contains("README.md (5 bytes)"))
+        assertTrue(context.contains("Project file list (61 files):"))
     }
 }

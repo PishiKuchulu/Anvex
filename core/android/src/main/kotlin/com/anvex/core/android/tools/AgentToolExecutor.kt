@@ -81,15 +81,21 @@ class AgentToolExecutor(
 
     private fun list(rawPath: String, fs: ProjectFileSystem): ToolResult {
         val prefix = rawPath.trim().trim('/').let { if (it == "." ) "" else it }
-        val all = fs.walk().sorted().filter { prefix.isEmpty() || it == prefix || it.startsWith("$prefix/") }
+        // Sizes ride along with the walk — a per-path fileSize() re-resolves
+        // every file through the storage backend (SAF: minutes per listing).
+        val allSized = fs.walkWithSizes()
+            .filter { (path, _) -> prefix.isEmpty() || path == prefix || path.startsWith("$prefix/") }
+            .sortedBy { it.first }
         // L-03: listing used to name sensitive files (.env, .git/…) to the
         // model even though their contents are refused — a name alone
         // confirms a secret exists. Hide sensitive names, except extracted
         // attachments, which the read tool deliberately serves.
-        val visible = all.filter {
-            !com.anvex.core.engine.SensitivePaths.isSensitive(it) ||
-                com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(it)
+        val visibleSized = allSized.filter { (path, _) ->
+            !com.anvex.core.engine.SensitivePaths.isSensitive(path) ||
+                com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(path)
         }
+        val visible = visibleSized.map { it.first }
+        val sizeOf = visibleSized.toMap()
         if (visible.isEmpty()) {
             // Distinguish "not here" from "here but empty/hidden": a model
             // told only "(no files)" cannot tell a typo'd path from an empty
@@ -102,7 +108,7 @@ class AgentToolExecutor(
         }
         val scope = prefix.ifEmpty { "." }
         if (visible.size <= MAX_LIST_ENTRIES) {
-            val body = visible.joinToString("\n") { "$it (${fs.fileSize(it) ?: 0} bytes)" }
+            val body = visible.joinToString("\n") { "$it (${sizeOf[it] ?: 0} bytes)" }
             return ToolResult(true, "Listing ${visible.size} file(s) under '$scope':\n$body")
         }
         // Over the cap, a flat first-slice is actively misleading: it is
@@ -115,7 +121,7 @@ class AgentToolExecutor(
         val parents = visible.map { it.substringBeforeLast('/', "") }.toSet()
         if (parents.size <= 1) {
             // One huge flat folder: no sub-structure to summarize.
-            val shown = visible.take(MAX_LIST_ENTRIES).joinToString("\n") { "$it (${fs.fileSize(it) ?: 0} bytes)" }
+            val shown = visible.take(MAX_LIST_ENTRIES).joinToString("\n") { "$it (${sizeOf[it] ?: 0} bytes)" }
             return ToolResult(
                 true,
                 "Listing ${visible.size} file(s) under '$scope' (single folder, showing first ${MAX_LIST_ENTRIES}):\n" +
