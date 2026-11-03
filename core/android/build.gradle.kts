@@ -67,6 +67,39 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
 }
 tasks.named("preBuild") { dependsOn(downloadNodeLibs) }
 
+// libgit2 1.9.7 (F1, P3): source tarball for the anvex-git bridge. Same
+// fetch-pattern shape as downloadNodeLibs (pinned URL + SHA-256 + marker);
+// extraction happens at CMake configure time via file(ARCHIVE_EXTRACT) so
+// no tar tooling is needed in Gradle. The extracted tree is compiled as a
+// static library into libanvex-git.so by src/main/cpp/CMakeLists.txt.
+val gitLibsDir = layout.projectDirectory.dir("libgit2-dist").asFile
+val gitTarball = File(gitLibsDir, "libgit2-1.9.7.tar.gz")
+val gitLibsMarker = File(gitLibsDir, ".anvex-libgit2-1.9.7.ok")
+val downloadLibgit2 = tasks.register("downloadLibgit2") {
+    description = "Downloads and hash-verifies the libgit2 1.9.7 source tarball."
+    outputs.file(gitLibsMarker)
+    onlyIf { !gitLibsMarker.isFile }
+    doLast {
+        val url = "https://github.com/libgit2/libgit2/archive/refs/tags/v1.9.7.tar.gz"
+        val expectedSha256 = "1a4fbe7589e814777ae76b64734ad80f4ecad22cd33a22682a2aaea4ae5375e7"
+        gitLibsDir.mkdirs()
+        URL(url).openStream().use { input -> gitTarball.outputStream().use { input.copyTo(it) } }
+        val digest = MessageDigest.getInstance("SHA-256")
+        gitTarball.inputStream().use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        check(actual == expectedSha256) { "libgit2 tarball SHA-256 mismatch: $actual" }
+        gitLibsMarker.writeText("libgit2 v1.9.7 sha256=$expectedSha256\n")
+    }
+}
+tasks.named("preBuild") { dependsOn(downloadLibgit2) }
+
 android {
     namespace = "com.anvex.core.android"
     compileSdk = 35

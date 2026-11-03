@@ -53,3 +53,41 @@ add_library(anvex-pty SHARED
 target_link_options(anvex-pty PRIVATE "LINKER:-z,max-page-size=16384")
 target_link_libraries(anvex-pty
                       ${log-lib})
+
+# ---------------------------------------------------------------------------
+# anvex-git — F1 (P3): libgit2 1.9.7, statically linked. The tarball is
+# fetched + SHA-256-verified by the downloadLibgit2 Gradle task into
+# libgit2-dist/ (module root = three levels up from this file, same as
+# libnode/); it is extracted here at configure time. Local operations only:
+# HTTPS/SSH transports are OFF by design (no TLS backend bundled), so this
+# library can never open a network socket. If the tarball is absent the
+# target is skipped and the Kotlin GitBridge reports itself unavailable.
+# ---------------------------------------------------------------------------
+set(ANVEX_LIBGIT2_TARBALL ${CMAKE_CURRENT_SOURCE_DIR}/../../../libgit2-dist/libgit2-1.9.7.tar.gz)
+set(ANVEX_LIBGIT2_SRC ${CMAKE_BINARY_DIR}/libgit2-extract/libgit2-1.9.7)
+if(EXISTS ${ANVEX_LIBGIT2_TARBALL})
+    if(NOT EXISTS ${ANVEX_LIBGIT2_SRC}/CMakeLists.txt)
+        file(ARCHIVE_EXTRACT INPUT ${ANVEX_LIBGIT2_TARBALL}
+             DESTINATION ${CMAKE_BINARY_DIR}/libgit2-extract)
+    endif()
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_CLI OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(USE_HTTPS OFF CACHE BOOL "" FORCE)
+    set(USE_SSH OFF CACHE BOOL "" FORCE)
+    set(USE_GSSAPI OFF CACHE BOOL "" FORCE)
+    set(SONAME OFF CACHE BOOL "" FORCE)
+    set(REGEX_BACKEND "builtin" CACHE STRING "" FORCE)
+    add_subdirectory(${ANVEX_LIBGIT2_SRC} libgit2-build EXCLUDE_FROM_ALL)
+
+    add_library(anvex-git SHARED
+                git/git_bridge.cpp)
+    target_include_directories(anvex-git PRIVATE ${ANVEX_LIBGIT2_SRC}/include)
+    target_link_options(anvex-git PRIVATE "LINKER:-z,max-page-size=16384")
+    target_link_libraries(anvex-git
+                          libgit2package
+                          ${log-lib})
+else()
+    message(WARNING "libgit2 tarball not found — skipping anvex-git (Git features unavailable)")
+endif()
