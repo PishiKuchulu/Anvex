@@ -69,7 +69,10 @@ class HomeViewModel : ViewModel() {
                     appendLine()
                 }
             }
-            // Secrets pasted into a chat must not leave the device in an export (Phase 5 rule).
+            // Pattern-based redaction before the transcript leaves the
+            // device (Phase 5 rule): known key/token shapes are scrubbed.
+            // It cannot catch secrets pasted as free-form prose — the old
+            // comment overstated the guarantee (audit 2026-11-03).
             onReady(ArtifactHygienePolicy.redactSecrets("chat.md", text.toByteArray()).bytes.toString(Charsets.UTF_8))
         }
     }
@@ -110,7 +113,7 @@ class HomeViewModel : ViewModel() {
                     IncomingShare.assignTo(result.value.id)
                     onOpen(result.value.id)
                 }
-                is RepoResult.Err -> _events.emit("${result.title}: ${result.detail}")
+                is RepoResult.Err -> _events.tryEmit("${result.title}: ${result.detail}")
             }
         }
     }
@@ -146,12 +149,17 @@ class HomeViewModel : ViewModel() {
         newProjectUi.value = newProjectUi.value.transform()
     }
 
+    /** Single-flight guard for project creation (double-tap → duplicate projects). */
+    private var creatingProject = false
+
     fun createAndOpen(onOpen: (String) -> Unit) {
         val ui = newProjectUi.value
         if (ui.name.isBlank()) {
             _events.tryEmit("Project name is required")
             return
         }
+        if (creatingProject) return
+        creatingProject = true
         viewModelScope.launch {
             try {
                 when (val result = projectsRepo.create(
@@ -170,6 +178,8 @@ class HomeViewModel : ViewModel() {
                 }
             } catch (t: Throwable) {
                 _events.tryEmit("Project creation failed: ${t.message ?: "Unexpected error"}")
+            } finally {
+                creatingProject = false
             }
         }
     }

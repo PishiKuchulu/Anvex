@@ -16,8 +16,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -44,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -75,6 +79,11 @@ fun SigningKeyScreen(nav: NavController, vm: SigningKeyViewModel = viewModel()) 
     var repo by remember { mutableStateOf("") }
     var pushStorePw by remember { mutableStateOf("") }
     var pushKeyPw by remember { mutableStateOf("") }
+    // UI #2: every password field gets the standard visibility toggle.
+    var showStorePw by remember { mutableStateOf(false) }
+    var showKeyPw by remember { mutableStateOf(false) }
+    var showPushStorePw by remember { mutableStateOf(false) }
+    var showPushKeyPw by remember { mutableStateOf(false) }
 
     // v4.4.6: SAF picker — the user chooses where the .p12 goes (the old
     // app-private path under Android/data is not browsable on modern Android).
@@ -89,15 +98,15 @@ fun SigningKeyScreen(nav: NavController, vm: SigningKeyViewModel = viewModel()) 
             context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
                 ?: throw IllegalStateException("Could not open the chosen file.")
             "Saved — keep a backup somewhere safe."
-        }.onSuccess { vm.setStatus(it) }
-            .onFailure { vm.setStatus(it.message ?: "Download failed.") }
+        }.onSuccess { vm.setStatus(com.anvex.app.vm.SigningKeyViewModel.Status.Success(it)) }
+            .onFailure { vm.setStatus(com.anvex.app.vm.SigningKeyViewModel.Status.Failure(it.message ?: "Download failed.")) }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(tr("Signing key")) },
-                navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, tr("Back")) } },
             )
         },
     ) { padding ->
@@ -129,20 +138,37 @@ fun SigningKeyScreen(nav: NavController, vm: SigningKeyViewModel = viewModel()) 
                         OutlinedTextField(
                             storePassword, { storePassword = it },
                             label = { Text(tr("Store password")) }, singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (showStorePw) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showStorePw = !showStorePw }) {
+                                    Icon(
+                                        if (showStorePw) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showStorePw) tr("Hide") else tr("Show"),
+                                    )
+                                }
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             modifier = Modifier.fillMaxWidth(),
                         )
                         OutlinedTextField(
                             keyPassword, { keyPassword = it },
                             label = { Text(tr("Key password")) }, singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (showKeyPw) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showKeyPw = !showKeyPw }) {
+                                    Icon(
+                                        if (showKeyPw) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showKeyPw) tr("Hide") else tr("Show"),
+                                    )
+                                }
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             modifier = Modifier.fillMaxWidth(),
                         )
                         OutlinedTextField(
                             validity, { v -> validity = v.filter { it.isDigit() }.take(2) },
                             label = { Text(tr("Validity (years)")) }, singleLine = true,
+                            supportingText = { Text(tr("Years, 1–99")) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -226,14 +252,30 @@ fun SigningKeyScreen(nav: NavController, vm: SigningKeyViewModel = viewModel()) 
                         OutlinedTextField(
                             pushStorePw, { pushStorePw = it },
                             label = { Text(tr("Store password (again)")) }, singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (showPushStorePw) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showPushStorePw = !showPushStorePw }) {
+                                    Icon(
+                                        if (showPushStorePw) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showPushStorePw) tr("Hide") else tr("Show"),
+                                    )
+                                }
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             modifier = Modifier.fillMaxWidth(),
                         )
                         OutlinedTextField(
                             pushKeyPw, { pushKeyPw = it },
                             label = { Text(tr("Key password (again)")) }, singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (showPushKeyPw) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showPushKeyPw = !showPushKeyPw }) {
+                                    Icon(
+                                        if (showPushKeyPw) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                        contentDescription = if (showPushKeyPw) tr("Hide") else tr("Show"),
+                                    )
+                                }
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -248,16 +290,25 @@ fun SigningKeyScreen(nav: NavController, vm: SigningKeyViewModel = viewModel()) 
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            else Text(if (pushDone) tr("Pushed ✓") else tr("Push 4 secrets"))
+                            else if (pushDone) {
+                                // UI #2: a real check icon, not a ✓ glyph in text.
+                                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(tr("Pushed"))
+                            } else Text(tr("Push 4 secrets"))
                         }
                     }
                 }
             }
 
-            status?.let {
+            status?.let { s ->
+                // Typed status (audit 2026-11-03): color by kind, not by
+                // substring-matching the message — "Secret push failed."
+                // holds no success marker, and "Saved — …" was painted
+                // red by the "denied" lookalike "deny".
                 Text(
-                    it,
-                    color = if (it.contains("fail", true) || it.contains("denied", true) || it.contains("invalid", true) || it.contains("could not", true))
+                    s.text,
+                    color = if (s is com.anvex.app.vm.SigningKeyViewModel.Status.Failure)
                         MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 )
             }

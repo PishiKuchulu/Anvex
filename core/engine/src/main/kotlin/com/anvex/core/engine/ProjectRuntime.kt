@@ -1,28 +1,17 @@
 package com.anvex.core.engine
 
-import com.anvex.core.model.ProjectType
-
 /**
- * v1.1 §40 — future-ready runtime seam. The UI and engine talk to this
- * interface; today's implementation is [WebViewPreviewRuntime] (honest,
- * capability-tiered). A stronger embedded runtime (QuickJS/Hermes/Node-on-
- * Android) can later replace the implementation without rewriting the UI or
- * engine.
+ * The Preview runtime's capability matrix and the capability-aware system
+ * prompt built from it.
+ *
+ * History: this file also carried a `ProjectRuntime` interface seam and
+ * its `WebViewPreviewRuntime` implementation. Neither had a production
+ * consumer — the live paths are the dispatcher (chat/agent actions), the
+ * orchestrator, and the preview server in core:android — so the seam was
+ * removed (audit 2026-11-03). The capability table itself is live:
+ * Agent Center renders it and [RuntimeCapabilityReport] feeds the system
+ * prompt, so it must keep telling the truth about the Preview runtime.
  */
-interface ProjectRuntime {
-    val id: String
-
-    /** What this runtime actually supports, per operation. */
-    fun capabilities(): RuntimeCapabilities
-
-    suspend fun execute(command: String): RuntimeResult
-    suspend fun installDependencies(): RuntimeResult
-    suspend fun build(): RuntimeResult
-    suspend fun startDevServer(): RuntimeResult
-
-    /** Preview entry description, or null when preview is unsupported. */
-    fun previewEntry(files: Collection<String>): PreviewEntry?
-}
 
 /** Capability tri-state used across the engine, prompts, and UI. */
 enum class CommandCapability { SUPPORTED, PARTIAL, UNSUPPORTED }
@@ -65,91 +54,6 @@ data class RuntimeCapabilities(
             shell = CommandCapability.PARTIAL,                // whitelisted translation only
             typescript = CommandCapability.PARTIAL,            // type-stripping only
         )
-    }
-}
-
-data class RuntimeResult(
-    val capability: CommandCapability,
-    val success: Boolean,
-    val output: String? = null,
-    val error: String? = null,
-) {
-    companion object {
-        fun unsupported(operation: String) = RuntimeResult(
-            CommandCapability.UNSUPPORTED, false,
-            error = "$operation is not available in this Android runtime. " +
-                "The Preview runtime is embedded WebView-based and does not provide general Node.js process execution.",
-        )
-    }
-}
-
-data class PreviewEntry(
-    /** Route served by the in-app preview server (e.g. "/" or "/__preview__"). */
-    val path: String,
-    val requiresTranspile: Boolean,
-    val offline: Boolean,
-)
-
-/**
- * The actual v1.1 runtime: sandboxed filesystem + translated commands +
- * WebView/V8 preview with bundled Babel/React (offline-capable for React
- * without node_modules). Every capability reported here is backed by a real
- * implementation — this object must never claim more than exists.
- */
-class WebViewPreviewRuntime(
-    private val fs: ProjectFileSystem,
-    private val capabilities: RuntimeCapabilities = RuntimeCapabilities.CURRENT,
-    private val approval: ((ActionSafetyPolicy.Assessment) -> Boolean)? = null,
-) : ProjectRuntime {
-    private val dispatcher = ActionDispatcher(fs, approval)
-
-    override val id: String = "webview-preview-v1.1"
-
-    override fun capabilities(): RuntimeCapabilities = capabilities
-
-    override suspend fun execute(command: String): RuntimeResult {
-        val results = dispatcher.applyShellAction(BoltAction.ShellAction(command), "shell")
-        val failed = results.any { !it.success }
-        val partial = results.any { it.status == com.anvex.core.model.ActionStatus.PARTIAL }
-        val cap = when {
-            results.isEmpty() || results.all { it.status == com.anvex.core.model.ActionStatus.COMPLETE } -> CommandCapability.SUPPORTED
-            failed && results.all { it.error?.startsWith("Approval required") == true || it.error != null } -> CommandCapability.UNSUPPORTED
-            partial -> CommandCapability.PARTIAL
-            else -> CommandCapability.SUPPORTED
-        }
-        return RuntimeResult(
-            capability = cap,
-            success = !failed,
-            output = results.joinToString("\n") { it.output.orEmpty() }.ifBlank { null },
-            error = results.firstOrNull { it.error != null }?.error,
-        )
-    }
-
-    override suspend fun installDependencies(): RuntimeResult = RuntimeResult(
-        CommandCapability.PARTIAL, true,
-        output = "Dependencies recorded from package.json. There is no node_modules on " +
-            "Android: bare imports resolve from the runtime asset bundle (react, react-dom) " +
-            "at preview time, falling back to CDN for anything else.",
-    )
-
-    override suspend fun build(): RuntimeResult =
-        RuntimeResult.unsupported("build")
-
-    override suspend fun startDevServer(): RuntimeResult = RuntimeResult(
-        CommandCapability.PARTIAL, true,
-        output = "Dev servers cannot run. Instead, the in-app preview server (localhost only) " +
-            "serves the project and transpiles JSX/TS in the preview browser.",
-    )
-
-    override fun previewEntry(files: Collection<String>): PreviewEntry? {
-        val type = ProjectType.infer(files)
-        return when (type) {
-            ProjectType.STATIC_HTML, ProjectType.VANILLA_JS ->
-                PreviewEntry("/", requiresTranspile = false, offline = true)
-            ProjectType.REACT, ProjectType.TYPESCRIPT ->
-                PreviewEntry("/__preview__", requiresTranspile = true, offline = true)
-            ProjectType.VITE, ProjectType.UNKNOWN -> null
-        }
     }
 }
 

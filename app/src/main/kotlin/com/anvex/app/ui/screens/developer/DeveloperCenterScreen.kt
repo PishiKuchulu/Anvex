@@ -98,7 +98,7 @@ fun DeveloperCenterScreen(nav: NavController) {
                         runCatching { graph.reliability.enqueueRepair(label) }.onSuccess { status = "$label queued and will be verified by the task engine." }.onFailure { status = "Repair failed to queue: ${it.message}" }
                     }
                 })
-                "Tasks" -> TaskManagerTab(tasks, { id -> scope.launch { status = if (graph.reliability.resumeTask(id)) "Task resumed." else "Task cannot be resumed." } }, { id -> scope.launch { status = if (graph.reliability.cancelTask(id)) "Cancellation requested." else "Task cannot be cancelled." } })
+                "Tasks" -> TaskManagerTab(tasks, { id -> scope.launch { status = if (graph.reliability.resumeTask(id)) "Task resumed." else "Task cannot be resumed." } }, { id -> scope.launch { status = if (graph.reliability.cancelTask(id)) "Cancellation requested." else "Task cannot be cancelled." } }, { id -> scope.launch { graph.reliability.pauseTask(id) } })
                 "Backups" -> BackupTab(backups, graph.reliability.automaticBackupDirectory().absolutePath, { scope.launch(Dispatchers.IO) { graph.reliability.createAutomaticSnapshot("manual recovery snapshot"); status = "Encrypted recovery snapshot created." } }, { scope.launch(Dispatchers.IO) { graph.reliability.rotateAutomaticBackups(3); status = "Newest 3 automatic backups retained." } })
                 "Skills" -> SkillsTab(plugins, { importPlugins.launch(arrayOf("application/json", "text/plain")) }, { exportPlugins.launch("anvex-skills.json") }, { id, enabled -> scope.launch { graph.reliability.setPluginEnabled(id, enabled) } }, { id -> scope.launch { status = if (graph.reliability.removePlugin(id)) "Skill removed." else "Built-in skill cannot be removed." } })
                 "Activity" -> ActivityTab(events)
@@ -120,7 +120,7 @@ fun DeveloperCenterScreen(nav: NavController) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(tr("System health"), style = MaterialTheme.typography.headlineSmall); IconButton(onClick = onRun) { Icon(Icons.Default.Refresh, "Run health check") } }
         Text(tr("Deterministic checks are informational; unavailable runtime capabilities remain explicit limitations."), style = MaterialTheme.typography.bodySmall)
-        Text("Android build runtime: $toolchainStatus", style = MaterialTheme.typography.bodySmall)
+        Text(tr("Android build runtime: %1\$s").format(toolchainStatus), style = MaterialTheme.typography.bodySmall)
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { items(items, key = { it.name }) { item -> Card(Modifier.fillMaxWidth()) { ListItem(leadingContent = { Icon(if (item.ok) Icons.Default.CheckCircle else Icons.Default.Error, null) }, headlineContent = { Text(item.name) }, supportingContent = { Text(item.detail) }) } } }
     }
 }
@@ -136,10 +136,10 @@ fun DeveloperCenterScreen(nav: NavController) {
     }
 }
 
-@Composable private fun TaskManagerTab(tasks: List<TaskRunItem>, onResume: (Long) -> Unit, onCancel: (Long) -> Unit) {
+@Composable private fun TaskManagerTab(tasks: List<TaskRunItem>, onResume: (Long) -> Unit, onCancel: (Long) -> Unit, onPause: (Long) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Text(tr("Installation / Task Manager"), style = MaterialTheme.typography.headlineSmall); Text(tr("All long-running work is durable, cancellable and recoverable where the task declares resumability."), style = MaterialTheme.typography.bodySmall) }
-        items(tasks, key = { it.id }) { task -> ListItem(headlineContent = { Text("#${task.id} ${task.label}") }, supportingContent = { Text("${task.type} • ${task.state} • attempt ${task.attempt}/${task.maxAttempts}${task.nextRunAt?.let { " • next ${java.util.Date(it)}" } ?: ""}\n${task.detail ?: ""}") }, trailingContent = { Row { if (task.state in setOf("INTERRUPTED", "PAUSED", "WAITING_APPROVAL") && task.resumable) TextButton({ onResume(task.id) }) { Text(tr("Resume")) }; if (task.state in setOf("QUEUED", "RUNNING", "RETRYING")) TextButton({ onCancel(task.id) }) { Text(tr("Cancel")) } } }) }
+        items(tasks, key = { it.id }) { task -> ListItem(headlineContent = { Text("#${task.id} ${task.label}") }, supportingContent = { Text("${task.type} • ${task.state} • attempt ${task.attempt}/${task.maxAttempts}${task.nextRunAt?.let { " • next ${java.util.Date(it)}" } ?: ""}\n${task.detail ?: ""}") }, trailingContent = { Row { if (task.state in setOf("INTERRUPTED", "PAUSED", "WAITING_APPROVAL") && task.resumable) TextButton({ onResume(task.id) }) { Text(tr("Resume")) }; if (task.state in setOf("QUEUED", "RUNNING", "RETRYING")) TextButton({ onPause(task.id) }) { Text(tr("Pause")) }; if (task.state in setOf("QUEUED", "RUNNING", "RETRYING")) TextButton({ onCancel(task.id) }) { Text(tr("Cancel")) } } }) }
     }
 }
 
@@ -149,7 +149,7 @@ private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capa
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text(tr("Dangerous Action Approval"), style = MaterialTheme.typography.headlineSmall); Text(tr("The UI is only an approval front-end. Actual execution must still pass the runtime safety gate and durable grant check."), style = MaterialTheme.typography.bodySmall) }
         item { OutlinedTextField(command, onCommandChange, label = { Text(tr("Command to classify")) }, modifier = Modifier.fillMaxWidth(), minLines = 2) }
-        if (command.isNotBlank()) item { val a = ActionSafetyPolicy.assess(command); Card { ListItem(headlineContent = { Text(if (a.risk == ActionSafetyPolicy.Risk.REQUIRES_APPROVAL) "Approval required" else "No known risk pattern (not a guarantee)") }, supportingContent = { Text(a.reason) }) } }
+        if (command.isNotBlank()) item { val a = ActionSafetyPolicy.assess(command); Card { ListItem(headlineContent = { Text(if (a.risk == ActionSafetyPolicy.Risk.REQUIRES_APPROVAL) tr("Approval required") else tr("No known risk pattern (not a guarantee)")) }, supportingContent = { Text(a.reason) }) } }
         item { Text(tr("Capability grant"), style = MaterialTheme.typography.titleMedium) }
         // v4.4.5 (UX): FlowRow — the 6 capability chips overflowed a plain
         // Row and chips 4-6 were unreachable.
@@ -170,10 +170,10 @@ private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capa
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(tr("Remote / LAN Status"), style = MaterialTheme.typography.headlineSmall)
         Text(tr("Read-only authenticated status only. Files, commands, provider credentials and agent execution are not exposed."), style = MaterialTheme.typography.bodySmall)
-        ListItem(headlineContent = { Text(if (status.running) "Running" else "Stopped") }, supportingContent = { Text(status.address) })
+        ListItem(headlineContent = { Text(if (status.running) tr("Running") else tr("Stopped")) }, supportingContent = { Text(status.address) })
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (status.running) "Authenticated status endpoint" else "Status endpoint", style = MaterialTheme.typography.titleMedium)
+                Text(if (status.running) tr("Authenticated status endpoint") else tr("Status endpoint"), style = MaterialTheme.typography.titleMedium)
                 if (!status.running) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -182,9 +182,9 @@ private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capa
                         }
                         Switch(checked = exposeLan, onCheckedChange = onExposeLanChange)
                     }
-                    Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text(if (exposeLan) "Start on LAN" else "Start on this device") }
+                    Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text(if (exposeLan) tr("Start on LAN") else tr("Start on this device")) }
                 } else {
-                    Text("Address: ${status.address}", style = MaterialTheme.typography.labelMedium, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    Text("${tr("Address")}: ${status.address}", style = MaterialTheme.typography.labelMedium, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                     Text(tr("Bearer token is held in memory and is hidden until you explicitly copy it."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = {

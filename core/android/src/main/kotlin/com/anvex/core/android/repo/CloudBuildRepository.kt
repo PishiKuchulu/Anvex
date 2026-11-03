@@ -189,14 +189,32 @@ class CloudBuildRepository(private val tokenProvider: () -> String?) {
      * The most recent workflow run on [branch]. When [workflowPath] is given,
      * the newest run of that specific workflow file is returned instead of the
      * newest run of any workflow (repositories often run unrelated CI too).
+     *
+     * Audit 02: when [sinceId] > 0, only runs NEWER than that id are
+     * considered — a caller polling right after its own dispatch should
+     * capture the newest pre-dispatch run id first and pass it here,
+     * otherwise "latest" can still be the PREVIOUS run and its stale
+     * status/artifact gets presented as the new build's. Callers that pass
+     * no baseline keep the old behaviour (newest run, whenever it started).
      * @return null when the branch has no matching runs yet.
      */
-    suspend fun latestRun(owner: String, repo: String, branch: String, workflowPath: String? = null): Result<RunInfo?> =
+    suspend fun latestRun(owner: String, repo: String, branch: String, workflowPath: String? = null, sinceId: Long = 0L): Result<RunInfo?> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val auth = requireToken()
                 validateTarget(owner, repo, branch)
-                if (workflowPath == null) {
+                if (sinceId > 0L) {
+                    val runs = fetchRuns("/repos/$owner/$repo/actions/runs?branch=${encode(branch)}&per_page=20", auth)
+                    var match: JSONObject? = null
+                    for (i in 0 until runs.length()) {
+                        val run = runs.optJSONObject(i) ?: continue
+                        if (run.optLong("id", 0L) <= sinceId) continue
+                        if (workflowPath != null && run.optString("path") != workflowPath) continue
+                        match = run
+                        break
+                    }
+                    match?.let(::toRunInfo)
+                } else if (workflowPath == null) {
                     fetchRuns("/repos/$owner/$repo/actions/runs?branch=${encode(branch)}&per_page=1", auth)
                         .optJSONObject(0)?.let(::toRunInfo)
                 } else {
@@ -248,13 +266,22 @@ class CloudBuildRepository(private val tokenProvider: () -> String?) {
         }
 
     /**
-     * Downloads the newest non-expired APK artifact of [runId], extracts the
-     * .apk from the artifact zip (zip-slip safe via [SafeDirUnzip]) into
-     * [targetDir] and returns the file. When the archive contains several
-     * APKs the largest one is returned (multi-module projects). Artifacts
-     * larger than [MAX_ARTIFACT_BYTES] are rejected before downloading.
+     * Single-APK convenience: the largest APK of [downloadArtifactApks]
+     * (the historical behaviour for multi-module projects).
      */
     suspend fun downloadArtifactApk(owner: String, repo: String, runId: Long, targetDir: File): Result<File> =
+        downloadArtifactApks(owner, repo, runId, targetDir).map { it.first() }
+
+    /**
+     * Downloads the newest non-expired APK artifact of [runId], extracts the
+     * .apk files from the artifact zip (zip-slip safe via [SafeDirUnzip])
+     * into [targetDir] and returns ALL of them, largest first. Audit 02:
+     * callers used to receive only the largest APK even when the archive
+     * carried several (split APKs, debug + release) and the rest vanished
+     * with the deleted zip. Artifacts larger than [MAX_ARTIFACT_BYTES] are
+     * rejected before downloading.
+     */
+    suspend fun downloadArtifactApks(owner: String, repo: String, runId: Long, targetDir: File): Result<List<File>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val auth = requireToken()
@@ -306,8 +333,9 @@ class CloudBuildRepository(private val tokenProvider: () -> String?) {
                     SafeDirUnzip.extract(zip.inputStream(), targetDir)
                     targetDir.walkTopDown()
                         .filter { it.isFile && it != zip && it.extension.equals("apk", true) }
-                        .maxByOrNull { it.length() }
-                        ?: error("The artifact archive contained no .apk file.")
+                        .sortedByDescending { it.length() }
+                        .toList()
+                        .also { if (it.isEmpty()) error("The artifact archive contained no .apk file.") }
                 } finally {
                     runCatching { zip.delete() }
                 }

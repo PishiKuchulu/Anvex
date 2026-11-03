@@ -13,7 +13,17 @@ package com.anvex.core.android.session
  *    reports, not plan announcements;
  *  - first-person intent phrasing, English or Persian;
  *  - callers combine it with "zero actions executed this turn", so a
- *    closing summary after real work can never match the branch.
+ *    closing summary after real work can never match the branch;
+ *  - callers ALSO gate on the user having actually requested execution
+ *    ([com.anvex.core.engine.UserIntentClassifier.requiresExecution]):
+ *    a plan-shaped sentence inside a plain Q&A answer must never turn
+ *    into file actions the user did not ask for (audit 2026-11-03).
+ *
+ * English patterns come in two tiers. STRONG patterns are explicit plan
+ * announcements and match anywhere. WEAK patterns are everyday answer
+ * phrasing ("let me…", "I should…") and only match at the START of a
+ * sentence, where they actually announce upcoming work instead of
+ * explaining something.
  */
 internal fun looksLikeIntentOnly(prose: String): Boolean {
     val text = prose.trim()
@@ -21,8 +31,24 @@ internal fun looksLikeIntentOnly(prose: String): Boolean {
     // ZWNJ removal makes the Persian patterns insensitive to the two
     // spellings models produce (می‌کنم with or without the joiner).
     val flat = text.replace("\u200C", "").lowercase()
-    return INTENT_PATTERNS.any { flat.contains(it) }
+    if (INTENT_PATTERNS.any { flat.contains(it) }) return true
+    // Weak first-person openers: only as the start of a sentence.
+    return flat.split(SENTENCE_SPLIT).any { sentence ->
+        val start = sentence.trim().trimStart('"', '\'', '(', '«', ' ')
+        WEAK_SENTENCE_STARTS.any { start.startsWith(it) }
+    }
 }
+
+private val SENTENCE_SPLIT = Regex("[.!?\\n…]+")
+
+/** Everyday first-person phrasing — intent ONLY at a sentence start. */
+private val WEAK_SENTENCE_STARTS = listOf(
+    "i will",
+    "i'll",
+    "let me",
+    "i need to",
+    "i should",
+)
 
 /**
  * True when a round's prose carries no actual answer: blank, or nothing
@@ -36,14 +62,26 @@ internal fun looksLikeIntentOnly(prose: String): Boolean {
 internal fun isMarkupOnlyOrEmpty(prose: String): Boolean {
     val flat = prose.lowercase()
     val stripped = HARNESS_MARKERS.fold(flat) { acc, marker -> acc.replace(marker, "") }
-    return stripped.isBlank()
+    if (stripped.isBlank()) return true
+    // JSON tool-call envelopes: some gateways answer with a bare
+    // {"tool_calls": [...]} object as the entire round. That is a tool
+    // call in a dialect the parser does not execute, not an answer —
+    // but only when the WHOLE round is the envelope (a JSON example
+    // inside prose stays an answer).
+    val trimmed = flat.trim()
+    return trimmed.startsWith("{") &&
+        (trimmed.contains("\"tool_call\"") || trimmed.contains("\"tool_calls\"")) &&
+        !trimmed.contains("boltartifact")
 }
 
 private val HARNESS_MARKERS = listOf(
     "<tool_results>", "</tool_results>",
     "<tool_result>", "</tool_result>",
+    "<tool-result>", "</tool-result>",
     "<tool_call>", "</tool_call>",
     "<tool_calls>", "</tool_calls>",
+    "<function_calls>", "</function_calls>",
+    "<invoke>", "</invoke>",
 )
 
 /**
@@ -71,6 +109,20 @@ internal fun stripUnparsedToolMarkup(prose: String): String {
     return prose.substring(0, cut).trimEnd()
 }
 
+/**
+ * [stripUnparsedToolMarkup] for USER-VISIBLE final text: when retained
+ * prose was cut, a visible note says so — the plain strip silently
+ * discarded everything after the earliest marker, and a reply that
+ * legitimately quoted such a token early lost its tail with no sign
+ * (audit 2026-11-03). Not for in-flight round cleaning: the note is
+ * display text, not model input.
+ */
+internal fun stripUnparsedToolMarkupNoted(prose: String): String {
+    val cleaned = stripUnparsedToolMarkup(prose)
+    if (cleaned == prose || cleaned.isBlank()) return cleaned
+    return cleaned + "\n\n[Part of the reply was removed: it contained internal tool-call markup.]"
+}
+
 private val UNPARSED_MARKUP_MARKERS = listOf(
     "<|sep|>", "<|open|>", "<|close|>", "<|tool",
     // The reported dialect OPENS with a bare "open|>" (no leading "<"):
@@ -81,13 +133,11 @@ private val UNPARSED_MARKUP_MARKERS = listOf(
 )
 
 private val INTENT_PATTERNS = listOf(
-    // English first-person intent / plan announcements.
-    "i will ",
-    "i'll ",
+    // English STRONG plan announcements (match anywhere). The weak
+    // everyday openers ("i will", "i'll", "let me", "i need to",
+    // "i should") are NOT here anymore — see WEAK_SENTENCE_STARTS.
     "i am going to",
     "i'm going to",
-    "let me ",
-    "i need to ",
     "i plan to",
     "my plan is",
     "here's my plan",
@@ -95,7 +145,6 @@ private val INTENT_PATTERNS = listOf(
     "first, i will",
     "now i will",
     "next, i will",
-    "i should ",
     // Persian first-person intent (matched ZWNJ-free, see above).
     "انجام میدم",
     "انجام میدهم",

@@ -40,7 +40,21 @@ sealed class StreamEvent {
     /** v4.4 (architect feature 1): model reasoning / extended-thinking text, streamed before answer tokens. */
     data class Reasoning(val text: String) : StreamEvent()
     data class Token(val text: String) : StreamEvent()
-    data class Completed(val finishReason: String? = null, val usage: Usage? = null) : StreamEvent()
+    data class Completed(
+        val finishReason: String? = null,
+        val usage: Usage? = null,
+        /**
+         * Identity of the provider/model that actually produced this
+         * completion, when the emitting client knows it differs from (or
+         * must confirm) the caller's bound provider. Set by
+         * [FallbackProviderClient] from the answering client's identity;
+         * direct clients leave it null and the caller stamps its own
+         * bound provider (audit 2026-11-03: failover replies used to be
+         * persisted and priced as the bound provider).
+         */
+        val providerId: String? = null,
+        val model: String? = null,
+    ) : StreamEvent()
     data class Failed(val error: AiError) : StreamEvent()
     data class Sources(val sources: List<WebSource>) : StreamEvent()
 }

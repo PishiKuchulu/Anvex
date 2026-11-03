@@ -21,6 +21,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.anvex.app.i18n.tr
 
+/**
+ * UI #5: GitHub status is TYPED — the old code colored it by checking
+ * `contains("failed")` on an English string, so localized or reworded
+ * failures rendered green. Color now derives from the type.
+ */
+private sealed interface GhStatus {
+    val text: String
+    data class Ok(override val text: String) : GhStatus
+    data class Err(override val text: String) : GhStatus
+    data class Busy(override val text: String) : GhStatus
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GitHubScreen(nav: NavController, projectId: String) {
@@ -31,9 +43,29 @@ fun GitHubScreen(nav: NavController, projectId: String) {
     var owner by remember { mutableStateOf("") }
     var repo by remember { mutableStateOf("") }
     var branch by remember { mutableStateOf("main") }
-    var status by remember { mutableStateOf<String?>(null) }
+    var status by remember { mutableStateOf<GhStatus?>(null) }
     var busy by remember { mutableStateOf(false) }
     var showPullConfirm by remember { mutableStateOf(false) }
+    // Status strings resolved in composition (coroutine/flow callbacks
+    // below are not composable and cannot call tr() themselves).
+    val enterClientIdText = tr("Enter your GitHub OAuth client ID first.")
+    val connectedText = tr("GitHub connected — token saved securely in Android Keystore.")
+    val saveTokenFailText = tr("Could not save the GitHub token.")
+    val expiredText = tr("The code expired. Start again to get a new one.")
+    val startFailText = tr("Could not start GitHub authorization.")
+    val tokenSavedText = tr("Token saved securely in Android Keystore.")
+    val tokenClearedText = tr("Saved GitHub token cleared.")
+    val pushingText = tr("Pushing…")
+    val pullingText = tr("Pulling…")
+    val pushFailText = tr("GitHub push failed.")
+    val pullFailText = tr("GitHub pull failed.")
+    val codeCopiedText = tr("Code copied.")
+    val pushedText = tr("Pushed")
+    val pulledText = tr("Pulled")
+    val filesToText = tr("file(s) to")
+    val filesFromText = tr("file(s) from")
+    val skippedText = tr("Skipped")
+    val protectedFilesText = tr("protected file(s)")
     // v4.4.6: GitHub Device Flow state.
     var clientId by remember { mutableStateOf(graph.github.oauthClientId()) }
     var device by remember { mutableStateOf<com.anvex.core.android.repo.GitHubRepository.DeviceCode?>(null) }
@@ -50,7 +82,7 @@ fun GitHubScreen(nav: NavController, projectId: String) {
     fun startDeviceFlow() {
         val id = clientId.trim()
         if (id.isEmpty()) {
-            status = "Enter your GitHub OAuth client ID first."
+            status = GhStatus.Err(enterClientIdText)
             return
         }
         graph.github.saveOauthClientId(id)
@@ -71,13 +103,13 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                             when (val poll = withContext(Dispatchers.IO) { graph.github.pollDeviceToken(id, code) }) {
                                 is com.anvex.core.android.repo.GitHubRepository.DevicePoll.Granted -> {
                                     runCatching { graph.github.saveToken(poll.accessToken) }
-                                        .onSuccess { status = "GitHub connected — token saved securely in Android Keystore." }
-                                        .onFailure { status = it.message ?: "Could not save the GitHub token." }
+                                        .onSuccess { status = GhStatus.Ok(connectedText) }
+                                        .onFailure { status = GhStatus.Err(it.message ?: saveTokenFailText) }
                                     stopDeviceFlow()
                                     return@launch
                                 }
                                 is com.anvex.core.android.repo.GitHubRepository.DevicePoll.Failed -> {
-                                    status = poll.message
+                                    status = GhStatus.Err(poll.message)
                                     stopDeviceFlow()
                                     return@launch
                                 }
@@ -85,12 +117,12 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                                 is com.anvex.core.android.repo.GitHubRepository.DevicePoll.Pending -> Unit
                             }
                         }
-                        status = "The code expired. Start again to get a new one."
+                        status = GhStatus.Err(expiredText)
                         stopDeviceFlow()
                     }
                 },
                 onFailure = {
-                    status = it.message ?: "Could not start GitHub authorization."
+                    status = GhStatus.Err(it.message ?: startFailText)
                     deviceBusy = false
                 },
             )
@@ -98,7 +130,7 @@ fun GitHubScreen(nav: NavController, projectId: String) {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text(tr("GitHub Sync")) }, navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) },
+        topBar = { TopAppBar(title = { Text(tr("GitHub Sync")) }, navigationIcon = { IconButton({ nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, tr("Back")) } }) },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Card(Modifier.fillMaxWidth()) {
@@ -146,10 +178,10 @@ fun GitHubScreen(nav: NavController, projectId: String) {
             OutlinedTextField(repo, { repo = it }, label = { Text(tr("Repository")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(branch, { branch = it }, label = { Text(tr("Branch")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { graph.github.saveToken(token); token = ""; status = "Token saved securely in Android Keystore." }, enabled = token.isNotBlank() && !busy, modifier = Modifier.weight(1f)) {
+                Button(onClick = { graph.github.saveToken(token); token = ""; status = GhStatus.Ok(tokenSavedText) }, enabled = token.isNotBlank() && !busy, modifier = Modifier.weight(1f)) {
                     Text(tr("Save token"))
                 }
-                OutlinedButton(onClick = { graph.github.clearToken(); status = "Saved GitHub token cleared." }, enabled = graph.github.hasToken() && !busy, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = { graph.github.clearToken(); status = GhStatus.Ok(tokenClearedText) }, enabled = graph.github.hasToken() && !busy, modifier = Modifier.weight(1f)) {
                     Text(tr("Clear token"))
                 }
             }
@@ -157,13 +189,15 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                 Button(
                     enabled = !busy && owner.isNotBlank() && repo.isNotBlank() && graph.github.hasToken(),
                     onClick = {
-                        busy = true; status = "Pushing…"
+                        busy = true; status = GhStatus.Busy(pushingText)
                         scope.launch {
                             val result = withContext(Dispatchers.IO) { graph.github.push(graph.projects.fileSystemForAsync(projectId), owner, repo, branch) }
                             status = result.fold({ outcome ->
-                                "Pushed ${outcome.count} file(s) to $owner/$repo@$branch." +
-                                    if (outcome.skipped.isEmpty()) "" else " Skipped ${outcome.skipped.size} protected file(s): ${outcome.skipped.take(3).joinToString(", ")}${if (outcome.skipped.size > 3) "…" else ""}"
-                            }, { it.message ?: "GitHub push failed." })
+                                GhStatus.Ok(
+                                    "$pushedText ${outcome.count} $filesToText $owner/$repo@$branch." +
+                                        if (outcome.skipped.isEmpty()) "" else " $skippedText ${outcome.skipped.size} $protectedFilesText: ${outcome.skipped.take(3).joinToString(", ")}${if (outcome.skipped.size > 3) "…" else ""}"
+                                )
+                            }, { GhStatus.Err(it.message ?: pushFailText) })
                             busy = false
                         }
                     },
@@ -175,7 +209,7 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                     modifier = Modifier.weight(1f),
                 ) { Icon(Icons.Filled.CloudDownload, null); Spacer(Modifier.width(6.dp)); Text(tr("Pull")) }
             }
-            status?.let { Text(it, color = if (it.contains("failed", true)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary) }
+            status?.let { s -> Text(s.text, color = if (s is GhStatus.Err) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary) }
         }
     }
 
@@ -202,8 +236,7 @@ fun GitHubScreen(nav: NavController, projectId: String) {
                             IconButton(onClick = {
                                 val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                 cm.setPrimaryClip(android.content.ClipData.newPlainText("GitHub code", code.userCode))
-                                // v4.4.6: tr() is @Composable — not callable from onClick.
-                                status = "Code copied."
+                                status = GhStatus.Ok(codeCopiedText)
                             }) {
                                 Icon(androidx.compose.material.icons.Icons.Filled.ContentCopy, contentDescription = tr("Copy"))
                             }
@@ -233,16 +266,18 @@ fun GitHubScreen(nav: NavController, projectId: String) {
         AlertDialog(
             onDismissRequest = { if (!busy) showPullConfirm = false },
             title = { Text(tr("Pull from GitHub?")) },
-            text = { Text("This will write the files from $owner/$repo@$branch into the current workspace. Continue only if the remote branch is the version you want.") },
+            text = { Text("${tr("This will write the files from")} $owner/$repo@$branch ${tr("into the current workspace. Continue only if the remote branch is the version you want.")}") },
             confirmButton = {
                 TextButton(onClick = {
-                    showPullConfirm = false; busy = true; status = "Pulling…"
+                    showPullConfirm = false; busy = true; status = GhStatus.Busy(pullingText)
                     scope.launch {
                         val result = withContext(Dispatchers.IO) { graph.github.pull(graph.projects.fileSystemForAsync(projectId), owner, repo, branch) }
                         status = result.fold({ outcome ->
-                            "Pulled ${outcome.count} file(s) from $owner/$repo@$branch." +
-                                if (outcome.skipped.isEmpty()) "" else " Skipped ${outcome.skipped.size} protected file(s)."
-                        }, { it.message ?: "GitHub pull failed." })
+                            GhStatus.Ok(
+                                "$pulledText ${outcome.count} $filesFromText $owner/$repo@$branch." +
+                                    if (outcome.skipped.isEmpty()) "" else " $skippedText ${outcome.skipped.size} $protectedFilesText."
+                            )
+                        }, { GhStatus.Err(it.message ?: pullFailText) })
                         busy = false
                     }
                 }) { Text(tr("Pull")) }

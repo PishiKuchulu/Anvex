@@ -88,5 +88,42 @@ class PatchEngineTest {
         val p = "<<<< SEARCH\n\n   val count = 0   \n\n====\n   val count = 9   \n\n>>>> REPLACE"
         val outcome = PatchEngine.apply(source, p) as? PatchEngine.PatchOutcome.Applied ?: error("expected Applied")
         assertTrue(outcome.newContent.contains("val count = 9"))
+        assertTrue(outcome.usedLenientFallback)
+    }
+
+    @Test
+    fun `exact match does not report the lenient fallback`() {
+        val p = patch("val count = 0", "val count = 1")
+        val outcome = PatchEngine.apply(source, p) as? PatchEngine.PatchOutcome.Applied ?: error("expected Applied")
+        assertFalse(outcome.usedLenientFallback)
+    }
+
+    @Test
+    fun `ambiguous exact match fails instead of patching the first hit`() {
+        val outcome = PatchEngine.apply("val a = 1\nval a = 1\n", patch("val a = 1", "val a = 9"))
+        assertTrue(outcome is PatchEngine.PatchOutcome.Failed)
+        assertTrue((outcome as PatchEngine.PatchOutcome.Failed).reason.contains("matches more than one location"))
+    }
+
+    @Test
+    fun `ambiguous lenient match fails instead of patching the first hit`() {
+        val p = "<<<< SEARCH\n  val a = 1  \n====\n  val a = 9  \n>>>> REPLACE"
+        val outcome = PatchEngine.apply("val a = 1\nval a = 1\n", p)
+        assertTrue(outcome is PatchEngine.PatchOutcome.Failed)
+        assertTrue((outcome as PatchEngine.PatchOutcome.Failed).reason.contains("matches more than one location"))
+    }
+
+    @Test
+    fun `replacement trailing blank line is preserved verbatim`() {
+        val outcome = PatchEngine.apply("val a = 1\nval b = 2\n", patch("val a = 1", "val a = 1\n"))
+        val applied = outcome as? PatchEngine.PatchOutcome.Applied ?: error("expected Applied")
+        assertEquals("val a = 1\n\nval b = 2\n", applied.newContent)
+    }
+
+    @Test
+    fun `empty search block fails`() {
+        val outcome = PatchEngine.apply(source, "<<<< SEARCH\n====\nanything\n>>>> REPLACE")
+        assertTrue(outcome is PatchEngine.PatchOutcome.Failed)
+        assertTrue((outcome as PatchEngine.PatchOutcome.Failed).reason.contains("SEARCH text is empty"))
     }
 }

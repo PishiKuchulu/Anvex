@@ -23,8 +23,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -71,14 +71,14 @@ fun ExtensionsScreen(nav: NavController) {
                 title = { Text(tr("Skills & MCP")) },
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, tr("Back"))
                     }
                 },
             )
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxWidth()) {
-            TabRow(selectedTabIndex = tab) {
+            ScrollableTabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(tr("Skills")) })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text(tr("MCP servers")) })
             }
@@ -99,7 +99,7 @@ fun ExtensionsScreen(nav: NavController) {
                     item {
                         Text(tr("Add a skill"), style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Skills are declarative instructions. They cannot run code on this device.",
+                            tr("Skills are declarative instructions. They cannot run code on this device."),
                             style = MaterialTheme.typography.bodySmall,
                         )
                         OutlinedButton(
@@ -121,7 +121,7 @@ fun ExtensionsScreen(nav: NavController) {
                         ) { Text(tr("Install from GitHub")) }
                     }
                     item { HorizontalDivider() }
-                    item { Text("Installed (${skills.size})", style = MaterialTheme.typography.titleSmall) }
+                    item { Text("${tr("Installed")} (${skills.size})", style = MaterialTheme.typography.titleSmall) }
                     if (skills.isEmpty()) {
                         item { Text(tr("No skills installed yet."), style = MaterialTheme.typography.bodySmall) }
                     }
@@ -151,7 +151,7 @@ fun ExtensionsScreen(nav: NavController) {
                     item {
                         Text(tr("Add an MCP server"), style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Remote servers using streamable HTTP. HTTPS is required. Tokens are stored encrypted.",
+                            tr("Remote servers using streamable HTTP. HTTPS is required. Tokens are stored encrypted."),
                             style = MaterialTheme.typography.bodySmall,
                         )
                         OutlinedTextField(
@@ -167,6 +167,14 @@ fun ExtensionsScreen(nav: NavController) {
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             label = { Text(tr("Server URL (https://…)")) },
+                            // UI #5: HTTPS is required — say so at the field,
+                            // not only after a failed save.
+                            isError = serverUrl.isNotBlank() && !serverUrl.trim().startsWith("https://"),
+                            supportingText = if (serverUrl.isNotBlank() && !serverUrl.trim().startsWith("https://")) {
+                                { Text(tr("Server URL must start with https://")) }
+                            } else {
+                                null
+                            },
                         )
                         OutlinedTextField(
                             value = serverToken,
@@ -185,11 +193,11 @@ fun ExtensionsScreen(nav: NavController) {
                                     serverToken = ""
                                 }
                             },
-                            enabled = !busy && serverUrl.isNotBlank(),
+                            enabled = !busy && serverUrl.trim().startsWith("https://"),
                         ) { Text(tr("Add server")) }
                     }
                     item { HorizontalDivider() }
-                    item { Text("Servers (${servers.size})", style = MaterialTheme.typography.titleSmall) }
+                    item { Text("${tr("Servers")} (${servers.size})", style = MaterialTheme.typography.titleSmall) }
                     if (servers.isEmpty()) {
                         item { Text(tr("No MCP servers added yet."), style = MaterialTheme.typography.bodySmall) }
                     }
@@ -197,9 +205,10 @@ fun ExtensionsScreen(nav: NavController) {
                         Column(Modifier.fillMaxWidth()) {
                             Text(server.name, style = MaterialTheme.typography.titleSmall)
                             Text(server.url, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            val noneLabel = tr("none")
                             tools[server.id]?.let { names ->
                                 Text(
-                                    "Tools: ${names.joinToString().ifBlank { "none" }}",
+                                    "${tr("Tools")}: ${names.joinToString().ifBlank { noneLabel }}",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }
@@ -207,8 +216,8 @@ fun ExtensionsScreen(nav: NavController) {
                                 Column(Modifier.weight(1f)) {
                                     Text(tr("Let the assistant call tools"), style = MaterialTheme.typography.bodyMedium)
                                     Text(
-                                        if (server.tools.isEmpty()) "Test the connection first to load tools."
-                                        else "Calls run only for the tools listed above.",
+                                        if (server.tools.isEmpty()) tr("Test the connection first to load tools.")
+                                        else tr("Calls run only for the tools listed above."),
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }

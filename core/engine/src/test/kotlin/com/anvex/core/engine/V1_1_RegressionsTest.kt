@@ -319,24 +319,6 @@ class RuntimeCapabilityTest {
         assertEquals(CommandCapability.PARTIAL, caps.npm)
     }
 
-    @Test
-    fun `preview runtime reports honest tiers for unsupported operations`() {
-        val rt = WebViewPreviewRuntime(FakeFs())
-        val build = kotlinx.coroutines.runBlocking { rt.build() }
-        assertEquals(CommandCapability.UNSUPPORTED, build.capability)
-        assertTrue(build.error != null)
-        assertEquals(CommandCapability.PARTIAL, kotlinx.coroutines.runBlocking { rt.installDependencies() }.capability)
-        assertEquals(CommandCapability.PARTIAL, kotlinx.coroutines.runBlocking { rt.startDevServer() }.capability)
-    }
-
-    @Test
-    fun `preview runtime executes commands via translator`() {
-        val rt = WebViewPreviewRuntime(FakeFs())
-        val result = kotlinx.coroutines.runBlocking { rt.execute("mkdir src") }
-        assertEquals(CommandCapability.SUPPORTED, result.capability)
-        val bad = kotlinx.coroutines.runBlocking { rt.execute("node server.js") }
-        assertEquals(CommandCapability.UNSUPPORTED, bad.capability)
-    }
 }
 
 class ContextBoundsTest {

@@ -210,10 +210,10 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
         topBar = {
             TopAppBar(
                 title = { Text(tr("Terminal")) },
-                navigationIcon = { IconButton({ navController.popBackStack() }) { Icon(Icons.Default.Close, contentDescription = "Close") } },
+                navigationIcon = { IconButton({ navController.popBackStack() }) { Icon(Icons.Default.Close, contentDescription = tr("Close")) } },
                 actions = {
                     IconButton(onClick = { clipboard.setText(AnnotatedString(output.joinToString("\n"))) }, enabled = output.isNotEmpty()) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy output")
+                        Icon(Icons.Default.ContentCopy, contentDescription = tr("Copy output"))
                     }
                 },
             )
@@ -238,6 +238,8 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = AnvexDimens.page, vertical = 8.dp).background(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.shapes.medium)) {
+                // UI #5 (Low): terminal output is selectable/copyable.
+                androidx.compose.foundation.text.selection.SelectionContainer {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (starting) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                     // v4.4.4 (smoothness): append-only keys keep item identity stable
@@ -246,6 +248,7 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
                         val line = output[index]
                         Text(line, fontFamily = AnvexMono, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
                     }
+                }
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -263,7 +266,7 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
                 }
             }
             if (history.isNotEmpty()) {
-                Text("Last command: ${history.last()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(start = AnvexDimens.page, end = AnvexDimens.page, bottom = 6.dp))
+                Text("${tr("Last command")}: ${history.last()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(start = AnvexDimens.page, end = AnvexDimens.page, bottom = 6.dp))
             }
         }
     }

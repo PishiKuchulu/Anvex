@@ -42,7 +42,20 @@ fun AgentCenterScreen(nav: NavController? = null) {
     var notice by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var artifacts by remember { mutableStateOf<List<ArtifactManager.GeneratedArtifact>>(emptyList()) }
-    val agentTasks = tasks.filter { it.type == "agent" }
+    // Wiring gap 1: Pi-engine tasks are durable tasks too (type
+    // "pi-agent") — without this they never appeared in the queue.
+    val agentTasks = tasks.filter { it.type == "agent" || it.type == "pi-agent" }
+    // Notice fragments resolved in composition (the coroutine callbacks
+    // below are not composable and cannot call tr() themselves).
+    val taskWord = tr("Task")
+    val queuedSuffix = tr("queued.")
+    val couldNotQueueText = tr("Could not queue task.")
+    val approvedPrefix = tr("Exact action approved for")
+    val noApprovalPrefix = tr("No pending approval for")
+    val resumedSuffix = tr("resumed.")
+    val cannotResumeSuffix = tr("cannot resume yet.")
+    val cancelPrefix = tr("Cancellation requested for")
+    val cannotCancelSuffix = tr("cannot be cancelled.")
 
     LaunchedEffect(selected?.id, tasks) {
         val projectId = selected?.id ?: return@LaunchedEffect
@@ -59,7 +72,7 @@ fun AgentCenterScreen(nav: NavController? = null) {
                 title = { Text(tr("Agent Workspace")) },
                 navigationIcon = {
                     if (nav != null) IconButton({ nav.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back"))
                     }
                 },
             )
@@ -82,8 +95,8 @@ fun AgentCenterScreen(nav: NavController? = null) {
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AnvexStatusBadge("$activeCount active", if (activeCount > 0) AnvexStatus.INFO else AnvexStatus.SUCCESS)
-                            AnvexStatusBadge("Exact approval", AnvexStatus.SUCCESS)
+                            AnvexStatusBadge("$activeCount ${tr("active")}", if (activeCount > 0) AnvexStatus.INFO else AnvexStatus.SUCCESS)
+                            AnvexStatusBadge(tr("Exact approval"), AnvexStatus.SUCCESS)
                         }
                     }
                 }
@@ -127,9 +140,15 @@ fun AgentCenterScreen(nav: NavController? = null) {
                                     val p = selected ?: return@Button
                                     busy = true
                                     scope.launch {
-                                        runCatching { graph.agentTaskBridge.enqueue(goal, context, p.id) }
-                                            .onSuccess { notice = "Task #$it queued."; goal = ""; context = "" }
-                                            .onFailure { notice = it.message ?: "Could not queue task." }
+                                        // Wiring gap 1: engine-aware enqueue —
+                                        // Pi-selected goals go to PiTaskBridge,
+                                        // native goals to AgentTaskBridge.
+                                        // R2-2: the Context field is passed
+                                        // through — it used to be collected
+                                        // and silently discarded here.
+                                        runCatching { graph.enqueueAgentTask(goal, p.id, context) }
+                                            .onSuccess { notice = "$taskWord #$it $queuedSuffix"; goal = ""; context = "" }
+                                            .onFailure { notice = it.message ?: couldNotQueueText }
                                         busy = false
                                     }
                                 },
@@ -137,7 +156,7 @@ fun AgentCenterScreen(nav: NavController? = null) {
                             ) {
                                 Icon(Icons.Filled.PlayArrow, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
-                                Text(if (busy) "Queueing…" else "Start agent")
+                                Text(if (busy) tr("Queueing…") else tr("Start agent"))
                             }
                         }
                     }
@@ -150,9 +169,9 @@ fun AgentCenterScreen(nav: NavController? = null) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Android ${caps.apiLevel} · ${caps.abi}", style = MaterialTheme.typography.titleSmall)
                         CapabilityLine("ARM64", caps.arm64)
-                        CapabilityLine("Wireless ADB", caps.wirelessAdb)
-                        CapabilityLine("Foreground service", caps.foregroundService)
-                        CapabilityLine("Web server", caps.webServer)
+                        CapabilityLine(tr("Wireless ADB"), caps.wirelessAdb)
+                        CapabilityLine(tr("Foreground service"), caps.foregroundService)
+                        CapabilityLine(tr("Web server"), caps.webServer)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button({
                                 if (Build.VERSION.SDK_INT >= 33) {
@@ -180,12 +199,12 @@ fun AgentCenterScreen(nav: NavController? = null) {
                         // The bundled npm ships with the runtime, so the two
                         // rows can never disagree again.
                         val nodeAvailable = com.anvex.core.android.runtime.node.NodeMobileRuntime.isBundledAvailable()
-                        CapabilityLine("File editing", runtime.fileEditing == com.anvex.core.engine.CommandCapability.SUPPORTED)
-                        CapabilityLine("React offline preview", runtime.offlineReactPreview == com.anvex.core.engine.CommandCapability.SUPPORTED)
+                        CapabilityLine(tr("File editing"), runtime.fileEditing == com.anvex.core.engine.CommandCapability.SUPPORTED)
+                        CapabilityLine(tr("React offline preview"), runtime.offlineReactPreview == com.anvex.core.engine.CommandCapability.SUPPORTED)
                         CapabilityLine("Node.js", nodeAvailable)
                         CapabilityLine("npm", nodeAvailable)
                         CapabilityLine("Vite", runtime.vite == com.anvex.core.engine.CommandCapability.SUPPORTED)
-                        CapabilityLine("Shell", runtime.shell != com.anvex.core.engine.CommandCapability.UNSUPPORTED)
+                        CapabilityLine(tr("Shell"), runtime.shell != com.anvex.core.engine.CommandCapability.UNSUPPORTED)
                     }
                 }
             }
@@ -195,7 +214,7 @@ fun AgentCenterScreen(nav: NavController? = null) {
                 item {
                     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page)) {
                         Text(
-                            if (selected == null) "Select a project to view artifacts." else "No generated artifacts yet.",
+                            if (selected == null) tr("Select a project to view artifacts.") else tr("No generated artifacts yet."),
                             modifier = Modifier.padding(16.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -204,6 +223,7 @@ fun AgentCenterScreen(nav: NavController? = null) {
                 }
             } else {
                 items(artifacts, key = { it.id }) { artifact ->
+                    val shareArtifactText = tr("Share artifact")
                     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page)) {
                         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                             AnvexIconTile(when (artifact.format) {
@@ -223,8 +243,8 @@ fun AgentCenterScreen(nav: NavController? = null) {
                                     putExtra(Intent.EXTRA_STREAM, uri)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
-                                graph.context.startActivity(Intent.createChooser(intent, "Share artifact").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                            }) { Icon(Icons.Filled.Share, contentDescription = "Share") }
+                                graph.context.startActivity(Intent.createChooser(intent, shareArtifactText).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            }) { Icon(Icons.Filled.Share, contentDescription = tr("Share")) }
                         }
                     }
                 }
@@ -240,17 +260,20 @@ fun AgentCenterScreen(nav: NavController? = null) {
                         projectName = projects.firstOrNull { it.id == task.projectId }?.name,
                         onApprove = {
                             scope.launch {
-                                notice = if (graph.agentTaskBridge.approveWaitingTask(task.id)) "Exact action approved for #${task.id}." else "No pending approval for #${task.id}."
+                                notice = if (graph.agentTaskBridge.approveWaitingTask(task.id)) "$approvedPrefix #${task.id}." else "$noApprovalPrefix #${task.id}."
                             }
                         },
                         onResume = {
                             scope.launch {
-                                notice = if (graph.agentTaskBridge.resumeAfterApproval(task.id)) "Task #${task.id} resumed." else "Task #${task.id} cannot resume yet."
+                                notice = if (graph.agentTaskBridge.resumeAfterApproval(task.id)) "$taskWord #${task.id} $resumedSuffix" else "$taskWord #${task.id} $cannotResumeSuffix"
                             }
+                        },
+                        onPause = {
+                            scope.launch { graph.reliability.pauseTask(task.id) }
                         },
                         onCancel = {
                             scope.launch {
-                                notice = if (graph.reliability.cancelTask(task.id)) "Cancellation requested for #${task.id}." else "Task #${task.id} cannot be cancelled."
+                                notice = if (graph.reliability.cancelTask(task.id)) "$cancelPrefix #${task.id}." else "$taskWord #${task.id} $cannotCancelSuffix"
                             }
                         },
                     )
@@ -275,7 +298,7 @@ fun AgentCenterScreen(nav: NavController? = null) {
 private fun CapabilityLine(label: String, available: Boolean) {
     Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
-        AnvexStatusBadge(if (available) "Available" else "Unavailable", if (available) AnvexStatus.SUCCESS else AnvexStatus.ERROR)
+        AnvexStatusBadge(if (available) tr("Available") else tr("Unavailable"), if (available) AnvexStatus.SUCCESS else AnvexStatus.ERROR)
     }
 }
 
@@ -290,16 +313,31 @@ private fun EmptyAgentTasks() {
     }
 }
 
+/** Localized task-state badge (was the raw enum: "WAITING_APPROVAL"). */
 @Composable
-private fun AgentTaskCard(task: TaskRunItem, projectName: String?, onApprove: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit) {
+private fun taskStateLabel(state: String): String = when (state) {
+    "QUEUED" -> tr("Queued")
+    "RUNNING" -> tr("Running")
+    "COMPLETED" -> tr("Completed")
+    "FAILED" -> tr("Failed")
+    "WAITING_APPROVAL" -> tr("Waiting approval")
+    "RETRYING" -> tr("Retrying")
+    else -> state.replace('_', ' ')
+}
+
+@Composable
+private fun AgentTaskCard(task: TaskRunItem, projectName: String?, onApprove: () -> Unit, onResume: () -> Unit, onPause: () -> Unit, onCancel: () -> Unit) {
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = AnvexDimens.page)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("#${task.id} · ${task.label}", style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                    Text(projectName ?: "Project", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(projectName ?: tr("Project"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (task.type == "pi-agent") {
+                        Text(tr("Pi engine"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
                 }
-                AnvexStatusBadge(task.state.replace('_', ' '), when (task.state) {
+                AnvexStatusBadge(taskStateLabel(task.state), when (task.state) {
                     "COMPLETED" -> AnvexStatus.SUCCESS
                     "FAILED" -> AnvexStatus.ERROR
                     "WAITING_APPROVAL" -> AnvexStatus.WARNING
@@ -312,6 +350,11 @@ private fun AgentTaskCard(task: TaskRunItem, projectName: String?, onApprove: ()
                 if (task.state == "WAITING_APPROVAL") {
                     Button(onClick = onApprove, modifier = Modifier.weight(1f)) { Text(tr("Approve")) }
                     OutlinedButton(onClick = onResume, modifier = Modifier.weight(1f)) { Text(tr("Resume")) }
+                }
+                // Wiring gap 8: pause was engine-only (pauseTask) with no
+                // UI caller — running work can now be paused from here.
+                if (task.state in setOf("RUNNING", "RETRYING")) {
+                    OutlinedButton(onClick = onPause, modifier = Modifier.weight(1f)) { Text(tr("Pause")) }
                 }
                 if (task.state in setOf("QUEUED", "RUNNING", "RETRYING")) {
                     OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text(tr("Cancel")) }

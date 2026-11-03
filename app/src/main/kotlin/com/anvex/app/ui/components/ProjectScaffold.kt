@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
@@ -77,13 +78,13 @@ fun ProjectScaffold(
                 },
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back"))
                     }
                 },
                 actions = {
                     actions()
                     IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Project actions")
+                        Icon(Icons.Filled.MoreVert, contentDescription = tr("Project actions"))
                     }
                     DropdownMenu(
                         expanded = menuOpen,
@@ -276,6 +277,10 @@ private fun AtelierProjectModes(
                     )
                     .clickable(role = Role.Tab) { onSelect(tab) }
                     .semantics { this.selected = isSelected }
+                    // 2026-11-03 audit: segments were ≈36–38dp tall on a
+                    // control switched constantly — hit area is now ≥48dp,
+                    // the pill visual stays compact.
+                    .heightIn(min = 48.dp)
                     .padding(vertical = 8.dp),
                 contentAlignment = androidx.compose.ui.Alignment.Center,
             ) {

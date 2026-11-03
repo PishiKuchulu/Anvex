@@ -1,7 +1,9 @@
 package com.anvex.app.ui.screens.providers
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,11 +17,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -30,6 +35,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -73,7 +79,22 @@ fun ProvidersScreen(nav: NavController) {
     val brokenProviders by vm.brokenProviders.collectAsState()
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text(tr("AI providers")) }) },
+        // UI #3: transparent like the other list screens — the opaque
+        // default clashed with the themed backdrop.
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = { Text(tr("AI providers")) },
+                navigationIcon = {
+                    IconButton(onClick = { nav.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back"))
+                    }
+                },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                ),
+            )
+        },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { nav.navigate(Routes.providerEdit("new")) },
@@ -304,9 +325,18 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
     LaunchedEffect(id, initialKind) { vm.loadForEdit(id, initialKind) }
 
     Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text(if (ui.isNew) "Add provider" else ui.name.ifBlank { "Edit provider" }) },
+                title = { Text(if (ui.isNew) tr("Add provider") else ui.name.ifBlank { tr("Edit provider") }) },
+                navigationIcon = {
+                    IconButton(onClick = { nav.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back"))
+                    }
+                },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                ),
             )
         },
     ) { padding ->
@@ -337,8 +367,8 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
                             Text(
                                 when {
                                     ui.kind == ProviderKind.CUSTOM_OPENAI || ui.kind == ProviderKind.CUSTOM_ANTHROPIC ->
-                                        "API base URL (e.g. https://example.com/v1)"
-                                    else -> "API base URL (optional override)"
+                                        tr("API base URL (e.g. https://example.com/v1)")
+                                    else -> tr("API base URL (optional override)")
                                 }
                             )
                         },
@@ -391,8 +421,13 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
                     visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None
                     else PasswordVisualTransformation(),
                     trailingIcon = {
-                        TextButton(onClick = { showKey = !showKey }) {
-                            Text(if (showKey) tr("Hide") else tr("Show"))
+                        // UI #2: the standard password-visibility icon toggle
+                        // (was a small text button inside the field).
+                        IconButton(onClick = { showKey = !showKey }) {
+                            Icon(
+                                if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = if (showKey) tr("Hide") else tr("Show"),
+                            )
                         }
                     },
                     singleLine = true,
@@ -423,7 +458,7 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
                         ui.model.isNotBlank() || ui.apiKey.isNotBlank()
                         ),
                 ) {
-                    Text(if (loadingModels) "Loading…" else "Fetch models")
+                    Text(if (loadingModels) tr("Loading…") else tr("Fetch models"))
                 }
             }
 
@@ -479,7 +514,7 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
             // shifted the others.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = { vm.testConnection() }, enabled = !testing, modifier = Modifier.weight(1f)) {
-                    Text(if (testing) "Testing…" else "Test connection", maxLines = 1)
+                    Text(if (testing) tr("Testing…") else tr("Test connection"), maxLines = 1)
                 }
                 Button(
                     onClick = { vm.save { nav.popBackStack() } },
@@ -505,7 +540,7 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Text(
-                            if (result.ok) "Connection OK" else "Connection failed",
+                            if (result.ok) tr("Connection OK") else tr("Connection failed"),
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Text(result.message, style = MaterialTheme.typography.bodySmall)
@@ -534,7 +569,7 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
             }
 
             Text(
-                "Keys are encrypted with the Android Keystore and never leave the device except to your provider's endpoint.",
+                tr("Keys are encrypted with the Android Keystore and never leave the device except to your provider's endpoint."),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -545,7 +580,7 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
                     ),
                 ) {
                     Text(
-                        "This provider uses a local-model server kind that Anvex 4.0 no longer supports. Re-create it as a custom cloud endpoint (HTTPS) to keep using it.",
+                        tr("This provider uses a local-model server kind that Anvex 4.0 no longer supports. Re-create it as a custom cloud endpoint (HTTPS) to keep using it."),
                         modifier = Modifier.padding(12.dp),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodySmall,
@@ -631,7 +666,7 @@ private fun ModelPicker(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text(
-                "Models from endpoint (${models.size})",
+                "${tr("Models from endpoint")} (${models.size})",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -642,14 +677,14 @@ private fun ModelPicker(
         }
         if (testingModels) {
             Text(
-                "Testing ${testProgress.first}/${testProgress.second}…",
+                "${tr("Testing")} ${testProgress.first}/${testProgress.second}…",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else if (testResults.isNotEmpty()) {
             val okCount = testResults.values.count { it }
             Text(
-                "$okCount of ${testResults.size} models work with this key",
+                "$okCount ${tr("of")} ${testResults.size} ${tr("models work with this key")}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -664,7 +699,7 @@ private fun ModelPicker(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         )
         if (shown.isEmpty()) {
-            Text("No model matches \"$query\".", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${tr("No model matches")} \"$query\".", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyColumn(Modifier.height(240.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(shown, key = { it.id }) { model ->
@@ -675,7 +710,9 @@ private fun ModelPicker(
                         .fillMaxWidth()
                         .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
                         .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent)
-                        .clickable { onPick(model.id) }
+                        // UI #4: radio semantics — TalkBack announces the
+                        // group and the selected model.
+                        .selectable(selected = selected, role = Role.RadioButton) { onPick(model.id) }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 ) {
                     Column(Modifier.weight(1f)) {
@@ -697,7 +734,9 @@ private fun ModelPicker(
                                 if (ok) Icons.Filled.CheckCircle
                                 else Icons.Filled.Error,
                                 null,
-                                tint = if (ok) androidx.compose.ui.graphics.Color(0xFF2E9E5B)
+                                // UI #2: theme color, not a hard-coded green
+                                // that ignores the active theme.
+                                tint = if (ok) MaterialTheme.colorScheme.tertiary
                                 else MaterialTheme.colorScheme.error,
                             )
                         }

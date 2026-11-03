@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -251,10 +252,10 @@ fun HomeScreen(nav: NavController) {
                     IconButton(
                         onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
                     ) {
-                        Icon(Icons.Filled.Archive, contentDescription = "Import ZIP")
+                        Icon(Icons.Filled.Archive, contentDescription = tr("Import ZIP"))
                     }
                     IconButton(onClick = { openExistingLauncher.launch(null) }) {
-                        Icon(Icons.Filled.FolderOpen, contentDescription = "Open folder")
+                        Icon(Icons.Filled.FolderOpen, contentDescription = tr("Open folder"))
                     }
                     Box(
                         Modifier
@@ -290,7 +291,7 @@ fun HomeScreen(nav: NavController) {
                         Text(tr("Anvex"), style = MaterialTheme.typography.titleLarge)
                         // v4.4.6: subtitle is just "Your AI Agent".
                         Text(
-                            "Your AI Agent",
+                            tr("Your AI Agent"),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -301,10 +302,10 @@ fun HomeScreen(nav: NavController) {
                     IconButton(
                         onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
                     ) {
-                        Icon(Icons.Filled.Archive, contentDescription = "Import ZIP")
+                        Icon(Icons.Filled.Archive, contentDescription = tr("Import ZIP"))
                     }
                     IconButton(onClick = { openExistingLauncher.launch(null) }) {
-                        Icon(Icons.Filled.FolderOpen, contentDescription = "Open folder")
+                        Icon(Icons.Filled.FolderOpen, contentDescription = tr("Open folder"))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -321,7 +322,7 @@ fun HomeScreen(nav: NavController) {
             // sheet replace it (the design removes the floating button).
             if (!atelierStyle) {
                 com.anvex.app.ui.components.GradientButton(
-                    text = "New project",
+                    text = tr("New project"),
                     icon = Icons.Filled.Add,
                     onClick = { showNewDialog = true },
                 )
@@ -387,10 +388,10 @@ fun HomeScreen(nav: NavController) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(tr("Agent workspace"), style = MaterialTheme.typography.titleMedium)
                                 Spacer(Modifier.width(8.dp))
-                                AnvexStatusBadge("Ready", AnvexStatus.SUCCESS)
+                                AnvexStatusBadge(tr("Ready"), AnvexStatus.SUCCESS)
                             }
                             Text(
-                                "Plan, approve and run durable tasks through the Android runtime.",
+                                tr("Plan, approve and run durable tasks through the Android runtime."),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -413,8 +414,8 @@ fun HomeScreen(nav: NavController) {
 
             item {
                 AnvexSectionHeader(
-                    title = "Workspace",
-                    subtitle = if (projects.isEmpty()) "Create or import your first project" else "${projects.size} project${if (projects.size == 1) "" else "s"}",
+                    title = tr("Workspace"),
+                    subtitle = if (projects.isEmpty()) tr("Create or import your first project") else "${projects.size} ${tr("projects")}",
                 )
             }
 
@@ -441,7 +442,7 @@ fun HomeScreen(nav: NavController) {
                 if (visibleProjects.isEmpty()) {
                     item {
                         Text(
-                            "No chats match \"$query\"",
+                            "${tr("No chats match")} \"$query\"",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -468,7 +469,7 @@ fun HomeScreen(nav: NavController) {
                     QuickAction(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Filled.Build,
-                        title = "Build",
+                        title = tr("Build"),
                         subtitle = "APK",
                         enabled = projects.isNotEmpty(),
                         onClick = {
@@ -489,7 +490,7 @@ fun HomeScreen(nav: NavController) {
                         modifier = Modifier.weight(1f),
                         icon = Icons.Filled.Cloud,
                         title = "GitHub",
-                        subtitle = "Sync",
+                        subtitle = tr("Sync"),
                         enabled = projects.isNotEmpty(),
                         onClick = {
                             projects.firstOrNull()?.let { nav.navigate(Routes.github(it.id)) }
@@ -575,7 +576,7 @@ fun HomeScreen(nav: NavController) {
         if (project != null) {
             DropdownMenu(expanded = true, onDismissRequest = { menuFor = null }) {
                 DropdownMenuItem(
-                    text = { Text(if (project.id in pinnedIds) "Unpin" else "Pin") },
+                    text = { Text(if (project.id in pinnedIds) tr("Unpin") else tr("Pin")) },
                     onClick = { vm.togglePin(project.id); menuFor = null },
                 )
                 DropdownMenuItem(
@@ -647,7 +648,7 @@ private fun SetupProviderBanner(nav: NavController) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(tr("Connect your AI provider"), style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "OpenAI, Anthropic, Gemini, OpenRouter and custom endpoints.",
+                    tr("OpenAI, Anthropic, Gemini, OpenRouter and custom endpoints."),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -672,7 +673,7 @@ private fun EmptyState(onCreate: () -> Unit, onImport: () -> Unit) {
             )
             Text(tr("Start your first project"), style = MaterialTheme.typography.titleLarge)
             Text(
-                "Describe an idea, then review what the AI changes before you keep it.",
+                tr("Describe an idea, then review what the AI changes before you keep it."),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -709,7 +710,7 @@ private fun ProjectCard(project: Project, modifier: Modifier = Modifier, onClick
                 )
             }
             IconButton(onClick = onMenu) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "Project actions")
+                Icon(Icons.Filled.MoreVert, contentDescription = tr("Project actions"))
             }
         }
     }
@@ -739,9 +740,22 @@ private fun NewProjectDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // Wiring gap 2: the Template chips select a real starter
+                // template (HomeViewModel plumbs ui.starter to
+                // ProjectRepository.create).
+                Text(tr("Template"), style = MaterialTheme.typography.labelLarge)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(ProjectTemplates.Starter.entries) { starter ->
+                        FilterChip(
+                            selected = ui.starter == starter,
+                            onClick = { onUpdate { copy(starter = starter) } },
+                            label = { Text(starterLabel(starter)) },
+                        )
+                    }
+                }
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     OutlinedTextField(
-                        value = ui.parentWorkspaceUri?.let { Uri.parse(it).lastPathSegment?.substringAfterLast(":") ?: it } ?: "App private storage",
+                        value = ui.parentWorkspaceUri?.let { Uri.parse(it).lastPathSegment?.substringAfterLast(":") ?: it } ?: tr("App private storage"),
                         onValueChange = {},
                         readOnly = true,
                         label = { Text(tr("Project folder")) },
@@ -749,7 +763,7 @@ private fun NewProjectDialog(
                         maxLines = 1,
                     )
                     IconButton(onClick = onChooseFolder) {
-                        Icon(Icons.Filled.Folder, contentDescription = "Choose project folder")
+                        Icon(Icons.Filled.Folder, contentDescription = tr("Choose project folder"))
                     }
                 }
                 Text(
@@ -789,14 +803,25 @@ private fun RenameDialog(initial: String, onConfirm: (String) -> Unit, onDismiss
     )
 }
 
+@Composable
 internal fun formatRelative(ts: Long): String {
     val diff = System.currentTimeMillis() - ts
     return when {
-        diff < 60_000 -> "just now"
-        diff < 3_600_000 -> "${diff / 60_000} min ago"
-        diff < 86_400_000 -> "${diff / 3_600_000} h ago"
-        else -> "${diff / 86_400_000} d ago"
+        diff < 60_000 -> tr("just now")
+        diff < 3_600_000 -> "${diff / 60_000} ${tr("min ago")}"
+        diff < 86_400_000 -> "${diff / 3_600_000} ${tr("h ago")}"
+        else -> "${diff / 86_400_000} ${tr("d ago")}"
     }
+}
+
+/** Localized label for a project starter template (wiring gap 2). */
+@Composable
+internal fun starterLabel(starter: ProjectTemplates.Starter): String = when (starter) {
+    ProjectTemplates.Starter.BLANK -> tr("Blank")
+    ProjectTemplates.Starter.LANDING -> tr("Landing page")
+    ProjectTemplates.Starter.TODO -> tr("Todo app")
+    ProjectTemplates.Starter.DASHBOARD -> tr("Dashboard")
+    ProjectTemplates.Starter.REACT -> tr("React starter")
 }
 
 // Review B10: fixed Locale.US (a fa/de default locale would render a

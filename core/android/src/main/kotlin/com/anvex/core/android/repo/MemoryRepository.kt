@@ -29,23 +29,36 @@ class MemoryRepository(context: Context) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private val serializer = ListSerializer(MemoryItem.serializer())
     private val mutex = Mutex()
-    private val _items = MutableStateFlow(load())
+    // Audit 02: the store used to be read and decoded eagerly in the
+    // constructor — AppGraph builds this on the main thread at startup,
+    // so a large memories.json blocked first frame. First access loads.
+    private val _items: MutableStateFlow<List<MemoryItem>> by lazy { MutableStateFlow(load()) }
 
-    val items: StateFlow<List<MemoryItem>> = _items.asStateFlow()
+    val items: StateFlow<List<MemoryItem>> get() = _items.asStateFlow()
 
     private fun load(): List<MemoryItem> = runCatching {
         if (file.isFile) json.decodeFromString(serializer, file.readText()) else emptyList()
     }.getOrDefault(emptyList())
 
     private fun persist(list: List<MemoryItem>) {
-        val tmp = File(file.parentFile, "memories.json.tmp")
-        tmp.writeText(json.encodeToString(serializer, list))
-        // Review B6: the old fallback deleted the live file and retried
-        // the rename — if the retry also failed, all long-term memory
-        // was gone. Rename is atomic on the same filesystem; on failure
-        // keep the old file intact (the in-memory state still advances,
-        // and the next successful persist rewrites the file).
-        tmp.renameTo(file)
+        val text = json.encodeToString(serializer, list)
+        runCatching {
+            val tmp = File(file.parentFile, "memories.json.tmp")
+            tmp.writeText(text)
+            // Review B6: the old fallback deleted the live file and retried
+            // the rename — if the retry also failed, all long-term memory
+            // was gone. Rename is atomic on the same filesystem.
+            // Audit 02: the rename RESULT was ignored — where rename fails,
+            // every persist silently did nothing and the change was lost
+            // on process death. Fall back to a direct write WITHOUT
+            // deleting first (B6's hazard was the delete, not the write);
+            // if even that fails, the old file stays intact and the
+            // in-memory state still advances, as before.
+            if (!tmp.renameTo(file)) {
+                runCatching { file.writeText(text) }
+                tmp.delete()
+            }
+        }
         _items.value = list
     }
 

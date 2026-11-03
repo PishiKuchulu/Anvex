@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,11 +20,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -99,6 +103,10 @@ fun HarnessScreen(nav: NavController, projectId: String) {
         url = harnessServer.harnessUrl
     }
 
+    // Snackbar strings resolved in composition (the effect is not
+    // composable and cannot call tr() itself).
+    val savedToDownloadsText = tr("Saved to Downloads")
+    val shareText = tr("Share")
     // GOAL 6: Snackbar with Open/Share actions for the saved ZIP.
     LaunchedEffect(pendingZip) {
         pendingZip.collect { zip ->
@@ -106,8 +114,8 @@ fun HarnessScreen(nav: NavController, projectId: String) {
                 val (fileName, uriString, shareIntent) = zip
                 pendingZip.value = null
                 val result = snackbar.showSnackbar(
-                    message = "Saved to Downloads: $fileName",
-                    actionLabel = "Share",
+                    message = "$savedToDownloadsText: $fileName",
+                    actionLabel = shareText,
                     withDismissAction = true,
                 )
                 if (result == SnackbarResult.ActionPerformed) {
@@ -127,11 +135,11 @@ fun HarnessScreen(nav: NavController, projectId: String) {
     ProjectScaffold(
         nav = nav,
         projectId = projectId,
-        title = "Harness",
+        title = tr("Harness"),
         currentTab = ProjectTab.HARNESS,
         actions = {
             IconButton(onClick = { reloadTick++ }) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Reload harness")
+                Icon(Icons.Filled.Refresh, contentDescription = tr("Reload harness"))
             }
         },
     ) { modifier ->
@@ -152,6 +160,10 @@ fun HarnessScreen(nav: NavController, projectId: String) {
                     } else {
                         var lastLoaded by remember { mutableStateOf("") }
                         var lastTick by remember { mutableStateOf(0) }
+                        // UI #2: load progress + visible error surface
+                        // (this WebView previously reported neither).
+                        var pageError by remember { mutableStateOf<String?>(null) }
+                        var loadProgress by remember { mutableIntStateOf(100) }
                         AndroidView(
                             factory = { ctx ->
                                 android.webkit.WebView(ctx).apply {
@@ -188,8 +200,33 @@ fun HarnessScreen(nav: NavController, projectId: String) {
                                             }
                                             return true // never follow file:/content:/intent: navigations
                                         }
+
+                                        override fun onPageStarted(
+                                            view: android.webkit.WebView?,
+                                            url: String?,
+                                            favicon: android.graphics.Bitmap?,
+                                        ) {
+                                            pageError = null
+                                        }
+
+                                        override fun onReceivedError(
+                                            view: android.webkit.WebView?,
+                                            request: android.webkit.WebResourceRequest?,
+                                            error: android.webkit.WebResourceError?,
+                                        ) {
+                                            if (request?.isForMainFrame == true) {
+                                                pageError = error?.description?.toString() ?: "unknown"
+                                            }
+                                        }
                                     }
-                                    webChromeClient = object : android.webkit.WebChromeClient() { }
+                                    webChromeClient = object : android.webkit.WebChromeClient() {
+                                        override fun onProgressChanged(
+                                            view: android.webkit.WebView?,
+                                            newProgress: Int,
+                                        ) {
+                                            loadProgress = newProgress
+                                        }
+                                    }
                                     harnessBridge.start()
                                     loadUrl(entryUrl)
                                 }
@@ -211,6 +248,28 @@ fun HarnessScreen(nav: NavController, projectId: String) {
                                 runCatching { webView.destroy() }
                             },
                         )
+                        if (loadProgress in 1..99) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { loadProgress / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        pageError?.let { err ->
+                            Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "${tr("Page failed to load")}: $err",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(onClick = { reloadTick++ }) { Text(tr("Reload")) }
+                                }
+                            }
+                        }
                     }
                 }
             }

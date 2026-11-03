@@ -160,19 +160,19 @@ class ProviderRepository(private val dao: ProviderDao) {
         val entity = try { final.toEntity() } catch (e: Exception) {
             return RepoResult.Err("Secure storage failed", e.message ?: "Provider headers could not be encrypted.")
         }
-        if (final.isDefault) dao.clearDefault()
-        dao.upsert(entity)
+        // Audit 02: clear-default + write used to be separate calls — a
+        // crash between them left zero defaults stored. Both paths now run
+        // inside single DAO transactions.
+        if (final.isDefault) dao.upsertAsDefault(entity) else dao.upsert(entity)
         // First provider ever saved becomes the default automatically.
         if (dao.getDefault() == null) {
-            dao.clearDefault()
-            dao.get(final.id)?.let { dao.update(it.copy(isDefault = true)) }
+            dao.switchDefault(final.id)
         }
         return RepoResult.Ok(final)
     }
 
     suspend fun setDefault(id: String) {
-        dao.clearDefault()
-        dao.get(id)?.let { dao.update(it.copy(isDefault = true)) }
+        dao.switchDefault(id)
     }
 
     suspend fun delete(id: String) = dao.delete(id)
@@ -302,24 +302,55 @@ class ProviderRepository(private val dao: ProviderDao) {
                 return null
             }
         }
-        // Transparent AAD migration: a legacy (no-AAD) ciphertext that
-        // still decrypts is re-encrypted bound to this row, so the next
-        // read uses the AAD form. Best-effort — a failed rewrite never
-        // blocks the chat; the legacy form still works next time.
-        if (!encoded.isNullOrBlank()) {
-            // Versioned records are already AAD-only; unversioned ones are
-            // migrated when they only decrypt via the legacy fallback.
-            val aadWorks = encoded.startsWith(CIPHERTEXT_V2_PREFIX) || runCatching {
-                KeystoreCrypto.decrypt(encoded, providerKeyAad(config.id, config.baseUrl, config.model)); true
-            }.getOrDefault(false)
-            if (!aadWorks) {
-                runCatching {
-                    val reEnc = encryptAad(key, providerKeyAad(config.id, config.baseUrl, config.model))
-                    dao.get(id)?.let { dao.update(it.copy(apiKeyEnc = reEnc)) }
+        // AAD migration of legacy ciphertexts no longer happens here:
+        // audit 02 flagged runtimeConfig WRITING during a read (concurrent
+        // callers could interleave decrypt/re-encrypt on the same row).
+        // The one-time startup sweep [migrateUnversionedKeys] owns it now;
+        // until it runs, unversioned rows still decrypt via the fallback
+        // in [decryptAad].
+        return ProviderRuntimeConfig(config, key)
+    }
+
+    /**
+     * One-time startup sweep (security audit, Low): re-encrypts every
+     * remaining UNVERSIONED provider key/header ciphertext into the
+     * AAD-bound `v2:` form, shrinking the window in which a legacy row
+     * stays transplantable between rows. Rows that no longer decrypt are
+     * left untouched (they surface via [observeBroken]). Returns the
+     * number of rows migrated. Called from AppGraph's startup scope.
+     */
+    suspend fun migrateUnversionedKeys(): Int {
+        var migrated = 0
+        dao.all().forEach { entity ->
+            var updated = entity
+            val keyEnc = entity.apiKeyEnc
+            if (!keyEnc.isNullOrBlank() && !keyEnc.startsWith(CIPHERTEXT_V2_PREFIX)) {
+                val plain = runCatching { decryptApiKey(keyEnc, entity.id, entity.baseUrl, entity.model) }.getOrNull()
+                if (plain != null) {
+                    updated = updated.copy(
+                        apiKeyEnc = runCatching {
+                            encryptAad(plain, providerKeyAad(entity.id, entity.baseUrl, entity.model))
+                        }.getOrDefault(keyEnc),
+                    )
                 }
             }
+            val headersEnc = entity.extraHeadersEnc
+            if (!headersEnc.isNullOrBlank() && !headersEnc.startsWith(CIPHERTEXT_V2_PREFIX)) {
+                val plain = runCatching { decryptHeaders(headersEnc, entity.id) }.getOrNull()
+                if (plain != null) {
+                    updated = updated.copy(
+                        extraHeadersEnc = runCatching {
+                            encryptAad(plain, providerHeadersAad(entity.id))
+                        }.getOrDefault(headersEnc),
+                    )
+                }
+            }
+            if (updated != entity) {
+                dao.update(updated)
+                migrated++
+            }
         }
-        return ProviderRuntimeConfig(config, key)
+        return migrated
     }
 
     /** Returns true when a persisted API-key ciphertext exists but cannot be decrypted. */
@@ -331,7 +362,30 @@ class ProviderRepository(private val dao: ProviderDao) {
             .getOrElse { true }
     }
 
+    /**
+     * Stored headers → domain map, or null when the provider must be treated
+     * as BROKEN: legacy plaintext that was never migrated, a ciphertext that
+     * no longer decrypts, or corrupt JSON. Audit 02: a header DECRYPT failure
+     * used to degrade silently to `emptyMap()` — requests went out missing
+     * auth headers the user configured, with no signal anywhere — while the
+     * same corruption in the key made the provider unavailable. Both now
+     * behave alike: the provider drops out of [observeAll] and surfaces via
+     * [observeBroken] with the precise reason.
+     */
+    private fun ProviderEntity.decodedHeadersOrNull(): Map<String, String>? {
+        val encoded = extraHeadersEnc
+        // Never fall back to legacy plaintext headers at runtime. The startup
+        // migration must encrypt them first; otherwise the provider is treated
+        // as unavailable instead of rehydrating credentials from plaintext DB data.
+        if (encoded.isNullOrBlank()) {
+            return if (extraHeadersJson == "{}") emptyMap() else null
+        }
+        val raw = runCatching { decryptHeaders(encoded, id) }.getOrNull() ?: return null
+        return runCatching { json.decodeFromString<Map<String, String>>(raw.ifBlank { "{}" }) }.getOrNull()
+    }
+
     private fun ProviderEntity.toDomain(): ProviderConfig? = try {
+        val headers = decodedHeadersOrNull() ?: return null
         ProviderConfig(
             id = id,
             name = name,
@@ -339,23 +393,7 @@ class ProviderRepository(private val dao: ProviderDao) {
             apiKeyEnc = apiKeyEnc,
             baseUrl = baseUrl,
             model = model,
-            extraHeaders = runCatching {
-                val encoded = extraHeadersEnc
-                // Never fall back to legacy plaintext headers at runtime. The startup
-                // migration must encrypt them first; otherwise the provider is treated
-                // as unavailable instead of rehydrating credentials from plaintext DB data.
-                require(!encoded.isNullOrBlank() || extraHeadersJson == "{}") { "Legacy plaintext provider headers require secure migration." }
-                val raw = if (!encoded.isNullOrBlank()) decryptHeaders(encoded, id) else "{}"
-                json.decodeFromString<Map<String, String>>(raw.ifBlank { "{}" })
-            }.getOrElse { e ->
-                // Legacy plaintext headers must be migrated first: stay unavailable (security).
-                if (e is IllegalArgumentException) return null
-                // M-08: a Keystore failure used to make the whole provider vanish
-                // with no explanation. Keep it visible (without its headers) so
-                // the user can open it and re-enter the credentials. The broken
-                // API key itself still surfaces via observeBroken().
-                emptyMap()
-            },
+            extraHeaders = headers,
             temperature = temperature,
             maxTokens = maxTokens,
             inputPricePerMillion = inputPricePerMillion,

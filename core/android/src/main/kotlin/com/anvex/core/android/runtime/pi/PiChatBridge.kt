@@ -4,6 +4,7 @@ import android.content.Context
 import com.anvex.core.model.ThinkingLevel
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -34,6 +35,17 @@ class PiChatBridge(
 
     data class Snapshot(val streamText: String, val statusLine: String?)
 
+    /**
+     * Audit 02: turns for the same chat were not single-flighted — two
+     * overlapping runTurn calls (double-send, retry racing a slow turn)
+     * interleaved events into ONE reducer/stream and raced sessionFile
+     * saves. Turns for one chatKey now serialize on a per-chat mutex.
+     */
+    private val turnMutexes = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+
+    /** Minimum spacing between streamed snapshots (audit P-17). */
+    private val snapshotMinIntervalMs = 50L
+
     suspend fun runTurn(
         chatKey: String,
         projectRoot: File,
@@ -47,7 +59,26 @@ class PiChatBridge(
         extraExtensions: List<String> = emptyList(),
         onSnapshot: (Snapshot) -> Unit = {},
     ): TurnOutcome {
+        turnMutexes.computeIfAbsent(chatKey) { kotlinx.coroutines.sync.Mutex() }
+            .withLock { runTurnLocked(chatKey = chatKey, projectRoot = projectRoot, prompt = prompt, providerName = providerName, modelId = modelId, thinkingLevel = thinkingLevel, apiKey = apiKey, modelsJson = modelsJson, approvalPrompt = approvalPrompt, extraExtensions = extraExtensions, onSnapshot = onSnapshot) }
+    }
+
+    private suspend fun runTurnLocked(
+        chatKey: String,
+        projectRoot: File,
+        prompt: String,
+        providerName: String?,
+        modelId: String?,
+        thinkingLevel: ThinkingLevel = ThinkingLevel.NORMAL,
+        apiKey: String?,
+        modelsJson: JSONObject?,
+        approvalPrompt: PiEngine.ApprovalPrompt,
+        extraExtensions: List<String> = emptyList(),
+        onSnapshot: (Snapshot) -> Unit = {},
+    ): TurnOutcome {
         val reducer = PiTranscriptReducer()
+        var lastSnapshotMs = 0L
+        var snapshotPending = false
         val result = engine.run(
             projectRoot = projectRoot,
             config = PiEngine.RunConfig(
@@ -65,9 +96,22 @@ class PiChatBridge(
             approvalPrompt = approvalPrompt,
             onEvent = { record ->
                 reducer.onEvent(record)
-                onSnapshot(Snapshot(reducer.streamText, reducer.statusLine))
+                // Audit P-17: every token delta used to materialize the
+                // FULL transcript string and push a snapshot through to
+                // the UI. Coalesce: at most one snapshot per interval;
+                // deltas inside a window only mark a pending flush,
+                // delivered once after the run ends.
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastSnapshotMs >= snapshotMinIntervalMs) {
+                    lastSnapshotMs = now
+                    snapshotPending = false
+                    onSnapshot(Snapshot(reducer.streamText, reducer.statusLine))
+                } else {
+                    snapshotPending = true
+                }
             },
         )
+        if (snapshotPending) onSnapshot(Snapshot(reducer.streamText, reducer.statusLine))
         if (result.sessionFile != null) saveSessionFile(chatKey, result.sessionFile)
         return when {
             !result.success -> TurnOutcome(false, error = result.error ?: "Pi run failed", sessionFile = result.sessionFile)
@@ -82,10 +126,25 @@ class PiChatBridge(
 
     /** Drops the Pi session for a chat (e.g. conversation deleted): the next turn starts fresh. */
     fun forget(chatKey: String) {
+        // Audit 02: only the session MAPPING was removed — the transcript
+        // file itself (the full conversation text) stayed on disk forever,
+        // unowned and undiscoverable, after its project was deleted.
+        // Delete it too, but only when it resolves inside the app's own
+        // files dir (the stored path is data, not a trusted pointer).
+        val sessionPath = sessionFileFor(chatKey)
         synchronized(lock) {
             val store = readStore()
             store.remove(chatKey)
             writeStore(store)
+        }
+        if (sessionPath != null) {
+            runCatching {
+                val filesRoot = storeFile.parentFile?.parentFile?.canonicalFile
+                val target = File(sessionPath).canonicalFile
+                if (filesRoot != null && target.toPath().startsWith(filesRoot.toPath())) {
+                    target.delete()
+                }
+            }
         }
     }
 
@@ -109,7 +168,14 @@ class PiChatBridge(
             storeFile.parentFile?.mkdirs()
             val tmp = File(storeFile.parentFile, "sessions.json.tmp")
             tmp.writeText(store.toString())
-            tmp.renameTo(storeFile)
+            // Audit 02: renameTo's result was ignored — where the rename
+            // fails, session mappings silently stopped persisting (every
+            // chat restarted its Pi session each launch). Fall back to a
+            // direct write of the same payload.
+            if (!tmp.renameTo(storeFile)) {
+                runCatching { storeFile.writeText(store.toString()) }
+                tmp.delete()
+            }
         }
     }
 }

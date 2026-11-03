@@ -162,6 +162,13 @@ class NodeCompatRuntime(
                 if (metadata && op in setOf("write", "append", "unlink", "mkdir")) {
                     return err("protected path (app/VCS metadata): $path")
                 }
+                // Audit 04 (Low): the read side had NO sensitive-path gate —
+                // a Node-compat script (model-generated code) could read
+                // .env / keystore / credential files that every other read
+                // surface refuses via SensitivePaths. Same gate here.
+                if (op == "read" && com.anvex.core.engine.SensitivePaths.isSecretFile(safe)) {
+                    return err("refused: sensitive file: $path")
+                }
                 when (op) {
                     "read" -> when {
                         !target.isFile -> err("no such file: $path")

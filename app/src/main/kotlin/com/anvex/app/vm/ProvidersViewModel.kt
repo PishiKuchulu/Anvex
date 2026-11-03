@@ -61,6 +61,8 @@ class ProvidersViewModel : ViewModel() {
     val testing = MutableStateFlow(false)
     val models = MutableStateFlow<List<ModelInfo>>(emptyList())
     val loadingModels = MutableStateFlow(false)
+    /** Why the last model fetch failed; null when it succeeded (an empty list alone used to be indistinguishable from a dead endpoint). */
+    val modelsError = MutableStateFlow<String?>(null)
 
     /** Per-model key test: model id -> true when a minimal request with it succeeded. */
     val modelTestResults = MutableStateFlow<Map<String, Boolean>>(emptyMap())
@@ -128,16 +130,23 @@ class ProvidersViewModel : ViewModel() {
     fun loadModels() {
         val ui = edit.value
         loadingModels.value = true
+        modelsError.value = null
         viewModelScope.launch {
             // v4.4.4: discovery must work before a model is chosen (see buildRuntime).
             val runtime = buildRuntime(ui, requireModel = false) ?: run {
                 loadingModels.value = false
+                modelsError.value = credentialWarning.value ?: "Enter the base URL and API key first."
                 return@launch
             }
             try {
                 models.value = ProviderClientFactory.create(runtime).listModels()
+                modelsError.value = null
             } catch (e: Exception) {
+                // Audit fix (2026-11-03): a failed fetch (401, dead
+                // endpoint, offline) used to look exactly like "this
+                // provider has no models" — an empty list, no message.
                 models.value = emptyList()
+                modelsError.value = "Could not fetch models: ${e.message?.take(160) ?: "network error"}"
             }
             loadingModels.value = false
         }
@@ -165,7 +174,8 @@ class ProvidersViewModel : ViewModel() {
         testingModels.value = true
         modelTestProgress.value = 0 to ids.size
         modelTestResults.value = emptyMap()
-        modelTestJob = viewModelScope.launch {
+        var thisJob: kotlinx.coroutines.Job? = null
+        val launched = viewModelScope.launch {
             try {
                 for ((index, id) in ids.withIndex()) {
                     modelTestingId.value = id
@@ -177,10 +187,17 @@ class ProvidersViewModel : ViewModel() {
                     modelTestProgress.value = index + 1 to ids.size
                 }
             } finally {
-                modelTestingId.value = null
-                testingModels.value = false
+                // Only the CURRENT run may clear the flags (audit
+                // 2026-11-03): a cancelled run's finally used to clear
+                // the state of the run that replaced it.
+                if (modelTestJob === thisJob) {
+                    modelTestingId.value = null
+                    testingModels.value = false
+                }
             }
         }
+        thisJob = launched
+        modelTestJob = launched
     }
 
     fun save(onDone: () -> Unit) {
@@ -194,6 +211,18 @@ class ProvidersViewModel : ViewModel() {
                 "This provider kind was removed in Anvex 4.4.4 and can no longer be edited. Create a new provider instead."
             else
                 "Unsupported provider type: Anvex 4.0 is cloud-only. Create a custom cloud endpoint instead."
+            return
+        }
+        // Audit fix (2026-11-03): non-numeric temperature / max-tokens
+        // text was silently converted to null by toDoubleOrNull /
+        // toIntOrNull, so the provider saved WITHOUT the value the user
+        // typed and no trace of the typo remained. Reject loudly instead.
+        if (ui.temperature.isNotBlank() && ui.temperature.trim().toDoubleOrNull() == null) {
+            saveMessage.value = "Temperature must be a number (e.g. 0.7) — fix it or clear the field; nothing was saved."
+            return
+        }
+        if (ui.maxTokens.isNotBlank() && ui.maxTokens.trim().toIntOrNull() == null) {
+            saveMessage.value = "Max tokens must be a whole number — fix it or clear the field; nothing was saved."
             return
         }
         viewModelScope.launch {
@@ -379,6 +408,8 @@ class SettingsViewModel : ViewModel() {
 
     fun setChatFont(v: Int) = viewModelScope.launch { graph.settings.setChatFontSize(v) }
 
+    fun setPreviewConsoleVisible(v: Boolean) = viewModelScope.launch { graph.settings.setPreviewConsoleVisible(v) }
+
     fun setAutoSave(v: Boolean) = viewModelScope.launch { graph.settings.setEditorAutoSave(v) }
 
     fun clearCache() {
@@ -390,6 +421,15 @@ class SettingsViewModel : ViewModel() {
         viewModelScope.launch {
             graph.projects.observeAll().first().forEach { project ->
                 graph.chat.deleteForProject(project.id)
+                // Audit fix (2026-11-03): the per-project mutation
+                // journals (full before/after file contents) and Pi
+                // session mappings survived a "clear history", leaving
+                // the cleared chats' file contents recoverable. Direct-chat
+                // conversations are intentionally out of scope here —
+                // they are not project chats (the Settings copy should
+                // say so; UI wave).
+                runCatching { graph.mutations.deleteForProject(project.id) }
+                runCatching { graph.piChatBridge.forget(project.id) }
             }
         }
     }

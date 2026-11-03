@@ -50,6 +50,13 @@ fun ThinkingCard(
 ) {
     if (reasoning.isBlank()) return
     var expanded by remember { mutableStateOf(streaming) }
+    // 2026-11-03 audit: traces were hard-capped at 40 lines with ellipsis
+    // and no way to read the rest — in a card whose whole purpose is
+    // inspecting the reasoning. The cap stays as the default (nested
+    // scroll fights the chat list), but a long trace now offers a
+    // "Show full trace" toggle that lifts it.
+    var showFullTrace by remember { mutableStateOf(false) }
+    val traceIsLong = remember(reasoning) { reasoning.count { it == '\n' } >= 40 }
     if (streaming) LaunchedEffect(Unit) { expanded = true }
 
     // v4.4.4 (smoothness): key the timer on the streaming session, NOT on the
@@ -89,7 +96,11 @@ fun ThinkingCard(
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f).clickable { expanded = !expanded },
+                    // 2026-11-03 audit: the title toggled expansion via a
+                    // plain clickable with no role — it now announces as a
+                    // button (the chevron beside it carries the state).
+                    modifier = Modifier.weight(1f)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button) { expanded = !expanded },
                 )
                 if (streaming) {
                     androidx.compose.material3.CircularProgressIndicator(
@@ -97,7 +108,10 @@ fun ThinkingCard(
                         strokeWidth = 1.5.dp,
                     )
                 }
-                IconButton(onClick = { expanded = !expanded }, modifier = Modifier.size(32.dp)) {
+                // Default IconButton hit area is 48dp; it used to be
+                // squeezed to 32dp (2026-11-03 audit) — keep 48dp, the
+                // glyph stays 18dp.
+                IconButton(onClick = { expanded = !expanded }) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                         contentDescription = if (expanded) tr("Hide reasoning") else tr("Show reasoning"),
@@ -122,11 +136,20 @@ fun ThinkingCard(
                             style = MaterialTheme.typography.bodySmall,
                             // v4.4.4 (smoothness): no inner scroll — this card lives
                             // inside the chat LazyColumn; nested scroll fights it.
-                            // Long traces are capped instead.
+                            // Long traces are capped unless the user asks
+                            // for the full trace (toggle below).
                             modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            maxLines = 40,
+                            maxLines = if (showFullTrace) Int.MAX_VALUE else 40,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         )
+                    }
+                    if (traceIsLong) {
+                        TextButton(
+                            onClick = { showFullTrace = !showFullTrace },
+                            modifier = Modifier.padding(top = 2.dp),
+                        ) {
+                            Text(if (showFullTrace) tr("Show less") else tr("Show full trace"))
+                        }
                     }
                 }
             }

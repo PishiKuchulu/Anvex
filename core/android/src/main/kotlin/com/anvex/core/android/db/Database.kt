@@ -9,6 +9,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import androidx.room.Update
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -241,7 +242,74 @@ interface MessageDao {
     /** v4.4.6: newest message timestamp of a conversation (for list sorting). */
     @Query("SELECT MAX(createdAt) FROM messages WHERE projectId = :projectId")
     suspend fun lastMessageTime(projectId: String): Long?
+
+    /**
+     * Windowed history (audit P-01): only the newest [limit] messages of a
+     * project are read/decoded per emission, so chat cost stays bounded as
+     * conversations grow. [observeForProject] remains the full-history query
+     * for export-style consumers that genuinely need every row.
+     */
+    @Query("SELECT * FROM messages WHERE projectId = :projectId ORDER BY createdAt DESC, id DESC LIMIT :limit")
+    fun observeRecentForProject(projectId: String, limit: Int): Flow<List<MessageEntity>>
+
+    /** One-shot variant of [observeRecentForProject] (session history window). */
+    @Query("SELECT * FROM messages WHERE projectId = :projectId ORDER BY createdAt DESC, id DESC LIMIT :limit")
+    suspend fun recentForProject(projectId: String, limit: Int): List<MessageEntity>
+
+    /**
+     * Load-older paging on a COMPOSITE bound (audit round 2, NEW-4): the
+     * newest [limit] messages before (beforeCreatedAt, beforeId). A bare
+     * `createdAt < :ts` bound permanently skipped messages sharing the
+     * boundary millisecond once they left the recent window; the id
+     * tiebreak (matching the window queries' ORDER BY) makes every row
+     * reachable and every page boundary deterministic.
+     */
+    @Query("SELECT * FROM messages WHERE projectId = :projectId AND (createdAt < :beforeCreatedAt OR (createdAt = :beforeCreatedAt AND id < :beforeId)) ORDER BY createdAt DESC, id DESC LIMIT :limit")
+    suspend fun olderForProject(projectId: String, beforeCreatedAt: Long, beforeId: String, limit: Int): List<MessageEntity>
+
+    /**
+     * One aggregate pass over every direct-chat conversation (audit P-06):
+     * count + last-activity + first-message id per conversation, replacing
+     * the per-conversation summary/count/lastTime query fan-out.
+     */
+    @Query(
+        "SELECT projectId AS projectId, COUNT(*) AS messageCount, MAX(createdAt) AS lastTime, " +
+            "(SELECT m2.id FROM messages m2 WHERE m2.projectId = messages.projectId ORDER BY m2.createdAt ASC LIMIT 1) AS firstMessageId " +
+            "FROM messages WHERE projectId LIKE 'direct/%' ESCAPE '\\' GROUP BY projectId"
+    )
+    suspend fun directConversationSummaries(): List<DirectConversationRow>
+
+    @Query("SELECT * FROM messages WHERE id IN (:ids)")
+    suspend fun byIds(ids: List<String>): List<MessageEntity>
+
+    /**
+     * Usage-screen projection (audit P-18): only the columns the usage
+     * aggregation needs — message CONTENT is never loaded for a totals
+     * screen. (A full SQL-side SUM is impossible without numeric usage
+     * columns, i.e. a schema change; the bounded projection is the
+     * schema-neutral step.)
+     */
+    @Query("SELECT id, projectId, createdAt, model, providerId, usageJson FROM messages WHERE role = 'ASSISTANT' AND usageJson IS NOT NULL ORDER BY createdAt ASC")
+    suspend fun usageRows(): List<UsageRow>
 }
+
+/** Projection row of [MessageDao.usageRows] — not an entity, no schema impact. */
+data class UsageRow(
+    val id: String,
+    val projectId: String,
+    val createdAt: Long,
+    val model: String?,
+    val providerId: String?,
+    val usageJson: String?,
+)
+
+/** Projection row of [MessageDao.directConversationSummaries] — not an entity, no schema impact. */
+data class DirectConversationRow(
+    val projectId: String,
+    val messageCount: Int,
+    val lastTime: Long?,
+    val firstMessageId: String?,
+)
 
 @Dao
 interface ProviderDao {
@@ -271,6 +339,23 @@ interface ProviderDao {
 
     @Update
     suspend fun update(provider: ProviderEntity)
+
+    /**
+     * Atomic default switch (audit 02): clear + set in ONE transaction, so a
+     * crash between the two writes can no longer leave zero defaults stored.
+     */
+    @Transaction
+    suspend fun switchDefault(id: String) {
+        clearDefault()
+        get(id)?.let { update(it.copy(isDefault = true)) }
+    }
+
+    /** Atomic save-as-default: clear + upsert in one transaction (see [switchDefault]). */
+    @Transaction
+    suspend fun upsertAsDefault(provider: ProviderEntity) {
+        clearDefault()
+        upsert(provider)
+    }
 }
 
 @Dao
@@ -283,6 +368,17 @@ interface MutationDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(mutations: List<MutationEntity>)
+
+    /**
+     * Insert + trim in ONE transaction (audit 02): as two separate calls, a
+     * process death between them left the journal over the cap, and observers
+     * could briefly see a window that excluded the newest entries.
+     */
+    @Transaction
+    suspend fun insertAndTrim(mutations: List<MutationEntity>, projectId: String, keep: Int) {
+        insertAll(mutations)
+        trim(projectId, keep)
+    }
 
     /** Keep only the newest [keep] mutations for a project (bounded journal, §29). */
     @Query(

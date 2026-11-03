@@ -83,7 +83,7 @@ fun ArtifactCard(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    artifact.title.ifBlank { "Project update" },
+                    artifact.title.ifBlank { tr("Project update") },
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -246,6 +246,16 @@ fun VersionSheet(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
+            if (version != null && !version.isCurrent && version.content != null) {
+                // 2026-11-03 audit: restore used to be a single unconfirmed
+                // tap with no hint that it is itself journaled — say so.
+                Text(
+                    tr("Restoring a version is recorded and can be reverted."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
             // v4.4.5 (UX): scrollable — long labels pushed the third button
             // off-screen on narrow phones.
             Row(modifier = Modifier.padding(vertical = 12.dp).horizontalScroll(rememberScrollState())) {
@@ -272,8 +282,18 @@ fun ActionRow(action: ChatSession.ActionUi) {
             ActionStatus.ABORTED -> Icons.Filled.Warning to MaterialTheme.colorScheme.secondary
             else -> null to MaterialTheme.colorScheme.onSurfaceVariant
         }
+        // 2026-11-03 audit: TalkBack used to hear the raw enum name
+        // ("COMPLETE"/"FAILED", in English) — announce a human label.
+        val statusLabel = when (action.status) {
+            ActionStatus.COMPLETE -> tr("Complete")
+            ActionStatus.PARTIAL -> tr("Partial")
+            ActionStatus.FAILED -> tr("Failed")
+            ActionStatus.ABORTED -> tr("Aborted")
+            ActionStatus.RUNNING -> tr("Running")
+            ActionStatus.PENDING -> tr("Pending")
+        }
         if (icon != null) {
-            Icon(icon, contentDescription = action.status.name, tint = tint, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = statusLabel, tint = tint, modifier = Modifier.size(16.dp))
         } else {
             Text(tr("•"), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -289,7 +309,7 @@ fun ActionRow(action: ChatSession.ActionUi) {
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        action.note ?: "${action.streamingBytes} chars streaming…",
+                        action.note ?: "${action.streamingBytes} ${tr("chars streaming…")}",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

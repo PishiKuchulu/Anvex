@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -34,7 +36,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -73,16 +77,16 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
     ProjectScaffold(
         nav = nav,
         projectId = projectId,
-        title = project?.name ?: "Editor",
+        title = project?.name ?: tr("Editor"),
         currentTab = ProjectTab.EDITOR,
         actions = {
             IconButton(
                 onClick = { showExplorer = true },
             ) {
-                Icon(Icons.Filled.Folder, contentDescription = "Files")
+                Icon(Icons.Filled.Folder, contentDescription = tr("Files"))
             }
             IconButton(onClick = { showSearch = !showSearch }) {
-                Icon(Icons.Filled.Search, contentDescription = "Search")
+                Icon(Icons.Filled.Search, contentDescription = tr("Search"))
             }
         },
     ) { modifier ->
@@ -127,10 +131,13 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                 ProjectSearchBar(
                     query = searchQuery, replace = replaceText,
                     onQuery = { searchQuery = it }, onReplace = { replaceText = it },
-                    onReplaceAll = { vm.projectReplaceAll(searchQuery, replaceText) },
+                    // P-07 (audit 2026-11-03): the VM calls are suspend +
+                    // IO-bound now; they run in the search bar's own
+                    // coroutine scope instead of blocking composition.
+                    onReplaceAll = suspend { vm.projectReplaceAll(searchQuery, replaceText) },
                     onClose = { showSearch = false },
                     onResult = { path -> vm.openFile(path) },
-                    resultsProvider = { vm.projectSearch(searchQuery) },
+                    resultsProvider = suspend { vm.projectSearch(searchQuery) },
                 )
             }
 
@@ -143,7 +150,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                 ) {
                     Text(tr("No file open"), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Open a file from the project files, or ask the AI in Chat to create some.",
+                        tr("Open a file from the project files, or ask the AI in Chat to create some."),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -152,11 +159,23 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
             } else {
                 if (activeTab.readOnly) {
                     Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
-                        Text(
-                            "Read-only view: this file is larger than 1 MB. Editing is disabled to keep the app responsive; use Export or the AI to modify it.",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                tr("Read-only view: this file is larger than 1 MB. Editing is disabled to keep the app responsive; use Export or the AI to modify it."),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
                     }
                 }
                 CodeEditorField(
@@ -185,13 +204,13 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                         onClick = { activePath?.let(vm::undo) },
                         enabled = activeTab != null && activeTab.undoStack.isNotEmpty(),
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
+                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = tr("Undo"))
                     }
                     IconButton(
                         onClick = { activePath?.let(vm::redo) },
                         enabled = activeTab != null && activeTab.redoStack.isNotEmpty(),
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo")
+                        Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = tr("Redo"))
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
@@ -204,12 +223,12 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                     )
                     if (activeTab?.dirty == true) {
                         Text(
-                            "unsaved",
+                            tr("unsaved"),
                             color = MaterialTheme.colorScheme.tertiary,
                             style = MaterialTheme.typography.labelSmall,
                         )
                         IconButton(onClick = { activePath?.let(vm::saveNow) }) {
-                            Icon(Icons.Filled.Save, contentDescription = "Save")
+                            Icon(Icons.Filled.Save, contentDescription = tr("Save"))
                         }
                     }
                 }
@@ -278,11 +297,11 @@ private fun TabChip(
                 fontFamily = FontFamily.Monospace,
                 style = MaterialTheme.typography.labelMedium,
             )
-            IconButton(onClick = onClose, modifier = Modifier.width(28.dp)) {
+            IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
                 Icon(
                     Icons.Filled.Close,
-                    contentDescription = "Close tab",
-                    modifier = Modifier.width(16.dp),
+                    contentDescription = tr("Close tab"),
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
@@ -292,20 +311,38 @@ private fun TabChip(
 @Composable
 private fun ProjectSearchBar(
     query: String, replace: String, onQuery: (String) -> Unit, onReplace: (String) -> Unit,
-    onReplaceAll: () -> Unit, onClose: () -> Unit, onResult: (String) -> Unit,
-    resultsProvider: () -> List<com.anvex.core.engine.ProjectSearch.Match>,
+    onReplaceAll: suspend () -> Unit, onClose: () -> Unit, onResult: (String) -> Unit,
+    resultsProvider: suspend () -> List<com.anvex.core.engine.ProjectSearch.Match>,
 ) {
     var results by remember(query) { mutableStateOf(emptyList<com.anvex.core.engine.ProjectSearch.Match>()) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     Surface(tonalElevation = 1.dp) {
         Column(Modifier.fillMaxWidth().padding(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(query, onQuery, placeholder = { Text(tr("Search entire project")) }, singleLine = true, modifier = Modifier.weight(1f))
-                IconButton(onClick = { results = resultsProvider() }) { Icon(Icons.Filled.Search, "Search") }
-                IconButton(onClick = onClose) { Icon(Icons.Filled.Close, "Close") }
+                IconButton(
+                    enabled = !busy,
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            try { results = resultsProvider() } finally { busy = false }
+                        }
+                    },
+                ) { Icon(Icons.Filled.Search, tr("Search")) }
+                IconButton(onClick = onClose) { Icon(Icons.Filled.Close, tr("Close")) }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(replace, onReplace, placeholder = { Text(tr("Replace with")) }, singleLine = true, modifier = Modifier.weight(1f))
-                TextButton(onClick = onReplaceAll, enabled = query.isNotBlank()) { Text(tr("Replace all")) }
+                TextButton(
+                    enabled = query.isNotBlank() && !busy,
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            try { onReplaceAll() } finally { busy = false }
+                        }
+                    },
+                ) { Text(tr("Replace all")) }
             }
             results.take(50).forEach { match ->
                 Text("${match.path}:${match.line}:${match.column}  ${match.preview}", modifier = Modifier.fillMaxWidth().clickable { onResult(match.path) }.padding(vertical = 3.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1)

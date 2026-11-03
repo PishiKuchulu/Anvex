@@ -48,6 +48,26 @@ class ProjectRepository(
     // URI. Absence of an entry means "local project", same as a null value did.
     private val workspaceUris = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+    /**
+     * Audit 02: invoked after a project's rows are deleted, so owners of
+     * per-project side state (Pi chat session transcripts, …) can clean up.
+     * Wired by AppGraph; null in standalone/test use.
+     */
+    @Volatile
+    var onProjectDeleted: ((String) -> Unit)? = null
+
+    /**
+     * Audit 02: seed the workspace-URI cache from the database at startup.
+     * The synchronous [fileSystemFor] consults only this map; before any
+     * [fileSystemForAsync] call has populated it, a SAF project silently
+     * resolved to an (empty, wrong) app-private directory.
+     */
+    suspend fun warmWorkspaceCache() {
+        dao.all().forEach { entity ->
+            entity.workspaceUri?.let { workspaceUris[entity.id] = it }
+        }
+    }
+
     fun observeAll(): Flow<List<Project>> = dao.observeAll().map { list ->
         list.map { it.toDomain() }
     }
@@ -97,6 +117,19 @@ class ProjectRepository(
     data class StageResult(val dir: File?, val error: String?)
     data class SyncReport(val written: Int, val unchanged: Int, val skipped: Int)
 
+    /**
+     * SHA-256 of every cloud file captured at staging time, per project.
+     * Audit 02: sync-back used to write staged bytes over any cloud file
+     * whose content differed — including files the user edited in the SAF
+     * workspace WHILE Pi was running (stale staged copy silently won).
+     * The snapshot lets sync-back detect that case and skip instead.
+     */
+    private val stagedCloudHashes = java.util.concurrent.ConcurrentHashMap<String, Map<String, String>>()
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+
     suspend fun stageLocalCopy(projectId: String): StageResult = withContext(Dispatchers.IO) {
         val entity = dao.get(projectId) ?: return@withContext StageResult(null, "Project not found.")
         if (entity.workspaceUri == null) return@withContext StageResult(null, "Project is not a cloud project.")
@@ -109,6 +142,7 @@ class ProjectRepository(
             var files = 0
             var bytes = 0L
             var failure: String? = null
+            val hashes = HashMap<String, String>()
             for (path in fs.walk()) {
                 if (failure != null) break
                 if (path.split('/').any { it == ".." }) {
@@ -132,6 +166,7 @@ class ProjectRepository(
                 val target = File(staging, path)
                 target.parentFile?.mkdirs()
                 target.writeBytes(data)
+                hashes[path] = sha256Hex(data)
                 files++
                 bytes += data.size
             }
@@ -139,6 +174,7 @@ class ProjectRepository(
                 staging.deleteRecursively()
                 StageResult(null, failure)
             } else {
+                stagedCloudHashes[projectId] = hashes
                 StageResult(staging, null)
             }
         } catch (e: Exception) {
@@ -155,6 +191,8 @@ class ProjectRepository(
     suspend fun syncBackStagedCopy(projectId: String, staging: File): SyncReport = withContext(Dispatchers.IO) {
         val fs = runCatching { fileSystemForAsync(projectId) }.getOrNull()
             ?: return@withContext SyncReport(0, 0, 0)
+        // One-shot snapshot: consumed by this sync-back (see stageLocalCopy).
+        val stagedHashes = stagedCloudHashes.remove(projectId).orEmpty()
         var written = 0
         var unchanged = 0
         var skipped = 0
@@ -172,6 +210,15 @@ class ProjectRepository(
             val existing = runCatching { fs.readFileBytes(rel) }.getOrNull()
             if (existing != null && existing.contentEquals(data)) {
                 unchanged++
+                return@forEach
+            }
+            val stagedHash = stagedHashes[rel]
+            if (existing != null && stagedHash != null && sha256Hex(existing) != stagedHash) {
+                // The cloud copy changed while Pi was running and differs
+                // from what Pi produced: never let the stale staged bytes
+                // silently overwrite the newer edit (audit 02). The file
+                // is reported as skipped so the caller can surface it.
+                skipped++
                 return@forEach
             }
             val parent = rel.substringBeforeLast('/', "")
@@ -226,11 +273,14 @@ class ProjectRepository(
                 val files: List<Pair<String, String>> =
                     if (adoptedExistingFiles) emptyList() else ProjectTemplates.files(starter, trimmedName)
                 files.forEach { (path, content) -> fs.writeFile(path, content) }
-                val projectType = if (adoptedExistingFiles) ProjectType.infer(fs.walk()) else type
+                // Adopting an existing folder: one sized traversal serves
+                // both the type inference and the size (audit P-02).
+                val adoptedSized = if (adoptedExistingFiles) fs.walkWithSizes() else null
+                val projectType = if (adoptedSized != null) ProjectType.infer(adoptedSized.map { it.first }) else type
 
                 val project = Project(
                     id, trimmedName, projectType, description = description,
-                    sizeBytes = projectSize(fs),
+                    sizeBytes = adoptedSized?.let { projectSize(it) } ?: projectSize(fs),
                     workspaceUri = selectedWorkspaceUri,
                     // A folder selected by the user belongs to the user. Anvex
                     // must never delete its contents when the project is removed.
@@ -287,13 +337,13 @@ class ProjectRepository(
             // access before registering the project so the editor/agent cannot
             // later fail after the user has already entered the workspace.
             verifyWritableWorkspace(uri)
-            val files = fs.walk()
+            val sized = fs.walkWithSizes()
             val name = displayName.trim().ifBlank { "Workspace" }
             val project = Project(
                 id = UUID.randomUUID().toString(),
                 name = name,
-                type = ProjectType.infer(files),
-                sizeBytes = projectSize(fs),
+                type = ProjectType.infer(sized.map { it.first }),
+                sizeBytes = projectSize(sized),
                 workspaceUri = uri.toString(),
                 workspaceOwnedByApp = false,
             )
@@ -325,32 +375,37 @@ class ProjectRepository(
         val entity = dao.get(projectId)
             ?: return@withContext RepoResult.Err("Not found", "Project no longer exists.")
         try {
-            when {
+            // Audit 02: rows first, files second. The old order removed the
+            // files and only then the database rows; a failure between the
+            // two left a live project row pointing at a deleted directory.
+            messageDao?.deleteForProject(projectId)
+            mutationDao?.deleteForProject(projectId)
+            dao.delete(projectId)
+            workspaceUris.remove(projectId)
+            runCatching { onProjectDeleted?.invoke(projectId) }
+            val fileFailure: String? = when {
                 entity.workspaceUri == null -> {
                     // App-private workspace: Anvex owns the entire directory.
                     val root = File(projectsRoot, projectId)
                     if (root.exists() && !root.deleteRecursively()) {
-                        return@withContext RepoResult.Err("Delete failed", "Anvex could not remove the private project files.")
-                    }
+                        "Anvex could not remove the private project files."
+                    } else null
                 }
                 entity.workspaceOwnedByApp -> {
                     // Anvex-created SAF workspace: remove only this exact child.
                     val removed = SafProjectFileSystem(context.contentResolver, Uri.parse(entity.workspaceUri)).deleteOwnedRoot()
                     if (!removed) {
-                        return@withContext RepoResult.Err(
-                            "Delete failed",
-                            "Anvex could not remove the project folder. Your files were left untouched."
-                        )
-                    }
+                        "Anvex could not remove the project folder. The folder still exists in your storage and can be re-opened from Projects."
+                    } else null
                 }
                 else -> {
                     // Existing/user-selected workspace: detach only. NEVER touch its files.
+                    null
                 }
             }
-            messageDao?.deleteForProject(projectId)
-            mutationDao?.deleteForProject(projectId)
-            dao.delete(projectId)
-            workspaceUris.remove(projectId)
+            if (fileFailure != null) {
+                return@withContext RepoResult.Err("Project removed, files remain", fileFailure)
+            }
             RepoResult.Ok(Unit)
         } catch (e: Exception) {
             RepoResult.Err("Delete failed", e.message ?: "The project could not be deleted.")
@@ -359,10 +414,12 @@ class ProjectRepository(
 
     suspend fun refreshType(projectId: String) {
         val fs = fileSystemForAsync(projectId)
-        val files = fs.walk()
-        val type = ProjectType.infer(files)
+        // ONE traversal supplies both the type inference and the size
+        // (audit P-02: this runs after every finalized chat turn).
+        val sized = fs.walkWithSizes()
+        val type = ProjectType.infer(sized.map { it.first })
         val entity = dao.get(projectId) ?: return
-        dao.upsert(entity.copy(type = type.name, updatedAt = System.currentTimeMillis(), sizeBytes = projectSize(fs)))
+        dao.upsert(entity.copy(type = type.name, updatedAt = System.currentTimeMillis(), sizeBytes = projectSize(sized)))
     }
 
     /** v1.1 §23: duplicate a project — files copied, fresh id, "(copy)" suffix. */
@@ -376,12 +433,25 @@ class ProjectRepository(
         val newId = UUID.randomUUID().toString()
         val dstFs = RealProjectFileSystem(File(projectsRoot, newId))
         var copied = 0
+        var unreadable = 0
         for (path in files) {
-            srcFs.readFileBytes(path)?.let { bytes ->
-                PathSanitizer.parent(path)?.let(dstFs::mkdirs)
-                dstFs.writeFileBytes(path, bytes)
-                copied++
+            val bytes = srcFs.readFileBytes(path)
+            if (bytes == null) {
+                // Audit 02: unreadable files used to be skipped silently and
+                // the incomplete copy presented as a complete duplicate.
+                unreadable++
+                continue
             }
+            PathSanitizer.parent(path)?.let(dstFs::mkdirs)
+            dstFs.writeFileBytes(path, bytes)
+            copied++
+        }
+        if (unreadable > 0) {
+            File(projectsRoot, newId).deleteRecursively()
+            return@withContext RepoResult.Err(
+                "Duplicate incomplete",
+                "$unreadable of ${files.size} file(s) could not be read from the source project, so no copy was created.",
+            )
         }
         val project = Project(
             id = newId,
@@ -436,9 +506,9 @@ class ProjectRepository(
         val out = File(context.cacheDir, "build-workspaces/$projectId-${System.currentTimeMillis()}").apply { mkdirs() }
         var total = 0L
         var copied = 0
-        for (path in src.walk()) {
+        for ((path, listedSize) in src.walkWithSizes()) {
             if (isBuildIgnored(path)) continue
-            val size = src.fileSize(path) ?: 0L
+            val size = listedSize ?: 0L
             if (size > MAX_BUILD_FILE_BYTES) error("Build workspace contains an oversized file: $path")
             total += size
             if (total > MAX_BUILD_WORKSPACE_BYTES) error("Build workspace exceeds the ${MAX_BUILD_WORKSPACE_BYTES / (1024 * 1024)} MB safety limit.")
@@ -490,7 +560,17 @@ class ProjectRepository(
         const val MAX_BUILD_WORKSPACE_BYTES = 1_500L * 1024L * 1024L
     }
 
-    private fun projectSize(fs: ProjectFileSystem): Long = fs.walk().sumOf { fs.fileSize(it) ?: 0L }
+    /**
+     * Project size from ONE traversal whose entries already carry sizes
+     * (audit P-02). The old form walked the tree and then called
+     * `fs.fileSize()` per file — on SAF every call re-resolves the path
+     * through the documents provider, the same per-file round-trip pattern
+     * that made sends take minutes before v4.14.8.
+     */
+    private fun projectSize(fs: ProjectFileSystem): Long = fs.walkWithSizes().sumOf { it.second ?: 0L }
+
+    /** Size of an already-taken [walkWithSizes] listing (no second traversal). */
+    private fun projectSize(sized: List<Pair<String, Long?>>): Long = sized.sumOf { it.second ?: 0L }
 
     private fun isBuildIgnored(path: String): Boolean {
         val first = path.substringBefore('/')
@@ -554,13 +634,16 @@ class ProjectRepository(
                 ?: return@withContext RepoResult.Err("Import failed", "Could not read the selected file.")
             val count = stream.use { ZipCodec.import(it, fs) }
             if (count == 0) {
+                // Audit 02: the empty path used to leak the created root
+                // directory (the catch paths below already delete it).
+                root.deleteRecursively()
                 return@withContext RepoResult.Err("Import failed", "The archive contains no files (or only directories).")
             }
-            val files = fs.walk()
+            val sized = fs.walkWithSizes()
             val project = Project(
                 id, displayName.ifBlank { "Imported project" },
-                ProjectType.infer(files),
-                sizeBytes = projectSize(fs),
+                ProjectType.infer(sized.map { it.first }),
+                sizeBytes = projectSize(sized),
             )
             dao.upsert(project.toEntity())
             RepoResult.Ok(project)

@@ -22,7 +22,7 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
     suspend fun export(password: CharArray): String {
-        require(password.size >= 8) { "Backup password must be at least 8 characters." }
+        require(password.size >= MIN_PASSWORD_LENGTH) { "Backup password must be at least $MIN_PASSWORD_LENGTH characters." }
         val s = json.encodeToString(settings.settings.first())
         val ps = providers.observeAll().first().map { cfg ->
             val runtime = providers.runtimeConfig(cfg.id)
@@ -34,6 +34,7 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
         return encrypt(json.encodeToString(Payload(settings = s, providers = ps)), password)
     }
     fun encrypt(plain: String, password: CharArray): String {
+        require(password.size >= MIN_PASSWORD_LENGTH) { "Backup password must be at least $MIN_PASSWORD_LENGTH characters." }
         val random = SecureRandom(); val salt = ByteArray(16); val iv = ByteArray(12); random.nextBytes(salt); random.nextBytes(iv)
         val key = derive(password, salt, 600_000); val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, iv))
@@ -41,7 +42,9 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
     }
     fun decrypt(encoded: String, password: CharArray): Payload {
         require(encoded.length <= 64 * 1024 * 1024) { "Backup envelope is too large." }
-        require(password.size >= 8) { "Backup password must be at least 8 characters." }
+        // Legacy floor on purpose: backups created before the floor was
+        // raised must stay restorable (audit 04) — decryption keeps 8.
+        require(password.size >= LEGACY_MIN_PASSWORD_LENGTH) { "Backup password must be at least $LEGACY_MIN_PASSWORD_LENGTH characters." }
         val env = json.decodeFromString<Envelope>(encoded)
         require(env.version == 1) { "Unsupported backup envelope version." }
         require(env.iterations in 100_000..1_000_000) { "Invalid backup KDF parameters." }
@@ -77,8 +80,17 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
     }
 
     companion object {
+        /**
+         * Audit 04 (Low): NEW backups require at least this many password
+         * characters (was 8 — brute-forceable against the public envelope
+         * format). Decryption keeps [LEGACY_MIN_PASSWORD_LENGTH] so
+         * existing backups stay readable.
+         */
+        const val MIN_PASSWORD_LENGTH = 12
+        const val LEGACY_MIN_PASSWORD_LENGTH = 8
+
         fun encryptBytes(bytes: ByteArray, password: CharArray): String {
-            require(password.size >= 8) { "Backup password must be at least 8 characters." }
+            require(password.size >= MIN_PASSWORD_LENGTH) { "Backup password must be at least $MIN_PASSWORD_LENGTH characters." }
             val random = SecureRandom(); val salt = ByteArray(16); val iv = ByteArray(12)
             random.nextBytes(salt); random.nextBytes(iv)
             val key = deriveStatic(password, salt, 600_000)
@@ -92,7 +104,7 @@ class PortableBackup(private val providers: ProviderRepository, private val sett
             val env = Json { ignoreUnknownKeys = true }.decodeFromString<Envelope>(encoded)
             require(env.version == 1) { "Unsupported backup envelope version." }
             require(env.iterations in 100_000..1_000_000) { "Invalid backup KDF parameters." }
-            require(password.size >= 8) { "Backup password must be at least 8 characters." }
+            require(password.size >= LEGACY_MIN_PASSWORD_LENGTH) { "Backup password must be at least $LEGACY_MIN_PASSWORD_LENGTH characters." }
             val salt = Base64.getMimeDecoder().decode(env.salt)
             val iv = Base64.getMimeDecoder().decode(env.iv)
             val ciphertext = Base64.getMimeDecoder().decode(env.ciphertext)

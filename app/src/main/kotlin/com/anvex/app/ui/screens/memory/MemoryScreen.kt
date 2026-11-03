@@ -64,22 +64,22 @@ fun MemoryScreen(nav: NavController) {
             contentColor = MaterialTheme.colorScheme.onSurface,
             topBar = {
                 NebulaTopBar(
-                    title = "Memory",
-                    subtitle = "${items.size} things I know about you",
+                    title = tr("Memory"),
+                    subtitle = "${items.size} ${tr("things I know about you")}",
                     onBack = if (nav.previousBackStackEntry != null) ({ nav.popBackStack() }) else null,
                     actions = {
                         IconButton(onClick = {
                             context.getSystemService(ClipboardManager::class.java)
                                 ?.setPrimaryClip(ClipData.newPlainText(copyMemoryLabel, graph.memory.exportJson()))
-                        }) { Icon(Icons.Filled.ContentCopy, "Copy as JSON") }
+                        }) { Icon(Icons.Filled.ContentCopy, tr("Copy as JSON")) }
                         IconButton(onClick = { confirmClear = true }, enabled = items.isNotEmpty()) {
-                            Icon(Icons.Filled.DeleteSweep, "Clear all")
+                            Icon(Icons.Filled.DeleteSweep, tr("Clear all"))
                         }
                     },
                 )
             },
             floatingActionButton = {
-                GradientButton(text = "Add", icon = Icons.Filled.Add, onClick = { adding = true })
+                GradientButton(text = tr("Add"), icon = Icons.Filled.Add, onClick = { adding = true })
             },
         ) { padding ->
             LazyColumn(
@@ -93,7 +93,7 @@ fun MemoryScreen(nav: NavController) {
                             Column(Modifier.weight(1f)) {
                                 Text(tr("Learn from our chats"), style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    "The assistant saves durable preferences and facts (never passwords or keys) and uses them in every project.",
+                                    tr("The assistant saves durable preferences and facts (never passwords or keys) and uses them in every project."),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -113,7 +113,7 @@ fun MemoryScreen(nav: NavController) {
                     androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         item {
                             NebulaChip(
-                                if (atelier) "All · ${items.size}" else "All",
+                                if (atelier) "${tr("All")} · ${items.size}" else tr("All"),
                                 selected = filter == null,
                                 onClick = { filter = null },
                             )
@@ -136,8 +136,8 @@ fun MemoryScreen(nav: NavController) {
                     item {
                         EmptyState(
                             Icons.Filled.Psychology,
-                            "Nothing remembered yet",
-                            "As we work together I'll note your preferences — language, tech stack, style. You can also add or edit them yourself.",
+                            tr("Nothing remembered yet"),
+                            tr("As we work together I'll note your preferences — language, tech stack, style. You can also add or edit them yourself."),
                         )
                     }
                 }
@@ -147,16 +147,16 @@ fun MemoryScreen(nav: NavController) {
                             BidiText(m.text, style = MaterialTheme.typography.bodyMedium)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "${m.category} · ${if (m.source == MemoryItem.SOURCE_USER) "added by you" else "learned"}",
+                                    "${m.category} · ${if (m.source == MemoryItem.SOURCE_USER) tr("added by you") else tr("learned")}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f),
                                 )
                                 IconButton(onClick = { scope.launch { graph.memory.setPinned(m.id, !m.pinned) } }) {
-                                    Icon(if (m.pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin, "Pin", tint = if (m.pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Icon(if (m.pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin, tr("Pin"), tint = if (m.pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                IconButton(onClick = { editing = m }) { Icon(Icons.Filled.Edit, "Edit") }
-                                IconButton(onClick = { scope.launch { graph.memory.delete(m.id) } }) { Icon(Icons.Filled.Delete, "Delete") }
+                                IconButton(onClick = { editing = m }) { Icon(Icons.Filled.Edit, tr("Edit")) }
+                                IconButton(onClick = { scope.launch { graph.memory.delete(m.id) } }) { Icon(Icons.Filled.Delete, tr("Delete")) }
                             }
                         }
                     }
@@ -169,10 +169,11 @@ fun MemoryScreen(nav: NavController) {
         var text by remember(editing, adding) { mutableStateOf(editing?.text.orEmpty()) }
         AlertDialog(
             onDismissRequest = { adding = false; editing = null },
-            title = { Text(if (editing == null) "Add a memory" else "Edit memory") },
+            title = { Text(if (editing == null) tr("Add a memory") else tr("Edit memory")) },
             text = {
                 OutlinedTextField(
                     value = text, onValueChange = { text = it.take(300) }, minLines = 2, maxLines = 5,
+                    label = { Text(tr("Memory")) },
                     placeholder = { Text(tr("e.g. Prefers Persian replies and Kotlin/Compose")) },
                 )
             },
@@ -193,7 +194,7 @@ fun MemoryScreen(nav: NavController) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text(tr("Forget everything?")) },
-            text = { Text("All ${items.size} memories will be deleted from this device.") },
+            text = { Text(String.format(tr("All %1\$d memories will be deleted from this device."), items.size)) },
             confirmButton = { TextButton(onClick = { scope.launch { graph.memory.clear() }; confirmClear = false }) { Text(tr("Delete all")) } },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(tr("Cancel")) } },
         )

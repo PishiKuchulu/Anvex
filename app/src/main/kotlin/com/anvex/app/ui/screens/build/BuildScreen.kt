@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.anvex.app.i18n.tr
 import com.anvex.app.ui.Routes
+import com.anvex.app.ui.screens.home.formatSize
 import com.anvex.app.vm.BuildViewModel
 import java.text.DateFormat
 import java.util.Date
@@ -146,8 +147,8 @@ fun BuildScreen(nav: NavController, projectId: String) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(tr("Build"), style = MaterialTheme.typography.titleMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = variant == "debug", onClick = { variant = "debug" }, label = { Text("debug") })
-                        FilterChip(selected = variant == "release", onClick = { variant = "release" }, label = { Text("release") })
+                        FilterChip(selected = variant == "debug", onClick = { variant = "debug" }, label = { Text(tr("Debug")) })
+                        FilterChip(selected = variant == "release", onClick = { variant = "release" }, label = { Text(tr("Release")) })
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Switch(checked = useWrapper, onCheckedChange = { vm.setUseWrapper(it) })
@@ -241,8 +242,8 @@ fun BuildScreen(nav: NavController, projectId: String) {
                     OutlinedTextField(cloudRepo, { cloudRepo = it }, label = { Text(tr("Repository")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(cloudBranch, { cloudBranch = it }, label = { Text(tr("Branch")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = cloudVariant == "debug", onClick = { cloudVariant = "debug" }, label = { Text("debug") })
-                        FilterChip(selected = cloudVariant == "release", onClick = { cloudVariant = "release" }, label = { Text("release") })
+                        FilterChip(selected = cloudVariant == "debug", onClick = { cloudVariant = "debug" }, label = { Text(tr("Debug")) })
+                        FilterChip(selected = cloudVariant == "release", onClick = { cloudVariant = "release" }, label = { Text(tr("Release")) })
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
@@ -313,7 +314,7 @@ fun BuildScreen(nav: NavController, projectId: String) {
                     if (cloudLogOpen && cloudLogLines.isNotEmpty()) {
                         SelectionContainer {
                             LazyColumn(
-                                Modifier.fillMaxWidth().heightIn(max = 320.dp).background(Color(0x0A000000)),
+                                Modifier.fillMaxWidth().heightIn(max = 320.dp).background(MaterialTheme.colorScheme.surfaceContainerLow),
                             ) {
                                 // v4.4.4 (smoothness): stable keys for log inserts.
                                 items(cloudLogLines.size, key = { it }) { i ->
@@ -341,7 +342,7 @@ fun BuildScreen(nav: NavController, projectId: String) {
                         }
                         SelectionContainer {
                             LazyColumn(
-                                Modifier.fillMaxWidth().heightIn(max = 320.dp).background(Color(0x0A000000)),
+                                Modifier.fillMaxWidth().heightIn(max = 320.dp).background(MaterialTheme.colorScheme.surfaceContainerLow),
                             ) {
                                 // v4.4.4 (smoothness): stable keys for log inserts.
                                 items(logLines.size, key = { it }) { i ->
@@ -369,13 +370,15 @@ fun BuildScreen(nav: NavController, projectId: String) {
                             headlineContent = { Text(artifact.file.name, style = MaterialTheme.typography.bodySmall) },
                             supportingContent = {
                                 Text(
-                                    "${artifact.file.length() / (1024 * 1024)} MB · " +
+                                    // UI #2: KB/MB formatting — integer MB
+                                    // showed "0 MB" for sub-MB artifacts.
+                                    "${formatSize(artifact.file.length())} · " +
                                         DateFormat.getDateTimeInstance().format(Date(artifact.createdAt)),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             },
                             trailingContent = {
-                                IconButton(onClick = { vm.deleteArtifact(artifact) }) { Icon(Icons.Filled.Delete, "Delete") }
+                                IconButton(onClick = { vm.deleteArtifact(artifact) }) { Icon(Icons.Filled.Delete, tr("Delete")) }
                             },
                         )
                     }

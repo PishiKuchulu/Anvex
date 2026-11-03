@@ -7,7 +7,18 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.collect
 
 /** Failover adapter. It only switches providers before any token is emitted. */
-class FallbackProviderClient(private val clients: List<ProviderClient>) : ProviderClient {
+class FallbackProviderClient(
+    private val clients: List<ProviderClient>,
+    /**
+     * (providerId, model) per client, parallel to [clients]. The
+     * answering client's identity is stamped onto its
+     * [StreamEvent.Completed] so callers persist and price the reply as
+     * the provider that actually produced it, not the first in the
+     * chain (audit 2026-11-03). Empty/absent entries leave the event
+     * unstamped.
+     */
+    private val clientIdentities: List<Pair<String, String>> = emptyList(),
+) : ProviderClient {
     init { require(clients.isNotEmpty()) }
     override val kind: ProviderKind get() = clients.first().kind
 
@@ -35,7 +46,7 @@ class FallbackProviderClient(private val clients: List<ProviderClient>) : Provid
                             completed = true
                             pending.forEach { emit(it) }
                             pending.clear()
-                            emit(event)
+                            emit(event.withIdentity(index))
                         }
                         is StreamEvent.Failed -> failed = event.error
                         is StreamEvent.Started -> Unit
@@ -63,6 +74,12 @@ class FallbackProviderClient(private val clients: List<ProviderClient>) : Provid
                 minOf((failure.retryAfterSeconds ?: 1L) * 1_000L, 10_000L)
             )
         }
+    }
+
+    /** Stamp the answering client's identity onto its completion event. */
+    private fun StreamEvent.Completed.withIdentity(index: Int): StreamEvent.Completed {
+        val identity = clientIdentities.getOrNull(index) ?: return this
+        return copy(providerId = identity.first, model = identity.second)
     }
 
     override suspend fun listModels(): List<ModelInfo> {

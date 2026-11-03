@@ -1,6 +1,8 @@
 package com.anvex.app.ui.screens.debug
 
 import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.os.Debug
 import androidx.compose.foundation.layout.Column
@@ -10,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -62,6 +65,7 @@ fun DebugScreen(nav: NavController) {
         }
     }
 
+    val copyLabel = tr("Anvex debug info")
     // v4.4.5 (UX): this screen had no way back.
     Scaffold(topBar = {
         TopAppBar(
@@ -69,6 +73,31 @@ fun DebugScreen(nav: NavController) {
             navigationIcon = {
                 IconButton(onClick = { nav.popBackStack() }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back"))
+                }
+            },
+            actions = {
+                // UI #5: the whole panel copies as one text block (was:
+                // no copy affordance at all on a diagnostics screen).
+                IconButton(onClick = {
+                    val text = buildString {
+                        appendLine(memory)
+                        appendLine(nativeHeap)
+                        appendLine("Preview server: ${graph.previewServer?.let { "running on ${it.rootUrl}" } ?: "stopped"}")
+                        appendLine("Providers (${providers.size})")
+                        appendLine(
+                            providers.joinToString("\n") { p ->
+                                "${p.name} [${p.kind.displayLabel}] key=${if (p.apiKeyEnc != null) "stored" else "missing"} default=${p.isDefault}"
+                            }
+                        )
+                        appendLine("API level: ${android.os.Build.VERSION.SDK_INT}")
+                        appendLine("Device: ${android.os.Build.MODEL}")
+                        appendLine("Projects: ${context.filesDir.absolutePath}/projects")
+                        append("Database: ${context.filesDir.absolutePath}/databases/anvex.db")
+                    }
+                    context.getSystemService(ClipboardManager::class.java)
+                        ?.setPrimaryClip(ClipData.newPlainText(copyLabel, text))
+                }) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = tr("Copy all"))
                 }
             },
         )
@@ -93,7 +122,7 @@ fun DebugScreen(nav: NavController) {
             )
             HorizontalDivider()
             ListItem(
-                headlineContent = { Text("Providers (${providers.size})") },
+                headlineContent = { Text("${tr("Providers")} (${providers.size})") },
                 supportingContent = {
                     if (providers.isEmpty()) {
                         Text(tr("none configured"))
@@ -143,7 +172,7 @@ fun DebugScreen(nav: NavController) {
                 headlineContent = { Text(tr("Note")) },
                 supportingContent = {
                     Text(
-                        "API keys are never displayed here or logged. Exported projects never contain provider data.",
+                        tr("API keys are never displayed here or logged. Exported projects never contain provider data."),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 },

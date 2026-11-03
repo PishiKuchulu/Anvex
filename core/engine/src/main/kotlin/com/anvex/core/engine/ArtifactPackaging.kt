@@ -142,13 +142,24 @@ object ArtifactHygienePolicy {
 
     fun looksLikeText(path: String): Boolean = path.substringAfterLast('.', "").lowercase() in setOf(
         "txt", "md", "json", "xml", "yaml", "yml", "properties", "gradle", "kts", "kt", "java",
-        "js", "jsx", "ts", "tsx", "css", "scss", "html", "htm", "toml", "ini", "conf"
+        "js", "jsx", "ts", "tsx", "css", "scss", "html", "htm", "toml", "ini", "conf",
+        // Text-shaped formats the scan previously skipped entirely, so a
+        // secret inside them left in an export with no finding at all.
+        "log", "cfg", "env", "sh", "csv", "py", "rb", "go", "rs", "php", "sql", "text"
     )
+
+    /**
+     * Ceiling for the secret scan. Callers hand over bytes they have
+     * ALREADY materialized, so the old 20 MB zip-entry cap saved no
+     * memory — it only exempted large text files from scanning. The scan
+     * ceiling is a separate, higher bound against pathological regex time.
+     */
+    private const val MAX_SCAN_BYTES = 80L * 1024 * 1024
 
     fun findSecrets(path: String, text: String): List<SecretFinding> = scan(path, text, redact = false).first
 
     fun containsLikelySecret(path: String, bytes: ByteArray): Boolean {
-        if (!looksLikeText(path) || bytes.size > ArtifactPackager.MAX_ENTRY_BYTES) return false
+        if (!looksLikeText(path) || bytes.size > MAX_SCAN_BYTES) return false
         val text = runCatching { String(bytes, StandardCharsets.UTF_8) }.getOrNull() ?: return false
         return findSecrets(path, text).isNotEmpty()
     }
@@ -160,7 +171,7 @@ object ArtifactHygienePolicy {
      * `REDACTED` and the caller reports file + line (never the value). Binary files pass through.
      */
     fun redactSecrets(path: String, bytes: ByteArray): Redaction {
-        if (!looksLikeText(path) || bytes.size > ArtifactPackager.MAX_ENTRY_BYTES) return Redaction(bytes, emptyList())
+        if (!looksLikeText(path) || bytes.size > MAX_SCAN_BYTES) return Redaction(bytes, emptyList())
         val text = runCatching { String(bytes, StandardCharsets.UTF_8) }.getOrNull() ?: return Redaction(bytes, emptyList())
         val (found, cleaned) = scan(path, text, redact = true)
         return if (found.isEmpty()) Redaction(bytes, emptyList()) else Redaction(cleaned.toByteArray(StandardCharsets.UTF_8), found)
@@ -184,29 +195,36 @@ object ArtifactPackager {
     const val MAX_TOTAL_BYTES = 200L * 1024 * 1024
     const val MAX_ENTRY_BYTES = 20L * 1024 * 1024
 
-    /** Streaming ZIP writer. It never accumulates the complete archive in RAM. */
+    /**
+     * Streaming ZIP writer. It never accumulates the complete archive in
+     * RAM. Every entry is validated BEFORE the first byte reaches [out]:
+     * the specs are already materialized by callers (each holds its
+     * bytes), so the pre-pass costs only a list of references — while the
+     * old validate-while-streaming shape left a partial, corrupt ZIP in
+     * the caller's stream whenever entry N violated a cap.
+     */
     fun zipTo(fileName: String, files: Sequence<ArtifactFileSpec>, out: OutputStream): PackagedArtifactMeta {
+        // Callers must provide deterministic ordering. Do not sort here:
+        // the caller's order is the archive's order.
+        val items = files.map { item -> item.copy(name = safeArchivePath(item.name)) }.toList()
         val seen = HashSet<String>()
-        var count = 0
         var total = 0L
+        for (item in items) {
+            require(seen.add(item.name)) { "Duplicate archive paths are not allowed." }
+            require(item.bytes.size.toLong() <= MAX_ENTRY_BYTES) { "Archive entry exceeds the 20 MB safety limit." }
+            total += item.bytes.size
+            require(total <= MAX_TOTAL_BYTES) { "Archive exceeds the 200 MB safety limit." }
+        }
+        require(items.isNotEmpty()) { "Nothing to package." }
+        require(items.size <= MAX_FILES) { "Too many files for one archive." }
         ZipOutputStream(out.buffered()).use { zip ->
-            // Callers must provide deterministic ordering. Do not sort ArtifactFileSpec here:
-            // sorting would materialize the entire sequence and defeat streaming memory bounds.
-            files.forEach { item ->
-                val safeItem = item.copy(name = safeArchivePath(item.name))
-                require(seen.add(safeItem.name)) { "Duplicate archive paths are not allowed." }
-                require(++count <= MAX_FILES) { "Too many files for one archive." }
-                require(safeItem.bytes.size.toLong() <= MAX_ENTRY_BYTES) { "Archive entry exceeds the 20 MB safety limit." }
-                total += safeItem.bytes.size
-                require(total <= MAX_TOTAL_BYTES) { "Archive exceeds the 200 MB safety limit." }
-                zip.putNextEntry(ZipEntry(safeItem.name).apply { time = 0L })
-                zip.write(safeItem.bytes)
+            for (item in items) {
+                zip.putNextEntry(ZipEntry(item.name).apply { time = 0L })
+                zip.write(item.bytes)
                 zip.closeEntry()
             }
         }
-
-        require(count > 0) { "Nothing to package." }
-        return PackagedArtifactMeta(ensureExtension(fileName, "zip"), "application/zip", count, total)
+        return PackagedArtifactMeta(ensureExtension(fileName, "zip"), "application/zip", items.size, total)
     }
 
     /** Compatibility helper for small JVM callers/tests. */

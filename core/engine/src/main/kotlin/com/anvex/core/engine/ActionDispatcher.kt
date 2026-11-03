@@ -48,12 +48,32 @@ class ActionDispatcher(
 
     // ------------------------------------------------------------ bolt actions
 
+    /**
+     * Why an approval-gated action was refused, in words the model (and a
+     * user reading the transcript) can act on. The two shapes are kept
+     * distinct on purpose: when this dispatcher has NO approval callback,
+     * the surface cannot grant approval at all, so the refusal says so —
+     * a bare "Approval required" reads like a transient failure and models
+     * retry the identical action. Both shapes keep the "Approval required"
+     * prefix other layers match on.
+     */
+    private fun approvalRefusal(assessment: ActionSafetyPolicy.Assessment): String =
+        if (approval == null) {
+            "Approval required, but this surface cannot grant it: ${assessment.reason} " +
+                "The action was NOT executed. No approval prompt is connected on this surface, " +
+                "so nobody can approve it here — do not retry the same action. Tell the user what " +
+                "you intended to do and let them perform it, or choose a less destructive alternative."
+        } else {
+            "Approval required: ${assessment.reason} " +
+                "Approval was requested and not granted, so the action was NOT executed."
+        }
+
     /** Execute a closed `<boltAction type="file">` — port of upstream `#runFileAction`. */
     fun applyFileAction(action: BoltAction.FileAction, messageId: String? = null, approvalGranted: Boolean = false): ActionResult {
         val t0 = System.nanoTime()
         val assessment = ActionSafetyPolicy.assess(action)
         if (assessment.requiresApproval && !approvalGranted && approval?.invoke(assessment) != true) {
-            return ActionResult(false, null, "Approval required: ${assessment.reason}", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+            return ActionResult(false, null, approvalRefusal(assessment), emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
         }
         val path = PathSanitizer.sanitizeOrNull(action.filePath)
             ?: return ActionResult(
@@ -64,32 +84,51 @@ class ActionDispatcher(
         // v4.4 (architect feature 2 — targeted edits): when the model emits a
         // SEARCH/REPLACE patch instead of the full file, apply it to the current
         // content. The file is left untouched when the patch does not apply.
+        // Routing requires the content to PARSE as a complete patch, not just
+        // open with the marker: a document ABOUT patches legitimately starts
+        // with the marker, and used to be misrouted here and failed. Content
+        // that does not parse falls through to the full write below, with a
+        // note in the result so the model knows which shape was stored.
+        var patchFallbackNote: String? = null
         if (PatchEngine.looksLikePatch(action.content)) {
-            val existing = fs.readFile(path)
-            if (existing == null) {
-                return ActionResult(
-                    false, null,
-                    "Targeted edit (SEARCH/REPLACE) needs the file to already exist: '${action.filePath}'",
-                    emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED,
-                )
-            }
-            return when (val outcome = PatchEngine.apply(existing, action.content)) {
-                is PatchEngine.PatchOutcome.Applied -> {
-                    val written = writeFile(path, outcome.newContent, MutationSource.AI_FILE_ACTION, messageId)
-                    written.copy(
-                        output = "Applied ${outcome.blocksApplied} SEARCH/REPLACE block(s) to ${action.filePath}.",
-                        durationMs = elapsed(t0),
+            val (blocks, parseError) = PatchEngine.parse(action.content)
+            if (parseError == null && blocks.isNotEmpty()) {
+                val existing = fs.readFile(path)
+                if (existing == null) {
+                    return ActionResult(
+                        false, null,
+                        "Targeted edit (SEARCH/REPLACE) needs the file to already exist: '${action.filePath}'",
+                        emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED,
                     )
                 }
-                is PatchEngine.PatchOutcome.Failed ->
-                    ActionResult(false, null, outcome.reason, emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
-                PatchEngine.PatchOutcome.NotAPatch ->
-                    ActionResult(false, null, "Unrecognized patch content.", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+                return when (val outcome = PatchEngine.apply(existing, action.content)) {
+                    is PatchEngine.PatchOutcome.Applied -> {
+                        val written = writeFile(path, outcome.newContent, MutationSource.AI_FILE_ACTION, messageId)
+                        written.copy(
+                            output = "Applied ${outcome.blocksApplied} SEARCH/REPLACE block(s) to ${action.filePath}." +
+                                if (outcome.usedLenientFallback) " (At least one block matched with whitespace-tolerant matching.)" else "",
+                            durationMs = elapsed(t0),
+                        )
+                    }
+                    is PatchEngine.PatchOutcome.Failed ->
+                        ActionResult(false, null, outcome.reason, emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+                    PatchEngine.PatchOutcome.NotAPatch ->
+                        ActionResult(false, null, "Unrecognized patch content.", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+                }
             }
+            patchFallbackNote = "Note: the content starts with a SEARCH/REPLACE marker but does not parse as a " +
+                "complete patch (${parseError ?: "no blocks"}), so it was written as a full file."
         }
 
         val result = writeFile(path, action.content, MutationSource.AI_FILE_ACTION, messageId)
-        return result.copy(durationMs = elapsed(t0))
+        return if (patchFallbackNote != null && result.success) {
+            result.copy(
+                output = listOfNotNull(result.output, patchFallbackNote).joinToString("\n"),
+                durationMs = elapsed(t0),
+            )
+        } else {
+            result.copy(durationMs = elapsed(t0))
+        }
     }
 
     /** Execute shell / start actions via the command translation layer. */
@@ -109,7 +148,7 @@ class ActionDispatcher(
 
             val assessment = ActionSafetyPolicy.assess(part.original)
             if (assessment.requiresApproval && !approvalGranted && approval?.invoke(assessment) != true) {
-                error = "Approval required: ${assessment.reason}"
+                error = approvalRefusal(assessment)
             } else if (part.tier == CommandTranslator.Tier.UNSUPPORTED) {
                 error = part.note
             } else {
@@ -161,7 +200,11 @@ class ActionDispatcher(
     private fun isProtectedPath(path: String): Boolean {
         val parts = path.split('/')
         if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" }) return true
-        return parts.size >= 2 && parts[0] == ".github" && parts[1] == "workflows"
+        // Same definition as SensitivePaths (a `.github/workflows` pair at
+        // ANY depth): a nested project's workflows run with the same
+        // repository secrets as the root ones, so the old root-anchored
+        // check left them writable by the agent.
+        return SensitivePaths.isWorkflowPath(path)
     }
 
     private fun protectedFailure(path: String, t0: Long): ActionResult =
@@ -195,7 +238,7 @@ class ActionDispatcher(
         if (recursive) {
             val assessment = ActionSafetyPolicy.assess("rm -rf $path")
             if (!approvalGranted && approval?.invoke(assessment) != true) {
-                return ActionResult(false, null, "Approval required: ${assessment.reason}", emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
+                return ActionResult(false, null, approvalRefusal(assessment), emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED)
             }
         }
         val safe = PathSanitizer.sanitizeOrNull(path)
@@ -206,7 +249,10 @@ class ActionDispatcher(
         val ok = fs.delete(safe, recursive)
         return if (ok) {
             mutations.record(
-                FileMutation(safe, MutationOp.DELETE, before, null, source = source, messageId = messageId)
+                // A delete whose before-content could not be captured (a
+                // directory tree, an unreadable file) can never be reverted;
+                // the journal entry says so instead of looking restorable.
+                FileMutation(safe, MutationOp.DELETE, before, null, source = source, messageId = messageId, revertible = before != null)
             )
             ActionResult(true, "Deleted $safe", null, listOf(safe), elapsed(t0))
         } else {
@@ -318,6 +364,20 @@ class ActionDispatcher(
         val after = fs.readFile(path) // AFTER the mutation
         val op = if (before == null) MutationOp.CREATE else intendedOp
         mutations.record(FileMutation(path, op, before, after, source = source, messageId = messageId))
+        // Honest status: a provider that ACCEPTS a write but stores partial
+        // or transformed content (truncating SAF backends exist) must not be
+        // reported as a clean COMPLETE — the journal above already holds the
+        // real `after`; the action status now agrees with it.
+        if (after != newContent) {
+            return ActionResult(
+                success = true,
+                output = "${newContent.toByteArray().size} bytes written to $path, but the stored content " +
+                    (if (after == null) "could not be read back" else "differs from the intended content") +
+                    " — the storage provider may have truncated or transformed it. Re-read the file before relying on it.",
+                changedFiles = listOf(path),
+                status = com.anvex.core.model.ActionStatus.PARTIAL,
+            )
+        }
         return ActionResult(
             success = true,
             output = "${newContent.toByteArray().size} bytes written to $path",
@@ -440,6 +500,15 @@ class MutationLog(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
 
     private val log = ArrayDeque<FileMutation>()
     private val lock = Any()
+    private var dropped = 0
+
+    /**
+     * Entries evicted by the bounds since the last [clear]. Eviction used
+     * to be silent, so a very large turn's persisted journal could begin
+     * mid-turn with no sign of the gap; a non-zero count lets the caller
+     * persist/report that the journal is incomplete.
+     */
+    val droppedCount: Int get() = synchronized(lock) { dropped }
 
     fun record(mutation: FileMutation) {
         // v4.10.1 (BUG-05): the journal is written from multiple coroutines
@@ -450,6 +519,7 @@ class MutationLog(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
             log.addLast(mutation)
             while (log.size > maxEntries || (log.size > 1 && journalChars() > MAX_JOURNAL_CHARS)) {
                 log.removeFirst()
+                dropped++
             }
         }
     }
@@ -507,7 +577,12 @@ class MutationLog(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
         false
     }
 
-    fun clear() = synchronized(lock) { log.clear() }
+    fun clear() {
+        synchronized(lock) {
+            log.clear()
+            dropped = 0
+        }
+    }
 
     val size: Int get() = synchronized(lock) { log.size }
 

@@ -28,7 +28,12 @@ object PatchEngine {
     sealed class PatchOutcome {
         /** Not a patch — the content does not start with a SEARCH marker. Write it as a full file. */
         object NotAPatch : PatchOutcome()
-        data class Applied(val newContent: String, val blocksApplied: Int) : PatchOutcome()
+        data class Applied(
+            val newContent: String,
+            val blocksApplied: Int,
+            /** True when at least one block only matched via the whitespace-tolerant (lenient) pass. */
+            val usedLenientFallback: Boolean = false,
+        ) : PatchOutcome()
         data class Failed(val reason: String) : PatchOutcome()
     }
 
@@ -63,7 +68,11 @@ object PatchEngine {
                 replacement.append(lines[j]).append('\n')
                 j++
             }
-            blocks.add(Block(search.toString().trimEnd('\n'), replacement.toString().trimEnd('\n'), index))
+            // Strip ONLY the one structural newline the line loop appended:
+            // trimEnd('\n') would also eat trailing blank lines the author
+            // deliberately put at the end of the block, silently changing
+            // the replacement text.
+            blocks.add(Block(search.toString().removeSuffix("\n"), replacement.toString().removeSuffix("\n"), index))
             index++
             i = j + 1
         }
@@ -80,8 +89,17 @@ object PatchEngine {
             return PatchOutcome.Failed(parseError ?: "no blocks")
         }
         var content = existing
+        var lenientUsed = false
         for (block in blocks) {
-            // Exact match first.
+            if (block.search.isEmpty()) {
+                return PatchOutcome.Failed(
+                    "Block ${block.index + 1}: the SEARCH text is empty. The file was NOT modified."
+                )
+            }
+            // Exact match first — and it must be UNIQUE. Resolving an
+            // ambiguous match to the first occurrence edits the wrong place
+            // while reporting success, the worst failure shape for a
+            // targeted edit; refuse and ask for more context instead.
             var at = content.indexOf(block.search)
             if (at < 0) {
                 // Lenient pass: match ignoring leading/trailing blank lines on both sides.
@@ -93,15 +111,27 @@ object PatchEngine {
                             "(first line: \"${block.search.lineSequence().firstOrNull() ?: ""}\"). The file was NOT modified."
                     )
                 }
+                if (content.indexOf(search, at + 1) >= 0) return ambiguous(block)
+                lenientUsed = true
                 val before = content.substring(0, at)
                 val after = content.substring(at + search.length)
-                content = before + block.replacement.trimEnd('\n') + after
+                content = before + block.replacement + after
                 continue
             }
+            if (content.indexOf(block.search, at + 1) >= 0) return ambiguous(block)
             val before = content.substring(0, at)
             val after = content.substring(at + block.search.length)
-            content = before + block.replacement.trimEnd('\n') + after
+            // The replacement is stored verbatim: trimming it here would
+            // silently eat a trailing blank line the author intended.
+            content = before + block.replacement + after
         }
-        return PatchOutcome.Applied(content, blocks.size)
+        return PatchOutcome.Applied(content, blocks.size, lenientUsed)
     }
+
+    private fun ambiguous(block: Block): PatchOutcome.Failed = PatchOutcome.Failed(
+        "Block ${block.index + 1}: the SEARCH text matches more than one location in the current file, " +
+            "so the patch was NOT applied (guessing the first match could edit the wrong place). " +
+            "Add surrounding context lines to the SEARCH block so it matches exactly one location. " +
+            "The file was NOT modified."
+    )
 }

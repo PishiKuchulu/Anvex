@@ -102,4 +102,12 @@ data class FileMutation(
     /** For RENAME: destination path (path = source). */
     val renamedTo: String? = null,
     val messageId: String? = null,
+    /**
+     * False when the journal captured no restorable before-state for this
+     * mutation (a directory DELETE: the tree's contents are not journaled),
+     * so the entry can never be reverted even though it looks like the
+     * others. Defaults true; older persisted rows decode as revertible,
+     * matching the previous (unmarked) behaviour.
+     */
+    val revertible: Boolean = true,
 )

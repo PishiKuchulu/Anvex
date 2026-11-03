@@ -64,6 +64,7 @@ import com.anvex.app.i18n.tr
 import com.anvex.app.ui.components.GradientButton
 import com.anvex.app.ui.theme.LocalBoltExtras
 import com.anvex.app.vm.HomeViewModel
+import com.anvex.core.engine.ProjectTemplates
 import com.anvex.core.model.Project
 import com.anvex.core.model.ProjectType
 import com.anvex.core.model.ProviderConfig
@@ -534,7 +535,10 @@ fun AtelierNewProjectSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text(tr("Template"), style = MaterialTheme.typography.titleSmall)
+            // Wiring gap 2: these chips bind ui.type — label them honestly as
+            // the project type (they were labelled "Template" while never
+            // touching ui.starter).
+            Text(tr("Project type"), style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ProjectType.entries.filter { it != ProjectType.UNKNOWN }.take(3).forEach { type ->
                     FilterChip(
@@ -553,11 +557,22 @@ fun AtelierNewProjectSheet(
                     )
                 }
             }
+            // The actual Template row: selects a ProjectTemplates starter.
+            Text(tr("Template"), style = MaterialTheme.typography.titleSmall)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(ProjectTemplates.Starter.entries) { starter ->
+                    FilterChip(
+                        selected = ui.starter == starter,
+                        onClick = { onUpdate { copy(starter = starter) } },
+                        label = { Text(starterLabel(starter)) },
+                    )
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = ui.parentWorkspaceUri?.let {
                         android.net.Uri.parse(it).lastPathSegment?.substringAfterLast(":") ?: it
-                    } ?: "App private storage",
+                    } ?: tr("App private storage"),
                     onValueChange = {},
                     readOnly = true,
                     label = { Text(tr("Project folder")) },
@@ -565,7 +580,7 @@ fun AtelierNewProjectSheet(
                     maxLines = 1,
                 )
                 IconButton(onClick = onChooseFolder) {
-                    Icon(Icons.Filled.Folder, contentDescription = "Choose project folder")
+                    Icon(Icons.Filled.Folder, contentDescription = tr("Choose project folder"))
                 }
             }
             Row(

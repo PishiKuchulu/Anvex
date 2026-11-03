@@ -74,6 +74,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * thread; quick lookups answer synchronously with a JSON string, long work is
  * dispatched to the bridge scope and reported through `__harnessEvent` events
  * delivered on the main thread.
+ *
+ * Trust note (audit 04, Info — deliberate, documented): this bridge serves
+ * the app's OWN bundled harness UI inside the token-gated WebView, i.e. it
+ * is a user surface, not an agent surface. Its writeFile path therefore
+ * goes through the dispatcher's user-edit journaling rather than the
+ * agent-mutation protected-path block, which means workflow files under
+ * `.github/workflows/` CAN be edited here — exactly as in the native
+ * editor. Agent-driven writes (ChatSession/ActionDispatcher) keep the
+ * hard protected-path block; the two postures differ on purpose.
  */
 class HarnessBridge(
     val projectId: String,
@@ -170,7 +179,9 @@ class HarnessBridge(
                     onProjectFilesChanged = { graph.projects.refreshType(projectId) },
                     extras = graph.sessionExtras(),
                 ).also { s ->
-                    s.historyProvider = { graph.chat.observeForProject(projectId).first() }
+                    // Audit P-01: bounded history window instead of a
+                    // full-history read + decode on every turn.
+                    s.historyProvider = { graph.chat.historyWindow(projectId) }
                     s.thinkingLevel = thinking
                 }
                 sessionFlow.value = session
@@ -356,7 +367,20 @@ class HarnessBridge(
         fun listFiles(): String = runCatching {
             val fs = kotlinx.coroutines.runBlocking { graph.projects.fileSystemForAsync(projectId) }
             ok {
-                put("files", buildJsonArray { fs.walk().forEach { add(JsonPrimitive(it)) } })
+                // Audit 04 (Low): the listing used to leak the NAMES of
+                // sensitive files (keystores, .env) even though readFile
+                // refuses their content. Hide them like every other
+                // surface; extracted attachment trees stay visible (their
+                // file names are how the user finds their own uploads).
+                put("files", buildJsonArray {
+                    fs.walk().forEach { path ->
+                        if (!com.anvex.core.engine.SensitivePaths.isSensitive(path) ||
+                            com.anvex.core.engine.SensitivePaths.isReadableExtractedAttachment(path)
+                        ) {
+                            add(JsonPrimitive(path))
+                        }
+                    }
+                })
             }
         }.getOrElse { err(it) }
 
@@ -578,10 +602,10 @@ class HarnessBridge(
                     val diff = repo.diff(arg) ?: return bridgeError("No diff available for $arg")
                     ok { put("path", arg); put("diff", diff) }
                 }
-                "fileAtHead" -> {
-                    val content = repo.fileAtHead(arg) ?: return bridgeError("File is not present at HEAD")
-                    ok { put("path", arg); put("content", content) }
-                }
+                // Audit 05 (Gap 11): the "fileAtHead" op was removed —
+                // the bundled harness never called it (verified against
+                // the shipped assets). GitLite.fileAtHead stays available
+                // for native callers.
                 else -> bridgeError("Unknown git op: $op")
             }
         }.getOrElse { err(it) }

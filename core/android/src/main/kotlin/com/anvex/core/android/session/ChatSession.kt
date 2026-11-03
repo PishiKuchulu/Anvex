@@ -5,6 +5,7 @@ import com.anvex.core.ai.ChatRequest
 import com.anvex.core.ai.ChatTurn
 import com.anvex.core.ai.ProviderClient
 import com.anvex.core.engine.ActionCallbackData
+import com.anvex.core.engine.ActionSafetyPolicy
 import com.anvex.core.engine.ArtifactRunner
 import com.anvex.core.engine.BoltAction
 import com.anvex.core.engine.BoltStreamParser
@@ -46,8 +47,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /**
@@ -125,6 +128,12 @@ class ChatSession(
         val streamReasoning: String = "",
         /** Set after a turn when the assistant changed long-term memory. */
         val memoryNote: String? = null,
+        /**
+         * Set when the project context could not be built this turn
+         * (ContextBuilder.buildWithStatus warning): the agent is working
+         * without the file list / key contents and the user should know.
+         */
+        val contextWarning: String? = null,
     ) {
         /** Kept for UI compat: the most recent live artifact. */
         val currentArtifact: ArtifactUi? get() = artifacts.lastOrNull()
@@ -149,6 +158,23 @@ class ChatSession(
      */
     @Volatile private var turnGeneration = 0
 
+    private val stampLock = Any()
+    private var lastMessageStamp = 0L
+
+    /**
+     * Message ordering is `createdAt ASC` at millisecond resolution, so
+     * a user message and its reply persisted inside the same millisecond
+     * — or a cancelled turn's late finalize racing the next send — can
+     * sort into the wrong order in the persisted thread. Stamps handed
+     * out by one session are strictly increasing instead.
+     */
+    private fun nextMessageStamp(): Long = synchronized(stampLock) {
+        val now = System.currentTimeMillis()
+        val next = if (now > lastMessageStamp) now else lastMessageStamp + 1
+        lastMessageStamp = next
+        next
+    }
+
     /** Generated deliverables (ZIP/PDF/…) of the current turn, persisted into the message summary. */
     private val generatedRecords = java.util.Collections.synchronizedList(ArrayList<ActionRecord>())
 
@@ -166,6 +192,14 @@ class ChatSession(
     /** History is reloaded by the ViewModel; sessions only append. */
     var historyProvider: suspend () -> List<ChatMessage> = { emptyList() }
 
+    /**
+     * Resolves a provider config by id, used to stamp and price a reply
+     * when the failover client was answered by a different provider than
+     * the bound one (audit 2026-11-03). Default: unknown — an unpriced
+     * foreign reply keeps a null cost rather than the bound provider's.
+     */
+    var providerConfigLookup: suspend (String) -> ProviderConfig? = { null }
+
     /** §25: active editor file, wired by the ViewModel for focused context. */
     @Volatile
     var openFilePath: String? = null
@@ -177,6 +211,14 @@ class ChatSession(
     val mutations: List<FileMutation>
         get() = lastRunner?.mutations ?: emptyList()
 
+    /**
+     * Engine-journal entries evicted by the log bounds during this
+     * session (audit round 2, MR-3): when > 0, the review surface warns
+     * that the journal begins mid-turn — the eviction used to be silent.
+     */
+    val droppedMutations: Int
+        get() = lastRunner?.droppedMutations ?: 0
+
     /** Phase 4.2: evaluated per request; true when the Web toggle is on and the provider supports it. */
     var webSearchEnabledProvider: () -> Boolean = { false }
 
@@ -187,21 +229,112 @@ class ChatSession(
     var mcpCaller: suspend (String, String, String) -> AgentToolExecutor.ToolResult =
         { _, _, _ -> AgentToolExecutor.ToolResult(false, "MCP is unavailable in this session.") }
 
+    /**
+     * What the user is asked to approve: a headline [summary] (the
+     * policy's reason) plus the concrete [detail] of the action itself —
+     * the command text, the target path and size — rendered monospace by
+     * the dialog. Round 1 showed the reason alone; the user was approving
+     * blind (audit round 2, N1).
+     */
+    data class ApprovalPrompt(val summary: String, val detail: String? = null)
+
+    /**
+     * Action approvals (audit fix, 2026-11-03): actions the safety policy
+     * classifies REQUIRES_APPROVAL (destructive shell commands, oversized
+     * file writes, unknown action types) used to fail unconditionally in
+     * chat, because the runner was built with no approval callback — a
+     * whole class of legitimate agent actions could never succeed and no
+     * UI could grant them. The view model wires this hook to a user
+     * dialog. The default denies, so sessions without a UI (tests,
+     * headless callers) keep the old fail-closed behavior.
+     */
+    @Volatile
+    var approvalRequester: suspend (ApprovalPrompt) -> Boolean = { false }
+
+    /**
+     * Approval-fatigue latch (audit round 2, N3): once an approval has
+     * been ANSWERED with a denial in the current turn, later
+     * approval-gated actions in the same turn are refused without
+     * another prompt — a model must not be able to wear the user down
+     * with a stream of dialogs. A timeout does NOT latch (the user never
+     * decided), and [send] resets the latch for the next turn.
+     */
+    @Volatile
+    private var approvalLatchedOff = false
+
+    /**
+     * Synchronous bridge for the dispatcher's approval callback. The
+     * action pipeline invokes it on a Default-dispatcher thread; the
+     * wait is bounded (comfortably inside the per-action timeout) and
+     * every failure mode — timeout, exception, missing UI — resolves
+     * to DENY rather than blocking the pipeline forever.
+     */
+    private fun approvalBridge(assessment: ActionSafetyPolicy.Assessment): Boolean {
+        if (approvalLatchedOff) return false
+        val generationAtAsk = turnGeneration
+        val answer: Boolean? = try {
+            runBlocking {
+                withTimeoutOrNull(APPROVAL_TIMEOUT_MS) {
+                    approvalRequester(
+                        ApprovalPrompt(
+                            summary = "The agent wants to perform an action that needs your approval.\n${assessment.reason}",
+                            detail = assessment.detail.takeIf { it.isNotBlank() },
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+        // An answered denial latches the rest of the turn (see above);
+        // a timeout (null) does not.
+        if (answer == false) approvalLatchedOff = true
+        // Stop race (audit round 2, NEW-2): the wait above is runBlocking,
+        // so cancelling the turn cannot interrupt it — an Allow tapped
+        // after Stop would otherwise execute the gated action inside the
+        // cancelled turn. Re-check that this turn is still the live one
+        // before letting anything proceed.
+        if (generationAtAsk != turnGeneration || streamJob?.isActive != true) return false
+        return answer == true
+    }
+
     /** Web sources reported during the current turn, keyed by URL (first occurrence wins). */
     private val turnSources = LinkedHashMap<String, com.anvex.core.ai.WebSource>()
 
-    fun send(userText: String, attachments: List<com.anvex.core.ai.ChatAttachment> = emptyList(), metadata: List<AttachmentMeta> = emptyList()) {
-        if (_state.value.streaming) return
+    /**
+     * Starts a turn. Returns true when the turn was accepted; false when
+     * it was refused (a turn is already streaming, or the text is empty
+     * with no attachments). The refusal used to be a silent no-op, which
+     * let callers delete stored messages for a resend that never
+     * happened (regenerate data loss, audit 2026-11-03) — callers that
+     * mutate state around a send must check the result.
+     */
+    /**
+     * [excludeHistoryIds] (audit round 2, NEW-5): stored message ids the
+     * history snapshot must skip. Regenerate passes the ids it is about
+     * to delete — deletion happens after acceptance, but the snapshot is
+     * taken inside the turn, so without the exclusion the model could be
+     * re-fed the very exchange being replaced.
+     */
+    fun send(
+        userText: String,
+        attachments: List<com.anvex.core.ai.ChatAttachment> = emptyList(),
+        metadata: List<AttachmentMeta> = emptyList(),
+        excludeHistoryIds: Set<String> = emptySet(),
+    ): Boolean {
+        if (_state.value.streaming) return false
         val text = userText.trim()
-        if (text.isEmpty() && attachments.isEmpty()) return
+        if (text.isEmpty() && attachments.isEmpty()) return false
         val generation = ++turnGeneration
+        approvalLatchedOff = false
         // Show the working state NOW, synchronously: everything runStream
         // does before its own state write (history load, context build over
         // the project tree — minutes on a slow SAF provider) was invisible
         // to the user, who saw their message "not register" at all
         // (user report, 2026-11-03).
         _state.value = UiState(streaming = true, statusLine = "Preparing…")
-        streamJob = scope.launch { runStream(text, attachments, metadata, generation) }
+        streamJob = scope.launch { runStream(text, attachments, metadata, generation, excludeHistoryIds) }
+        return true
     }
 
     fun cancel() {
@@ -229,23 +362,51 @@ class ChatSession(
 
     // ------------------------------------------------------------------ pipeline
 
-    private suspend fun runStream(userText: String, attachments: List<com.anvex.core.ai.ChatAttachment>, attachmentMetadata: List<AttachmentMeta>, generation: Int) {
+    private suspend fun runStream(
+        userText: String,
+        attachments: List<com.anvex.core.ai.ChatAttachment>,
+        attachmentMetadata: List<AttachmentMeta>,
+        generation: Int,
+        excludeHistoryIds: Set<String> = emptySet(),
+    ) {
         // B-1 fix: snapshot history BEFORE persisting the new user message so
         // the user turn is never duplicated in the request.
-        val history = runCatching { historyProvider() }
+        val fullHistory = runCatching { historyProvider() }
             .getOrDefault(emptyList())
-            .takeLast(HISTORY_TURNS)
+            .filter { it.id !in excludeHistoryIds }
+        val history = fullHistory.takeLast(HISTORY_TURNS)
+        val historyTruncated = fullHistory.size > history.size
         val userMessage = ChatMessage(
             id = UUID.randomUUID().toString(),
             projectId = projectId,
             role = MessageRole.USER,
             content = userText,
+            createdAt = nextMessageStamp(),
             attachments = attachmentMetadata,
         )
-        chatRepo.upsert(userMessage)
+        try {
+            chatRepo.upsert(userMessage)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Audit fix (2026-11-03): this write used to sit outside every
+            // guard — a storage failure (disk full, DB locked) escaped the
+            // session coroutine uncaught, and because send() had already
+            // set `streaming = true` and refuses all later sends while
+            // streaming, the session stayed bricked in "Preparing…"
+            // until it was rebuilt. Surface it as a terminal error state
+            // and end the turn instead.
+            if (generation == turnGeneration) {
+                _state.value = UiState(
+                    streaming = false,
+                    engineError = "Your message could not be saved: ${e.message?.take(160) ?: "storage error"}",
+                )
+            }
+            return
+        }
 
         val assistantId = UUID.randomUUID().toString()
-        val runner = ArtifactRunner(fs)
+        val runner = ArtifactRunner(fs, ::approvalBridge)
         lastRunner = runner
         generatedRecords.clear()
         observations.clear()
@@ -258,6 +419,11 @@ class ChatSession(
         val allReasoning = StringBuilder()   // v4.4: extended-thinking trace across all rounds
         val rawAll = StringBuilder()  // raw model text across rounds (memory directives are parsed from it)
         var usage: Usage? = null
+        // Identity of the provider/model that actually answered (from
+        // the failover client's stamped completions); null when the
+        // bound provider answered or the client did not report one.
+        var responderProviderId: String? = null
+        var responderModel: String? = null
         var failure: AiError? = null
         var canceled = false
         var memoryOn = false
@@ -265,13 +431,22 @@ class ChatSession(
         // (after the scope) also reads it, to decide whether leftover alien
         // tool scaffolding may be stripped from the persisted prose.
         var turnActionsExecuted = 0
+        // Turn-local artifact attribution for finalize: the persisted
+        // summary must describe THIS turn's artifact, not whatever the
+        // shared UI state currently shows — after Stop→Send a newer turn
+        // owns that state (audit 2026-11-03).
+        val turnArtifacts = ArrayList<Pair<String, String>>()
+        // Set when the loop ends only because the per-turn round budget
+        // ran out with tool work still pending; finalize notes it in the
+        // persisted message instead of presenting a normal completion.
+        var stoppedByRoundCap = false
 
         coroutineScope {
             try {
                 // Context construction is inside the same supervised boundary as provider streaming.
                 // SAF/IO failures must become an AI error, not escape the session coroutine and
                 // leave the UI in Streaming.
-                val context = ContextBuilder.build(
+                val contextBuild = ContextBuilder.buildWithStatus(
                     fs,
                     openFilePath = openFilePath,
                     diffNote = runCatching { recentChangesNote(runner) }.getOrDefault(""),
@@ -285,6 +460,14 @@ class ChatSession(
                     // checks membership against its own walk).
                     mentionedFiles = mentionedFilesIn(userText),
                 )
+                val context = contextBuild.context
+                // A failed context build used to degrade silently to a
+                // generic fallback prompt (audit 2026-11-03): the agent
+                // answered without the project and nobody could tell.
+                // Surface it; the terminal publish's copy() keeps it.
+                contextBuild.warning?.let { warning ->
+                    _state.value = _state.value.copy(contextWarning = warning)
+                }
                 memoryOn = runCatching { extras.memoryEnabled() }.getOrDefault(false)
                 webAllowed = runCatching { extras.webTools() }.getOrDefault(false)
                 val projectContext = runCatching { projectContextProvider() }.getOrDefault("")
@@ -318,6 +501,15 @@ class ChatSession(
                 }
                 val turns = ArrayList<ChatTurn>()
                 history.forEach { turns.add(historyTurn(it)) }
+                if (historyTruncated && turns.isNotEmpty()) {
+                    // The model must know it sees a window, not the whole
+                    // conversation — truncation was previously silent, so
+                    // early instructions vanished without a trace.
+                    val first = turns[0]
+                    turns[0] = first.copy(
+                        content = "[Earlier conversation history omitted — showing only the most recent $HISTORY_TURNS turns.]\n\n" + first.content
+                    )
+                }
                 // v4.4.6: direct chat has no workspace — no file context block.
                 val userTurnText = if (directChat) userText
                     else userText + "\n\n" + SystemPromptFactoryCompat.contextBlock(context)
@@ -363,6 +555,7 @@ class ChatSession(
 
                     val callbacks = object : com.anvex.core.engine.ParserCallbacks {
                         override fun onArtifactOpen(artifact: com.anvex.core.engine.AnvexArtifactData) {
+                            turnArtifacts.add(artifact.id to artifact.title.ifBlank { "Project update" })
                             _state.value = _state.value.copy(
                                 artifacts = _state.value.artifacts +
                                     ArtifactUi(artifact.id, artifact.title.ifBlank { "Project update" })
@@ -406,6 +599,7 @@ class ChatSession(
                     // round is scrubbed back to this point (see below).
                     val proseStart = prose.length
                     var lastUiEmit = 0L
+                    var lastReasoningEmit = 0L
                     // A length-continuation resumes mid-sentence: no blank
                     // line between the cut text and its continuation.
                     if (round > 0 && !suppressRoundSeparator && prose.isNotEmpty() && !prose.endsWith("\n")) prose.append("\n\n")
@@ -440,13 +634,30 @@ class ChatSession(
                                     // answer content, surfaced live and persisted with the message.
                                     roundReasoning.append(event.text)
                                     allReasoning.append(event.text)
-                                    _state.value = _state.value.copy(
-                                        streamReasoning = MemoryTags.stripForDisplay(allReasoning.toString().takeLast(20_000))
-                                    )
+                                    // P-04 fix: publish at the same 80 ms cadence as answer
+                                    // tokens. This branch used to copy + regex-strip the
+                                    // ENTIRE accumulated trace and republish on every single
+                                    // event — O(n²) over a long thinking turn. The strip now
+                                    // runs on the bounded tail window only, at most once per
+                                    // emit interval; the post-round flush publishes the rest.
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastReasoningEmit >= UI_EMIT_INTERVAL_MS) {
+                                        lastReasoningEmit = now
+                                        _state.value = _state.value.copy(
+                                            streamReasoning = MemoryTags.stripForDisplay(allReasoning.toString().takeLast(20_000))
+                                        )
+                                    }
                                 }
                                 is com.anvex.core.ai.StreamEvent.Completed -> {
                                     usage = usage.plus(event.usage)
                                     roundFinishReason = event.finishReason
+                                    // Failover identity: the last stamped
+                                    // completion names the responder whose
+                                    // text this turn persists.
+                                    if (event.providerId != null) {
+                                        responderProviderId = event.providerId
+                                        responderModel = event.model
+                                    }
                                 }
                                 is com.anvex.core.ai.StreamEvent.Failed -> failure = event.error
                                 com.anvex.core.ai.StreamEvent.Started -> Unit
@@ -457,6 +668,12 @@ class ChatSession(
                         }
                         // flush may emit a final prose delta (pending action content)
                         prose.append(streamParser.parse(roundId, roundText.toString()))
+                        // Flush any reasoning tail the 80 ms throttle held back.
+                        if (roundReasoning.isNotEmpty()) {
+                            _state.value = _state.value.copy(
+                                streamReasoning = MemoryTags.stripForDisplay(allReasoning.toString().takeLast(20_000))
+                            )
+                        }
                         // H-06: only a clean "stop" may flush a still-open action
                         // (the common case of a missing </boltAction> at the very
                         // end). A failed turn or a non-stop finish reason
@@ -594,9 +811,17 @@ class ChatSession(
                         )
                         continue
                     }
+                    // The execution gate matters (audit 2026-11-03): without
+                    // it, plan-shaped phrasing inside a plain Q&A answer
+                    // ("Let me explain…") triggered continuation rounds
+                    // whose prompt orders the model to carry out the steps —
+                    // a question could mutate into unrequested file actions.
+                    // Intent recovery now only applies when the user
+                    // actually asked for work to be executed.
                     val intentOnly = intentContinuations < MAX_INTENT_CONTINUATIONS &&
                         !canceled && failure == null && normalStop &&
                         gathered.isEmpty() && turnActionsExecuted == 0 &&
+                        UserIntentClassifier.requiresExecution(userText) &&
                         looksLikeIntentOnly(roundText.toString())
                     if (intentOnly && round < MAX_TOOL_ROUNDS) {
                         intentContinuations++
@@ -631,7 +856,15 @@ class ChatSession(
                             continue
                         }
                     }
-                    if (canceled || failure != null || gathered.isEmpty() || round >= MAX_TOOL_ROUNDS) break
+                    if (canceled || failure != null || gathered.isEmpty()) break
+                    if (round >= MAX_TOOL_ROUNDS) {
+                        // The model still had tool results to work with, but
+                        // the per-turn round budget is spent. Flag it so
+                        // finalize notes the incomplete stop in the persisted
+                        // message instead of presenting a normal completion.
+                        stoppedByRoundCap = true
+                        break
+                    }
 
                     // Agent loop: feed tool results back and let the model continue.
                     turns.add(ChatTurn(MessageRole.ASSISTANT, roundText.toString().ifBlank { "(tool calls)" }))
@@ -657,16 +890,25 @@ class ChatSession(
                 when {
                     isMarkupOnlyOrEmpty(it) -> "(The model returned an empty response.)"
                     turnActionsExecuted == 0 && containsUnparsedToolMarkup(it) ->
-                        stripUnparsedToolMarkup(it).ifBlank { "(The model returned an empty response.)" }
+                        // The Noted variant: when the scrub cuts real
+                        // prose, the persisted message says so instead of
+                        // silently discarding the tail (audit 2026-11-03).
+                        stripUnparsedToolMarkupNoted(it).ifBlank { "(The model returned an empty response.)" }
                     else -> it
                 }
+            }
+            val cappedProse = if (stoppedByRoundCap && !canceled && failure == null && finalProse.isNotBlank()) {
+                finalProse + "\n\n[The agent stopped here: it reached the per-turn step limit " +
+                    "(${MAX_TOOL_ROUNDS + 1} rounds) with work still in progress. Send \"continue\" to let it finish.]"
+            } else {
+                finalProse
             }
             // Finalization must survive cancellation: persist the partial result
             // under NonCancellable so the message, journal, and state are complete.
             withContext(NonCancellable) {
                 finalize(
                     assistantId = assistantId,
-                    prose = finalProse,
+                    prose = cappedProse,
                     rawText = rawAll.toString(),
                     runner = runner,
                     usage = usage,
@@ -675,6 +917,7 @@ class ChatSession(
                     memoryOn = memoryOn,
                     reasoning = allReasoning.toString(),
                     generation = generation,
+                    turnArtifact = turnArtifacts.lastOrNull(),
                 )
             }
         }
@@ -790,7 +1033,15 @@ class ChatSession(
                 )
                 val result = if (action.name == "mcp") {
                     val (server, tool) = com.anvex.core.engine.McpToolTarget.unpack(action.argument)
-                    val approved = com.anvex.core.android.mcp.McpApprovalBroker.request(server, tool, action.content)
+                    // The broker's default wait (120 s) can never elapse inside
+                    // the per-action timeout (60 s): the action died as "timed
+                    // out" while the approval dialog was still open. Ask with a
+                    // budget that fits inside the action timeout and leaves
+                    // room for the call itself.
+                    val approved = com.anvex.core.android.mcp.McpApprovalBroker.request(
+                        server, tool, action.content,
+                        timeoutMs = (actionTimeoutMs - 15_000L).coerceAtLeast(5_000L),
+                    )
                     if (approved) mcpCaller(server, tool, action.content)
                     else AgentToolExecutor.ToolResult(false, "The user denied this tool call.")
                 } else {
@@ -847,16 +1098,18 @@ class ChatSession(
         memoryOn: Boolean,
         reasoning: String = "",
         generation: Int,
+        turnArtifact: Pair<String, String>? = null,
     ) {
         // Review B1: a superseded turn (Stop→Send) still persists its
         // message and journal below, but must not publish terminal UI
         // state over the newer turn that already owns the state flow.
         val isCurrentTurn = generation == turnGeneration
-        // Summary attribution: the last artifact opened during this response.
-        val lastArtifact = _state.value.artifacts.lastOrNull()
+        // Summary attribution: the last artifact opened during THIS turn
+        // (turn-local, captured by the parser callbacks — not the shared
+        // UI state, which a newer turn may already have replaced).
         val summary = runner.summaryFor(
-            lastArtifact?.id ?: "$assistantId-0",
-            lastArtifact?.title ?: "",
+            turnArtifact?.first ?: "$assistantId-0",
+            turnArtifact?.second ?: "",
         )
 
         // Long-term memory: parse hidden <boltMemory> tags. Content that came from the web or from
@@ -880,14 +1133,32 @@ class ChatSession(
         val allActions = summary.actions + generatedRecords.toList()
         val finalSummary = if (generatedRecords.isEmpty()) summary else summary.copy(actions = allActions)
 
+        // Identity (audit 2026-11-03): when the failover client was
+        // answered by a different provider, the reply is stamped and
+        // priced as THAT provider — it used to be persisted as the
+        // bound provider, corrupting usage attribution and cost.
+        val stampProviderId = responderProviderId ?: provider.id
+        val stampModel = responderModel ?: provider.model
+        val pricingProvider = if (stampProviderId == provider.id) {
+            provider
+        } else {
+            runCatching { providerConfigLookup(stampProviderId) }.getOrNull()
+        }
+
         // 15.5: cost = prompt × input price + completion × output price,
-        // from the provider row's own prices. Null prices stay null — the
-        // dashboard shows no cost rather than a fabricated one.
+        // from the answering provider row's own prices. Null prices stay
+        // null — the dashboard shows no cost rather than a fabricated
+        // one. An answering provider this session cannot resolve keeps
+        // its tokens but a null cost (never the bound provider's prices).
         val finalUsage = usage?.let { u ->
-            val input = provider.inputPricePerMillion
-            val output = provider.outputPricePerMillion
-            if (input == null && output == null) u
-            else u.copy(costUsd = (u.promptTokens * (input ?: 0.0) + u.completionTokens * (output ?: 0.0)) / 1_000_000.0)
+            if (pricingProvider == null) {
+                u.copy(costUsd = null)
+            } else {
+                val input = pricingProvider.inputPricePerMillion
+                val output = pricingProvider.outputPricePerMillion
+                if (input == null && output == null) u
+                else u.copy(costUsd = (u.promptTokens * (input ?: 0.0) + u.completionTokens * (output ?: 0.0)) / 1_000_000.0)
+            }
         }
 
         val assistantMessage = ChatMessage(
@@ -895,8 +1166,9 @@ class ChatSession(
             projectId = projectId,
             role = MessageRole.ASSISTANT,
             content = MemoryTags.strip(prose) + sourcesFooter(),
-            model = provider.model,
-            providerId = provider.id,
+            createdAt = nextMessageStamp(),
+            model = stampModel,
+            providerId = stampProviderId,
             usage = finalUsage,
             artifact = if (finalSummary.actions.isNotEmpty()) finalSummary else null,
             thinkingLevel = thinkingLevel.name,
@@ -919,8 +1191,16 @@ class ChatSession(
         // v1.1 §24: persist the mutation journal so changes survive restarts.
         try {
             mutationRepo?.recordAll(projectId, runner.mutations)
-        } catch (_: Exception) {
-            // Journal persistence is best-effort; the in-session log still works.
+        } catch (e: Exception) {
+            // The in-session log still works, but after a restart these
+            // changes would silently look un-revertible — surface it
+            // instead of swallowing (audit 2026-11-03). Set BEFORE the
+            // terminal publish below; that publish's copy() keeps it.
+            if (isCurrentTurn) {
+                _state.value = _state.value.copy(
+                    engineError = "Some change records could not be saved; revert history may be incomplete after a restart."
+                )
+            }
         }
 
         if (isCurrentTurn) {
@@ -935,7 +1215,11 @@ class ChatSession(
                 memoryNote = memoryNote,
             )
         }
-        onProjectFilesChanged()
+        // Guarded (audit 2026-11-03): the wired implementation performs a
+        // full project traversal and can throw (SAF permission revoked,
+        // provider gone). It runs after the terminal publish; an escape
+        // here used to leave the exception uncaught in the session scope.
+        runCatching { onProjectFilesChanged() }
     }
 
     /**
@@ -1056,6 +1340,8 @@ class ChatSession(
 
     companion object {
         const val DEFAULT_ACTION_TIMEOUT_MS = 60_000L
+        /** Bounded wait for a user action approval; deny on timeout. */
+        const val APPROVAL_TIMEOUT_MS = 45_000L
         const val HISTORY_TURNS = 16
         /** Extra model calls after the first one when the agent asked for tool results. */
         const val MAX_TOOL_ROUNDS = 4

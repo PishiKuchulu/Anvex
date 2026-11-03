@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -59,9 +60,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.anvex.app.i18n.tr
 import com.anvex.app.ui.components.ProjectScaffold
 import com.anvex.app.ui.components.ProjectTab
 import com.anvex.app.vm.PreviewViewModel
+import com.anvex.core.android.AppGraph
 import com.anvex.core.model.ProjectType
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -93,7 +96,24 @@ fun PreviewScreen(nav: NavController, projectId: String) {
     val console by vm.console.collectAsState()
     val refreshTick by vm.refreshTick.collectAsState()
     val previewFiles by vm.previewFiles.collectAsState()
+    // Wiring gap 6: the console pane's visibility comes from the
+    // persisted previewConsoleVisible setting, and the toolbar toggle
+    // now persists through SettingsRepository.setPreviewConsoleVisible
+    // (the seeding below applies the persisted value once per entry;
+    // in-session toggles are never overwritten by it).
+    val appSettings by AppGraph.get().settings.settings.collectAsState()
     var showConsole by remember { mutableStateOf(false) }
+    var consoleSeeded by remember { mutableStateOf(false) }
+    LaunchedEffect(appSettings.previewConsoleVisible) {
+        if (!consoleSeeded) {
+            showConsole = appSettings.previewConsoleVisible
+            consoleSeeded = true
+        }
+    }
+    // UI #2: page-load progress + a visible load-error surface (errors
+    // previously went only to the hidden console feed).
+    var loadProgress by remember { mutableIntStateOf(0) }
+    var pageError by remember { mutableStateOf<String?>(null) }
     // v4.10.2 (second review #8): the preview URL carries the loopback
     // session token in its path, so "Open in browser" hands that token
     // to another app (and its history) — the very thing SEC-01 keeps
@@ -180,25 +200,31 @@ fun PreviewScreen(nav: NavController, projectId: String) {
     ProjectScaffold(
         nav = nav,
         projectId = projectId,
-        title = "Preview",
+        title = tr("Preview"),
         currentTab = ProjectTab.PREVIEW,
         actions = {
             IconButton(onClick = { vm.reload() }) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+                Icon(Icons.Filled.Refresh, contentDescription = tr("Refresh"))
             }
-            IconButton(onClick = { showConsole = !showConsole }) {
-                Icon(Icons.Filled.BugReport, contentDescription = "Console")
+            IconButton(onClick = {
+                val next = !showConsole
+                showConsole = next
+                // Persist the choice: the pane reopens as the user left
+                // it (and the Settings switch reflects the same value).
+                scope.launch { AppGraph.get().settings.setPreviewConsoleVisible(next) }
+            }) {
+                Icon(Icons.Filled.BugReport, contentDescription = tr("Console"))
             }
             // v4.4 (architect feature 7 — Vision): capture the preview as a PNG and
             // hand it to the chat as a vision attachment. Honest failure if the
             // capture is empty; never a fabricated screenshot.
             IconButton(onClick = { sendScreenshotToChat() }) {
-                Icon(Icons.Filled.PhotoCamera, contentDescription = "Send screenshot to chat")
+                Icon(Icons.Filled.PhotoCamera, contentDescription = tr("Send screenshot to chat"))
             }
             IconButton(
                 onClick = { showBrowserWarning = true },
             ) {
-                Icon(Icons.Filled.OpenInBrowser, contentDescription = "Open in browser")
+                Icon(Icons.Filled.OpenInBrowser, contentDescription = tr("Open in browser"))
             }
         },
     ) { modifier ->
@@ -210,13 +236,10 @@ fun PreviewScreen(nav: NavController, projectId: String) {
         if (showBrowserWarning) {
             AlertDialog(
                 onDismissRequest = { showBrowserWarning = false },
-                title = { Text("Open in external browser?") },
+                title = { Text(tr("Open in external browser?")) },
                 text = {
                     Text(
-                        "The preview URL contains this session's access token, " +
-                            "so the browser app will receive it and keep it in its history. " +
-                            "The token stops working when the preview stops, but the URL " +
-                            "remains in the browser's history until cleared there.",
+                        tr("The preview URL contains this session's access token, so the browser app will receive it and keep it in its history. The token stops working when the preview stops, but the URL remains in the browser's history until cleared there."),
                     )
                 },
                 confirmButton = {
@@ -227,10 +250,10 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it)))
                             }
                         }
-                    }) { Text("Open anyway") }
+                    }) { Text(tr("Open anyway")) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showBrowserWarning = false }) { Text("Cancel") }
+                    TextButton(onClick = { showBrowserWarning = false }) { Text(tr("Cancel")) }
                 },
             )
         }
@@ -285,12 +308,23 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                                     return true
                                 }
 
+                                override fun onPageStarted(
+                                    view: WebView?,
+                                    url: String?,
+                                    favicon: android.graphics.Bitmap?,
+                                ) {
+                                    pageError = null
+                                }
+
                                 override fun onReceivedError(
                                     view: WebView?,
                                     request: WebResourceRequest?,
                                     error: WebResourceError?,
                                 ) {
                                     if (request?.isForMainFrame == true) {
+                                        // UI #2: surface the failure in the UI,
+                                        // not only in the hidden console feed.
+                                        pageError = error?.description?.toString() ?: "unknown"
                                         vm.onBridgeMessage(
                                             bridgeJson("error", text = "Page failed to load: ${error?.description ?: "unknown"}")
                                         )
@@ -298,6 +332,9 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                                 }
                             }
                             webChromeClient = object : WebChromeClient() {
+                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                    loadProgress = newProgress
+                                }
                                 override fun onConsoleMessage(msg: android.webkit.ConsoleMessage?): Boolean {
                                     msg?.let {
                                         vm.onBridgeMessage(
@@ -342,7 +379,7 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                 ) {
                     androidx.compose.material3.CircularProgressIndicator()
                     Text(
-                        "Starting preview server…",
+                        tr("Starting preview server…"),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 12.dp),
                     )
@@ -359,8 +396,7 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                     if (p.type == ProjectType.VITE || p.type == ProjectType.UNKNOWN) {
                         Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
                             Text(
-                                "This project needs a bundler/dev server (npm run dev), which cannot run on Android. " +
-                                    "Static files are still editable and exportable; preview supports HTML/CSS/JS and React (via CDN) projects.",
+                                tr("This project needs a bundler/dev server (npm run dev), which cannot run on Android. Static files are still editable and exportable; preview supports HTML/CSS/JS and React (via CDN) projects."),
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                             )
@@ -410,12 +446,12 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                             Column(Modifier.fillMaxWidth().height(180.dp)) {
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                                     Text(
-                                        "Console (${console.size})",
+                                        "${tr("Console")} (${console.size})",
                                         style = MaterialTheme.typography.labelMedium,
                                         modifier = Modifier.weight(1f).padding(top = 6.dp),
                                     )
-                                    IconButton(onClick = { vm.clearConsole() }, modifier = Modifier.height(32.dp)) {
-                                        Icon(Icons.Filled.Delete, contentDescription = "Clear console")
+                                    IconButton(onClick = { vm.clearConsole() }) {
+                                        Icon(Icons.Filled.Delete, contentDescription = tr("Clear console"))
                                     }
                                 }
                                 LazyColumn(state = state) {
@@ -436,6 +472,32 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                                         )
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+                // UI #2: load progress + visible error surface.
+                if (loadProgress in 1..99) {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { loadProgress / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                pageError?.let { err ->
+                    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${tr("Page failed to load")}: $err",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { vm.reload() }) { Text(tr("Reload")) }
+                            IconButton(onClick = { pageError = null }) {
+                                Icon(Icons.Filled.Close, contentDescription = tr("Dismiss"))
                             }
                         }
                     }

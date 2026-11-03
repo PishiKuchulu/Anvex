@@ -24,6 +24,9 @@ import com.anvex.app.i18n.tr
 import kotlin.math.cos
 import kotlin.math.sin
 
+/** Master cycle for [GooThinkingIcon]: LCM of the swing periods and the breathe cycle. */
+private const val GOO_MASTER_MS = 2_217_600
+
 /**
  * Animated "thinking" indicator recreating the user's goo-loader SVG
  * (Svg_light / Svg_dark) in Compose Canvas — the SVG's CSS animations and
@@ -51,39 +54,47 @@ fun GooThinkingIcon(
     val stopLabel = tr("Stop")
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val ink = if (dark) Color(0xFFF5F5F7) else Color(0xFF131316)
+    // 2026-11-03 audit: five infinite transitions ran for the whole
+    // stream with no reduced-motion check. When the user has reduced
+    // motion on, every driven value below freezes at its rest position
+    // (breathe 1f, swings 0 = satellites straight above the core), so
+    // the icon renders one static frame with the same Stop semantics.
+    // (Value-freezing rather than an early return: the hook order must
+    // stay identical across recompositions.)
+    val reducedMotion = com.anvex.app.ui.theme.rememberReducedMotion()
+    // P-25 (audit round 2): ONE infinite animation drives everything.
+    // The five concurrent animateFloat children (breathe + four swings)
+    // are replaced by a single master phase over the least common
+    // multiple of all five periods (2800/3600/2200/4400 ms swings,
+    // 6400 ms full breathe cycle = 2 217 600 ms), so every arm angle
+    // and the breathe scale are pure functions of one value and the
+    // loop restarts seamlessly. The look is unchanged: same periods,
+    // same directions, same EaseInOut breathe curve.
     val transition = rememberInfiniteTransition(label = "gooThinking")
-    val breathe by transition.animateFloat(
-        initialValue = 0.82f,
-        targetValue = 1.05f,
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3200, easing = androidx.compose.animation.core.EaseInOut),
-            repeatMode = RepeatMode.Reverse,
+            animation = tween(durationMillis = GOO_MASTER_MS, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
         ),
-        label = "gooBreathe",
+        label = "gooPhase",
     )
-    // One angle per arm; durations/directions match the SVG's --dur/--dir.
-    // (Unrolled: animateFloat is @Composable and cannot live inside a map lambda.)
-    val swing0 by transition.animateFloat(
-        initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Restart),
-        label = "gooSwing0",
-    )
-    val swing1 by transition.animateFloat(
-        initialValue = 0f, targetValue = -360f,
-        animationSpec = infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart),
-        label = "gooSwing1",
-    )
-    val swing2 by transition.animateFloat(
-        initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart),
-        label = "gooSwing2",
-    )
-    val swing3 by transition.animateFloat(
-        initialValue = 0f, targetValue = -360f,
-        animationSpec = infiniteRepeatable(tween(4400, easing = LinearEasing), RepeatMode.Restart),
-        label = "gooSwing3",
-    )
-    val armAngles = listOf(swing0, swing1, swing2, swing3)
+    val tMs = phase * GOO_MASTER_MS
+    fun swing(durMs: Float, dir: Float): Float = ((tMs / durMs) % 1f) * 360f * dir
+    // Breathe: 3200 ms EaseInOut out, 3200 ms back (6400 ms full cycle).
+    val breathePos = (tMs % 6400f) / 3200f
+    val breatheFrac = if (breathePos < 1f) breathePos else 2f - breathePos
+    val breatheAnimated = 0.82f +
+        (1.05f - 0.82f) * androidx.compose.animation.core.EaseInOut.transform(breatheFrac)
+    // Reduced motion: freeze at rest (swings 0 = satellites straight
+    // above the core, breathe 1f).
+    val armAngles = if (reducedMotion) {
+        listOf(0f, 0f, 0f, 0f)
+    } else {
+        listOf(swing(2800f, 1f), swing(3600f, -1f), swing(2200f, 1f), swing(4400f, -1f))
+    }
+    val breatheEff = if (reducedMotion) 1f else breatheAnimated
     // Satellite (radius, orbit distance) in 64-viewBox units, as in the SVG.
     val arms = listOf(7f to 11f, 5.5f to 14.5f, 4.6f to 9f, 4f to 16f)
     Canvas(
@@ -100,7 +111,7 @@ fun GooThinkingIcon(
             center = center,
             style = Stroke(width = 1f * u),
         )
-        drawCircle(color = ink, radius = 9.5f * u * breathe, center = center)
+        drawCircle(color = ink, radius = 9.5f * u * breatheEff, center = center)
         arms.forEachIndexed { index, (r, d) ->
             // SVG arms start straight above the center (-90deg) and rotate.
             val angle = Math.toRadians((armAngles[index] - 90f).toDouble())

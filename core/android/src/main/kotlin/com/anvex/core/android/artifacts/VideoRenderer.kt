@@ -16,6 +16,7 @@ import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -68,19 +69,37 @@ object VideoRenderer {
             val encoder = Mp4Encoder(width, height, fps, output)
             try {
                 val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                val pixels = IntArray(width * height)
                 try {
-                    for (frame in 0 until totalFrames) {
-                        val tMs = frame * 1000L / fps
+                    // Audit P-20: capture used to pay a SEPARATE Main
+                    // round trip per frame. Batch several seek+draw+capture
+                    // cycles into one Main stay (smaller batches for large
+                    // frames to bound Main-thread time), encode the batch
+                    // off-Main, and yield between batches so a long render
+                    // stays cancellable.
+                    val batchSize = if (width.toLong() * height > 1_500_000L) 2 else 4
+                    var frame = 0
+                    while (frame < totalFrames) {
+                        val batchEnd = minOf(frame + batchSize, totalFrames)
+                        val captured = ArrayList<IntArray>(batchEnd - frame)
                         withContext(Dispatchers.Main) {
-                            evalJs(webView, "window.__anvexSeek($tMs); 0")
-                            webView.draw(Canvas(bitmap))
+                            for (f in frame until batchEnd) {
+                                val tMs = f * 1000L / fps
+                                evalJs(webView, "window.__anvexSeek($tMs); 0")
+                                webView.draw(Canvas(bitmap))
+                                val framePixels = IntArray(width * height)
+                                bitmap.getPixels(framePixels, 0, width, 0, 0, width, height)
+                                captured += framePixels
+                            }
                         }
-                        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-                        encoder.encodeFrame(pixels, frame)
-                        if (frame % 30 == 0) {
-                            onProgress("Rendering video… frame ${frame + 1}/$totalFrames")
+                        for ((offset, framePixels) in captured.withIndex()) {
+                            val index = frame + offset
+                            encoder.encodeFrame(framePixels, index)
+                            if (index % 30 == 0) {
+                                onProgress("Rendering video… frame ${index + 1}/$totalFrames")
+                            }
                         }
+                        frame = batchEnd
+                        yield()
                     }
                 } finally {
                     bitmap.recycle()

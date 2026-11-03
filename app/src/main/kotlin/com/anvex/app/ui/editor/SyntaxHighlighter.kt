@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -15,7 +16,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 
 /** Languages highlighted by the editor (brief §7). */
 enum class CodeLanguage {
-    JS, TS, JSX, TSX, HTML, CSS, JSON, MARKDOWN, PLAIN;
+    JS, TS, JSX, TSX, HTML, CSS, JSON, MARKDOWN, KOTLIN, JAVA, PYTHON, PLAIN;
 
     companion object {
         fun fromPath(path: String): CodeLanguage = when (path.substringAfterLast('.').lowercase()) {
@@ -27,6 +28,12 @@ enum class CodeLanguage {
             "css" -> CSS
             "json" -> JSON
             "md", "markdown" -> MARKDOWN
+            // Kotlin is this app's home language (audit 2026-11-03: it
+            // fell back to PLAIN while JS/TS were highlighted).
+            "kt", "kts" -> KOTLIN
+            // Round 2 (CE2): Java and Python were the last PLAIN holdouts.
+            "java" -> JAVA
+            "py", "pyw" -> PYTHON
             else -> PLAIN
         }
     }
@@ -40,24 +47,51 @@ data class HighlightColors(
     val tag: Color,
     val attribute: Color,
     val key: Color,
+    val searchBackground: Color,
 )
 
-/** Files larger than this are edited without highlighting (performance, brief §24). */
-private const val HIGHLIGHT_LIMIT = 120_000
+/**
+ * Files larger than this are edited without highlighting. P-15 (audit
+ * 2026-11-03): the cutoff was 120k chars, and BasicTextField re-runs
+ * the whole regex pass per keystroke — typing latency grew with file
+ * size right up to the cutoff. 60k keeps highlighting for real-world
+ * source files while bounding the per-keystroke pass.
+ */
+internal const val HIGHLIGHT_LIMIT = 60_000
 
 @Composable
 fun rememberHighlightColors(): HighlightColors {
     val scheme = MaterialTheme.colorScheme
     return remember(scheme) {
-        HighlightColors(
-            keyword = Color(0xFFC792EA),
-            string = Color(0xFF9ECE6A),
-            comment = Color(0xFF6B7394),
-            number = Color(0xFFFF9E64),
-            tag = Color(0xFFF7768E),
-            attribute = Color(0xFFFFC46B),
-            key = Color(0xFF7AA2F7),
-        )
+        // UI #3 (audit 2026-11-03): the palette used to be hard-coded
+        // Tokyo-Night regardless of theme — its light-green strings and
+        // mid-gray comments wash out on light backgrounds. Palettes are
+        // now chosen by the active scheme's luminance: the dark set
+        // keeps the Tokyo-Night hues; the light set uses darker,
+        // saturated hues that hold contrast on light surfaces.
+        if (scheme.background.luminance() < 0.5f) {
+            HighlightColors(
+                keyword = Color(0xFFC792EA),
+                string = Color(0xFF9ECE6A),
+                comment = Color(0xFF6B7394),
+                number = Color(0xFFFF9E64),
+                tag = Color(0xFFF7768E),
+                attribute = Color(0xFFFFC46B),
+                key = Color(0xFF7AA2F7),
+                searchBackground = Color(0x66FFC46B),
+            )
+        } else {
+            HighlightColors(
+                keyword = Color(0xFF7C3AED),
+                string = Color(0xFF15803D),
+                comment = Color(0xFF64748B),
+                number = Color(0xFFC2410C),
+                tag = Color(0xFFBE123C),
+                attribute = Color(0xFFB45309),
+                key = Color(0xFF1D4ED8),
+                searchBackground = Color(0x66F59E0B),
+            )
+        }
     }
 }
 
@@ -101,7 +135,7 @@ fun highlight(
             }
         }
         for (r in searchRanges) {
-            addStyle(SpanStyle(background = Color(0x66FFC46B)), r.first, (r.last + 1).coerceAtMost(length))
+            addStyle(SpanStyle(background = colors.searchBackground), r.first, (r.last + 1).coerceAtMost(length))
         }
     }
 }
@@ -113,6 +147,9 @@ private fun patternFor(language: CodeLanguage): Regex? = when (language) {
     CodeLanguage.CSS -> cssPattern
     CodeLanguage.JSON -> jsonPattern
     CodeLanguage.MARKDOWN -> mdPattern
+    CodeLanguage.KOTLIN -> ktPattern
+    CodeLanguage.JAVA -> javaPattern
+    CodeLanguage.PYTHON -> pyPattern
     CodeLanguage.PLAIN -> null
 }
 
@@ -155,4 +192,40 @@ private val jsonPattern = Regex(
 private val mdPattern = Regex(
     """(?<heading>^#{1,6} .*$)|(?<bold>\*\*[^*\n]+\*\*)|(?<str>`[^`\n]+`)""",
     setOf(RegexOption.MULTILINE)
+)
+
+private const val KT_KW = """\b(?:fun|val|var|class|object|interface|data|sealed|enum|package|import|return|if|else|when|for|while|do|try|catch|finally|throw|in|is|as|break|continue|this|super|null|true|false|suspend|inline|reified|internal|private|protected|public|open|final|abstract|override|lateinit|by|companion|init|constructor|vararg|out|tailrec|operator|infix|external|expect|actual|typealias|annotation)\b"""
+
+// Raw strings are matched first so a """ block is one string span, not
+// three quote-delimited fragments. (The shared STR is NOT reused here:
+// it is written to be interpolated inside quotes, as jsPattern does.)
+private val ktPattern = Regex(
+    "(?<comment>//[^\\n]*|/\\*(?s:.*?)\\*/)|" +
+        "(?<str>\"\"\"(?s:.*?)\"\"\"|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*')|" +
+        "(?<num>\\b0[xX][0-9a-fA-F_]+\\b|\\b\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?[fFL]?\\b)|" +
+        "(?<kw>$KT_KW)"
+)
+
+private const val JAVA_KW = """\b(?:abstract|assert|boolean|break|byte|case|catch|char|class|continue|default|do|double|else|enum|extends|final|finally|float|for|if|implements|import|instanceof|int|long|native|new|package|private|protected|public|record|return|short|static|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while|true|false|null|var|sealed|permits|yield)\b"""
+
+// Java: annotations ride the `attr` group (the style table's accent slot).
+// Text blocks (""") come before plain strings, as in the Kotlin pattern.
+private val javaPattern = Regex(
+    "(?<comment>//[^\\n]*|/\\*(?s:.*?)\\*/)|" +
+        "(?<str>\"\"\"(?s:.*?)\"\"\"|\"(?:\\\\.|[^\"\\\\\\n])*\"|'(?:\\\\.|[^'\\\\\\n])*')|" +
+        "(?<attr>@\\w+)|" +
+        "(?<num>\\b0[xX][0-9a-fA-F_]+\\b|\\b0[bB][01_]+\\b|\\b\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?[\\d_]+)?[fFdDlL]?\\b)|" +
+        "(?<kw>$JAVA_KW)"
+)
+
+private const val PY_KW = """\b(?:False|None|True|and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b"""
+
+// Python: `#` comments, decorators on `attr`, string prefixes (f/r/b/u)
+// with triple-quoted forms first so a docstring stays one span.
+private val pyPattern = Regex(
+    "(?<comment>#[^\\n]*)|" +
+        "(?<str>[fFrRbBuU]{0,2}\"\"\"(?s:.*?)\"\"\"|[fFrRbBuU]{0,2}'''(?s:.*?)'''|[fFrRbBuU]{0,2}\"(?:\\\\.|[^\"\\\\\\n])*\"|[fFrRbBuU]{0,2}'(?:\\\\.|[^'\\\\\\n])*')|" +
+        "(?<attr>@[\\w.]+)|" +
+        "(?<num>\\b0[xX][0-9a-fA-F_]+\\b|\\b0[oO][0-7_]+\\b|\\b0[bB][01_]+\\b|\\b\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?[\\d_]+)?[jJ]?\\b)|" +
+        "(?<kw>$PY_KW)"
 )

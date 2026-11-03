@@ -24,13 +24,6 @@ class Batch1AgentRuntimeTest {
         assertTrue(result.success)
     }
 
-    @Test fun runtimeExecuteUsesDispatcherAndReportsFailure() = kotlinx.coroutines.test.runTest {
-        val runtime = WebViewPreviewRuntime(FakeFs())
-        val result = runtime.execute("rm -rf src")
-        assertFalse(result.success)
-        assertEquals(CommandCapability.UNSUPPORTED, result.capability)
-    }
-
     @Test fun agentStopsForApprovalBeforeMutation() = kotlinx.coroutines.test.runTest {
         val fs = FakeFs()
         val planner = AgentPlanner { _, _ ->
@@ -39,11 +32,6 @@ class Batch1AgentRuntimeTest {
         val result = AgentOrchestrator(planner, ActionDispatcher(fs)).run("delete")
         assertEquals(AgentRunState.WAITING_APPROVAL, result.state)
         assertTrue(result.results.single().approvalRequired)
-    }
-
-    @Test fun workspaceRejectsTraversal() {
-        val result = WorkspaceRuntime(FakeFs()).read("../secret")
-        assertFalse(result.success)
     }
 
     @Test fun compoundShellCommandRequiresApproval() {

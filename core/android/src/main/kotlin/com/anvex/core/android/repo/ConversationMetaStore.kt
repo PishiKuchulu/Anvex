@@ -40,17 +40,47 @@ class ConversationMetaStore(private val context: Context) {
 
     private val key = stringPreferencesKey("metas")
 
-    suspend fun all(): Map<String, ConversationMeta> =
-        runCatching {
-            json.decodeFromString<Map<String, ConversationMeta>>(
-                context.conversationMetaDataStore.data.first()[key] ?: return emptyMap(),
-            )
-        }.getOrDefault(emptyMap())
+    /** Audit 02: last corrupt payload, kept for recovery instead of being silently dropped. */
+    private val corruptBackupKey = stringPreferencesKey("metas_corrupt_backup")
+
+    suspend fun all(): Map<String, ConversationMeta> {
+        val raw = context.conversationMetaDataStore.data.first()[key] ?: return emptyMap()
+        return runCatching {
+            json.decodeFromString<Map<String, ConversationMeta>>(raw)
+        }.getOrElse {
+            // Audit 02: one corrupt decode used to make ALL conversation
+            // titles/pins vanish with no trace. Preserve the raw payload
+            // once under a backup key before degrading to empty.
+            if (raw.isNotBlank()) {
+                runCatching {
+                    context.conversationMetaDataStore.edit { prefs ->
+                        if (prefs[corruptBackupKey] == null) prefs[corruptBackupKey] = raw
+                    }
+                }
+            }
+            emptyMap()
+        }
+    }
 
     suspend fun upsert(meta: ConversationMeta) {
         context.conversationMetaDataStore.edit { prefs ->
             val current = decode(prefs[key])
             prefs[key] = json.encodeToString(current + (meta.conversationId to meta))
+        }
+    }
+
+    /**
+     * Atomic single-conversation update: [transform] runs inside the
+     * DataStore edit against the CURRENT stored value (audit 02: callers
+     * doing read-modify-write through [all] + [upsert] could lose a
+     * concurrent rename/pin). A null transform result deletes the entry.
+     */
+    suspend fun update(conversationId: String, transform: (ConversationMeta?) -> ConversationMeta?) {
+        context.conversationMetaDataStore.edit { prefs ->
+            val current = decode(prefs[key])
+            val next = transform(current[conversationId])
+            val merged = if (next == null) current - conversationId else current + (conversationId to next)
+            if (merged != current) prefs[key] = json.encodeToString(merged)
         }
     }
 

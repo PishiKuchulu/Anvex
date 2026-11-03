@@ -40,6 +40,19 @@ private class PasswordState(initial: String = "") {
     }
 }
 
+/**
+ * UI #5: backup status is TYPED — the old code colored the status line by
+ * matching English prefixes ("Export failed…") on a raw String, which
+ * silently broke in the Persian UI. Color now derives from the type.
+ */
+private sealed interface BackupStatus {
+    val text: String
+    data class Success(override val text: String) : BackupStatus
+    data class Info(override val text: String) : BackupStatus
+    data class Partial(override val text: String) : BackupStatus
+    data class Failure(override val text: String) : BackupStatus
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BackupScreen(nav: NavController) {
@@ -47,9 +60,25 @@ fun BackupScreen(nav: NavController) {
     val scope = rememberCoroutineScope()
     val password = remember { PasswordState() }
     var passwordField by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf<String?>(null) }
+    var status by remember { mutableStateOf<BackupStatus?>(null) }
     var busy by remember { mutableStateOf(false) }
     var inspected by remember { mutableStateOf<com.anvex.core.android.PortableBackup.Payload?>(null) }
+    // Status strings resolved in composition (the IO callbacks below are
+    // not composable and cannot call tr() themselves).
+    val exportedText = tr("Encrypted backup exported successfully.")
+    val exportFailedText = tr("Export failed")
+    val restoreFailedText = tr("Restore failed")
+    val unknownErrorText = tr("unknown error")
+    val invalidBackupText = tr("invalid backup or password")
+    val destErrorText = tr("Could not open the selected destination.")
+    val readErrorText = tr("Could not read the selected backup.")
+    val tooLargeText = tr("Backup file is too large.")
+    val inspectionPassedText = tr("Pre-restore inspection passed")
+    val providersWord = tr("provider(s)")
+    val inspectionSuffixText = tr("Review the inspection summary, then press Restore again.")
+    val restoreOkText = tr("Restore committed successfully after pre-restore inspection with rollback protection.")
+    val restorePartialStart = tr("Restore committed, but")
+    val restorePartialEnd = tr("provider(s) were skipped and need re-adding")
 
     // Zero the secret buffer when the screen leaves composition.
     DisposableEffect(Unit) {
@@ -64,9 +93,9 @@ fun BackupScreen(nav: NavController) {
             status = runCatching {
                 val text = graph.backup.export(secret)
                 graph.context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
-                    ?: error("Could not open the selected destination.")
-                "Encrypted backup exported successfully."
-            }.getOrElse { "Export failed: ${it.message ?: "unknown error"}" }
+                    ?: error(destErrorText)
+                BackupStatus.Success(exportedText)
+            }.getOrElse { BackupStatus.Failure("$exportFailedText: ${it.message ?: unknownErrorText}") }
             Arrays.fill(secret, '0') // zero the export copy
             busy = false
         }
@@ -79,12 +108,12 @@ fun BackupScreen(nav: NavController) {
             status = runCatching {
                 val text = graph.context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { reader ->
                     reader.readText()
-                } ?: error("Could not read the selected backup.")
-                require(text.toByteArray(Charsets.UTF_8).size <= 32 * 1024 * 1024) { "Backup file is too large." }
+                } ?: error(readErrorText)
+                require(text.toByteArray(Charsets.UTF_8).size <= 32 * 1024 * 1024) { tooLargeText }
                 val payload = graph.backup.decrypt(text, secret)
                 inspected = payload
-                "Pre-restore inspection passed: ${payload.providers.size} provider(s). Review the inspection summary, then press Restore again."
-            }.getOrElse { "Restore failed: ${it.message ?: "invalid backup or password"}" }
+                BackupStatus.Info("$inspectionPassedText: ${payload.providers.size} $providersWord. $inspectionSuffixText")
+            }.getOrElse { BackupStatus.Failure("$restoreFailedText: ${it.message ?: invalidBackupText}") }
             Arrays.fill(secret, '0') // zero the inspection copy
             busy = false
         }
@@ -111,7 +140,11 @@ fun BackupScreen(nav: NavController) {
             // v4.4.5 (UX): equal weights — "Inspect backup" is long (longer in
             // Persian) and could clip at the screen edge on narrow phones.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(enabled = !busy && password.chars.size >= 8, onClick = { export.launch("anvex-backup.json") }, modifier = Modifier.weight(1f)) { Text(tr("Export"), maxLines = 1) }
+                // Creation floor mirrors PortableBackup.MIN_PASSWORD_LENGTH
+                // (12): new backups are only ever sealed with a 12+ char
+                // password. Inspect/Restore below keep the legacy 8-char
+                // floor so older backups stay restorable.
+                Button(enabled = !busy && password.chars.size >= 12, onClick = { export.launch("anvex-backup.json") }, modifier = Modifier.weight(1f)) { Text(tr("Export"), maxLines = 1) }
                 OutlinedButton(enabled = !busy && password.chars.size >= 8, onClick = { open.launch(arrayOf("application/json", "text/plain")) }, modifier = Modifier.weight(1f)) { Text(tr("Inspect backup"), maxLines = 1) }
                 Button(enabled = !busy && password.chars.size >= 8 && inspected != null, modifier = Modifier.weight(1f), onClick = {
                     val payload = inspected ?: return@Button
@@ -123,21 +156,30 @@ fun BackupScreen(nav: NavController) {
                             // M-08: a partial restore is not a silent success —
                             // skipped providers are named so the user re-adds them.
                             if (skipped.isEmpty()) {
-                                "Restore committed successfully after pre-restore inspection with rollback protection."
+                                BackupStatus.Success(restoreOkText)
                             } else {
-                                "Restore committed, but ${skipped.size} provider(s) were skipped and need re-adding: ${skipped.joinToString("; ")}"
+                                BackupStatus.Partial("$restorePartialStart ${skipped.size} $restorePartialEnd: ${skipped.joinToString("; ")}")
                             }
-                        }.getOrElse { "Restore failed: ${it.message ?: "unknown error"}" }
+                        }.getOrElse { BackupStatus.Failure("$restoreFailedText: ${it.message ?: unknownErrorText}") }
                         busy = false
                     }
                 }) { Text(tr("Restore")) }
             }
             inspected?.let { payload ->
                 Card(Modifier.fillMaxWidth()) {
-                    ListItem(headlineContent = { Text(tr("Pre-restore inspection")) }, supportingContent = { Text("Valid encrypted payload • ${payload.providers.size} provider(s) • settings payload present. No changes have been committed yet.") })
+                    ListItem(headlineContent = { Text(tr("Pre-restore inspection")) }, supportingContent = { Text("${tr("Valid encrypted payload")} • ${payload.providers.size} ${tr("provider(s)")} • ${tr("settings payload present. No changes have been committed yet.")}") })
                 }
             }
-            status?.let { Text(it, color = if (it.startsWith("Export failed") || it.startsWith("Restore failed")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary) }
+            status?.let { s ->
+                Text(
+                    s.text,
+                    color = when (s) {
+                        is BackupStatus.Failure -> MaterialTheme.colorScheme.error
+                        is BackupStatus.Partial -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
         }
     }
 }

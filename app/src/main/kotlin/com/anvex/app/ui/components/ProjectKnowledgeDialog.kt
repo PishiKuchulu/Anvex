@@ -54,7 +54,7 @@ fun ProjectKnowledgeDialog(
                     maxLines = 8,
                 )
                 Spacer(Modifier.height(12.dp))
-                Text("Text files (${files.size})", style = MaterialTheme.typography.labelLarge)
+                Text("${tr("Text files")} (${files.size})", style = MaterialTheme.typography.labelLarge)
                 files.forEach { name ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -65,7 +65,7 @@ fun ProjectKnowledgeDialog(
                             overflow = TextOverflow.Ellipsis,
                         )
                         IconButton(onClick = { removeName = name }) {
-                            Icon(Icons.Filled.Delete, "Remove $name")
+                            Icon(Icons.Filled.Delete, "${tr("Remove")}: $name")
                         }
                     }
                 }

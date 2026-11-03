@@ -61,7 +61,11 @@ class EditorViewModel(
         .map { list -> list.firstOrNull { it.id == projectId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    private var saveJob: Job? = null
+    /** Debounced autosave jobs, one per path (a single shared job let editing file B cancel file A's pending save). */
+    private val saveJobs = HashMap<String, Job>()
+
+    /** Last undo-snapshot time per tab, for edit-burst coalescing. */
+    private val undoBurstAt = HashMap<String, Long>()
 
     private val _fileTree = MutableStateFlow<FileNode?>(null)
     val fileTreeState: StateFlow<FileNode?> = _fileTree
@@ -97,8 +101,18 @@ class EditorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             if (fs.isDirectory(safe)) return@launch
             val knownSize = fs.fileSize(safe)
-            val content = fs.readFile(safe) ?: ""
-            val readOnly = (knownSize != null && knownSize > EDITABLE_LIMIT) || content.length > EDITABLE_LIMIT
+            // Audit fix (2026-11-03): the size was known but the whole
+            // file was still read into memory just to mark the tab
+            // read-only — the exact OOM/jank the cap exists to prevent.
+            // Oversized files now open as a placeholder without a read.
+            val tooLarge = knownSize != null && knownSize > EDITABLE_LIMIT
+            val content = if (tooLarge) {
+                "This file is too large to edit here (${(knownSize ?: 0L) / 1024} KB). " +
+                    "It was opened read-only; its contents were not loaded."
+            } else {
+                fs.readFile(safe) ?: ""
+            }
+            val readOnly = tooLarge || content.length > EDITABLE_LIMIT
             withContext(Dispatchers.Main.immediate) {
                 if (tabs.value.any { it.path == safe }) {
                     activePath.value = safe
@@ -132,9 +146,19 @@ class EditorViewModel(
         updateTab(path) { tab ->
             val current = tab.text.text
             val next = field.text
-            // coalesce undo entries: push snapshot when this is a "new" edit burst
-            val shouldPush = tab.undoStack.isEmpty() || tab.undoStack.last() != next
-            if (next != current && shouldPush) {
+            // Undo coalescing (audit 2026-11-03): the old rule compared
+            // the stack top against the NEW text, which is true on
+            // virtually every keystroke — a 200-entry stack of
+            // one-character steps, so Undo crawled character by
+            // character. Snapshot once per edit burst instead: at most
+            // one push per UNDO_BURST_MS, plus a push at line breaks.
+            val now = System.currentTimeMillis()
+            val shouldPush = next != current &&
+                (tab.undoStack.isEmpty() ||
+                    now - (undoBurstAt[path] ?: 0L) >= UNDO_BURST_MS ||
+                    next.contains('\n'))
+            if (shouldPush) {
+                undoBurstAt[path] = now
                 tab.copy(
                     text = field,
                     undoStack = (tab.undoStack + current).takeLast(200),
@@ -147,23 +171,31 @@ class EditorViewModel(
         scheduleSave(path)
     }
 
-    fun undo(path: String) = updateTab(path) { tab ->
-        val prev = tab.undoStack.lastOrNull() ?: return@updateTab tab
-        tab.copy(
-            text = tab.text.copy(text = prev),
-            undoStack = tab.undoStack.dropLast(1),
-            redoStack = (tab.redoStack + tab.text.text).takeLast(200),
-        )
-    }.also { scheduleSave(path) }
+    fun undo(path: String) {
+        undoBurstAt[path] = 0L
+        updateTab(path) { tab ->
+            val prev = tab.undoStack.lastOrNull() ?: return@updateTab tab
+            tab.copy(
+                text = tab.text.copy(text = prev),
+                undoStack = tab.undoStack.dropLast(1),
+                redoStack = (tab.redoStack + tab.text.text).takeLast(200),
+            )
+        }
+        scheduleSave(path)
+    }
 
-    fun redo(path: String) = updateTab(path) { tab ->
-        val next = tab.redoStack.lastOrNull() ?: return@updateTab tab
-        tab.copy(
-            text = tab.text.copy(text = next),
-            redoStack = tab.redoStack.dropLast(1),
-            undoStack = (tab.undoStack + tab.text.text).takeLast(200),
-        )
-    }.also { scheduleSave(path) }
+    fun redo(path: String) {
+        undoBurstAt[path] = 0L
+        updateTab(path) { tab ->
+            val next = tab.redoStack.lastOrNull() ?: return@updateTab tab
+            tab.copy(
+                text = tab.text.copy(text = next),
+                redoStack = tab.redoStack.dropLast(1),
+                undoStack = (tab.undoStack + tab.text.text).takeLast(200),
+            )
+        }
+        scheduleSave(path)
+    }
 
     fun replaceAll(path: String, search: String, replacement: String): Int {
         if (search.isEmpty()) return 0
@@ -199,20 +231,74 @@ class EditorViewModel(
     }
 
 
-    fun projectSearch(query: String, caseSensitive: Boolean = false): List<ProjectSearch.Match> {
-        if (query.isBlank()) return emptyList()
-        return runCatching { ProjectSearch.search(fs, query.trim(), caseSensitive) }.getOrDefault(emptyList())
-    }
+    // Suspend + IO (audit 2026-11-03): both entry points used to run a
+    // whole-project scan/write synchronously on the caller's thread —
+    // from the editor screen, the main thread.
+    suspend fun projectSearch(query: String, caseSensitive: Boolean = false): List<ProjectSearch.Match> =
+        withContext(Dispatchers.IO) {
+            if (query.isBlank()) emptyList()
+            else runCatching { ProjectSearch.search(fs, query.trim(), caseSensitive) }.getOrDefault(emptyList())
+        }
 
-    fun projectReplaceAll(query: String, replacement: String, caseSensitive: Boolean = false): Int {
-        if (query.isBlank()) return 0
-        return runCatching { ProjectSearch.replaceAll(fs, query, replacement, caseSensitive).sumOf { it.replacements } }.getOrDefault(0).also {
-            if (it > 0) { treeRevision.value++; refreshTree() }
+    suspend fun projectReplaceAll(query: String, replacement: String, caseSensitive: Boolean = false): Int =
+        withContext(Dispatchers.IO) {
+            if (query.isBlank()) return@withContext 0
+            // Journaling + tab sync (audit 2026-11-03): replace-all used
+            // to write straight to disk with NO journal entry — invisible
+            // to Review/undo — and open tabs kept stale buffers and saved
+            // snapshots, so a later autosave silently reverted the whole
+            // replacement. Capture befores first, journal each changed
+            // file as USER_EDIT, then resync open tabs.
+            val matchedPaths = runCatching { ProjectSearch.search(fs, query.trim(), caseSensitive) }
+                .getOrDefault(emptyList()).map { it.path }.distinct()
+            val befores = matchedPaths.associateWith { runCatching { fs.readFile(it) }.getOrNull() }
+            val results = runCatching { ProjectSearch.replaceAll(fs, query, replacement, caseSensitive) }
+                .getOrDefault(emptyList())
+            var total = 0
+            val afters = HashMap<String, String?>()
+            for (result in results) {
+                total += result.replacements
+                val after = runCatching { fs.readFile(result.path) }.getOrNull()
+                afters[result.path] = after
+                graph.recordUserTreeMutation(projectId, com.anvex.core.model.FileMutation(
+                    path = result.path, operation = com.anvex.core.model.MutationOp.MODIFY,
+                    before = befores[result.path], after = after,
+                    source = com.anvex.core.model.MutationSource.USER_EDIT,
+                ))
+            }
+            if (total > 0) {
+                withContext(Dispatchers.Main.immediate) { syncTabsAfterBulkChange(afters) }
+                treeRevision.value++; refreshTree()
+            }
+            total
+        }
+
+    /**
+     * Resync open tabs after an on-disk bulk change (project replace-all):
+     * clean tabs reload from disk and drop their (now meaningless) undo
+     * stacks; dirty tabs keep their text but their saved snapshot moves to
+     * the new disk content, so the dirty flag and the next save's
+     * journaled before stay truthful instead of reverting the change.
+     */
+    private fun syncTabsAfterBulkChange(afters: Map<String, String?>) {
+        if (afters.isEmpty()) return
+        tabs.value = tabs.value.map { tab ->
+            if (tab.path !in afters) return@map tab
+            val disk = afters[tab.path] ?: return@map tab
+            if (tab.dirty) {
+                tab.copy(saved = disk)
+            } else {
+                tab.copy(
+                    text = TextFieldValue(disk), saved = disk,
+                    undoStack = emptyList(), redoStack = emptyList(),
+                )
+            }
         }
     }
+
     private fun scheduleSave(path: String) {
-        saveJob?.cancel()
-        saveJob = viewModelScope.launch {
+        saveJobs[path]?.cancel()
+        saveJobs[path] = viewModelScope.launch {
             delay(700) // debounced autosave
             saveNow(path)
         }
@@ -221,14 +307,26 @@ class EditorViewModel(
     fun saveNow(path: String) {
         val tab = tabs.value.firstOrNull { it.path == path } ?: return
         if (tab.readOnly) return
+        val written = tab.text.text
         viewModelScope.launch(Dispatchers.IO) {
             // Journal the user edit (§22/§24) — user changes are traceable and
             // the original content is recoverable, never silently overwritten.
             val before = fs.readFile(path)
-            fs.writeFile(path, tab.text.text)
-            graph.recordUserEdit(projectId, path, before, tab.text.text)
+            fs.writeFile(path, written)
+            graph.recordUserEdit(projectId, path, before, written)
             withContext(Dispatchers.Main) {
-                updateTab(path) { it.copy(saved = tab.text.text) }
+                val current = tabs.value.firstOrNull { it.path == path }
+                when {
+                    current == null -> Unit
+                    current.text.text == written -> updateTab(path) { it.copy(saved = written) }
+                    else -> {
+                        // The user typed during the write. The old code
+                        // stamped the NEW text as saved anyway (snapshot
+                        // inversion): the newer edits never reached disk
+                        // yet the tab looked clean. Reschedule instead.
+                        scheduleSave(path)
+                    }
+                }
                 treeRevision.value++; refreshTree()
             }
         }
@@ -327,10 +425,15 @@ class EditorViewModel(
         tabs.value = tabs.value.map { if (it.path == path) transform(it) else it }
     }
 
-    fun readProjectFile(path: String): String? =
+    /** Suspend + IO: this read used to run on the caller's thread. */
+    suspend fun readProjectFile(path: String): String? = withContext(Dispatchers.IO) {
         PathSanitizer.sanitizeOrNull(path)?.let { fs.readFile(it) }
+    }
 
     companion object {
+        /** Undo snapshot burst window: at most one snapshot per tab per window (plus line breaks). */
+        private const val UNDO_BURST_MS = 700L
+
         /** Files beyond 1 MB open read-only (mobile memory safeguard). */
         const val EDITABLE_LIMIT = 1_048_576
 

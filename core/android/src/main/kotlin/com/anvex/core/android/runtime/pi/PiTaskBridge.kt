@@ -12,7 +12,7 @@ import org.json.JSONObject
  * with DurableTaskEngine so Pi runs get the harness's durability
  * (persistence, interruption marking, checkpoints) for free.
  *
- * Payload (JSON): {prompt, projectId, providerId?, sessionFile?}
+ * Payload (JSON): {prompt, projectId, providerId?, sessionFile?, context?}
  * Checkpoint:   "pi-session" -> the Pi session file, so an interrupted
  *               run can be resumed by enqueueing with that sessionFile.
  *
@@ -37,6 +37,16 @@ class PiTaskBridge(
             val projectId = payload.optString("projectId")
             if (prompt.isBlank() || projectId.isBlank()) {
                 return@register DurableTaskEngine.Result.Failure("pi-agent payload needs prompt + projectId")
+            }
+            // Agent Center context field (audit round 2, R2-2): Pi tasks
+            // have no structured context slot, so the user's context is
+            // folded into the prompt the engine receives — the field must
+            // never be silently dropped at the facade again.
+            val context = payload.optString("context")
+            val effectivePrompt = if (context.isBlank()) {
+                prompt
+            } else {
+                "$prompt\n\nAdditional context from the user:\n$context"
             }
             val root = projects.localRootOrNull(projectId)
                 ?: return@register DurableTaskEngine.Result.Failure(
@@ -65,7 +75,7 @@ class PiTaskBridge(
                     sessionId = "task-${task.task.id}",
                     projectId = projectId,
                 ),
-                prompt = prompt,
+                prompt = effectivePrompt,
                 approvalPrompt = PiEngine.ApprovalPrompt { false },
             )
             if (result.sessionFile != null) task.checkpoint("pi-session", result.sessionFile)
@@ -77,18 +87,30 @@ class PiTaskBridge(
         }
     }
 
-    /** Enqueues a durable Pi run. Returns the task id. */
+    /**
+     * Enqueues a durable Pi run. Returns the task id.
+     *
+     * Wiring note (audit 05, Gap 1): this entry point is public and the
+     * bridge is exposed as `AppGraph.piTaskBridge`, but the Agent Center
+     * start action historically enqueued EVERY goal through the native
+     * `AgentTaskBridge`, so with the Pi engine selected, tasks ran on the
+     * native loop anyway (or stalled). Callers must branch on the
+     * engine setting — `AppGraph.enqueueAgentTask` does exactly that;
+     * UI code should call the facade, not either bridge directly.
+     */
     suspend fun enqueue(
         prompt: String,
         projectId: String,
         providerId: String? = null,
         sessionFile: String? = null,
+        context: String = "",
     ): Long {
         val payload = JSONObject()
             .put("prompt", prompt)
             .put("projectId", projectId)
         if (providerId != null) payload.put("providerId", providerId)
         if (sessionFile != null) payload.put("sessionFile", sessionFile)
+        if (context.isNotBlank()) payload.put("context", context)
         return taskEngine.enqueue(
             TYPE,
             "Pi: ${prompt.trim().take(180)}",

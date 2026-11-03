@@ -1,6 +1,7 @@
 package com.anvex.app.ui.screens.chat
 
 import androidx.compose.material3.AlertDialog
+import com.anvex.app.ui.components.ApprovalDialog
 import com.anvex.app.ui.components.PythonRunnerDialog
 import com.anvex.app.ui.components.ProjectKnowledgeDialog
 import androidx.compose.material.icons.filled.Folder
@@ -10,6 +11,7 @@ import androidx.compose.material.icons.filled.History
 import com.anvex.app.ui.components.FileVersion
 import com.anvex.app.ui.components.RestoreOutcome
 import com.anvex.app.ui.components.VersionSheet
+import com.anvex.core.android.AppGraph
 import com.anvex.core.model.AttachmentKind
 import com.anvex.core.model.ProviderConfig
 import kotlinx.coroutines.withContext
@@ -70,6 +72,7 @@ import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -105,6 +108,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,6 +121,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.anvex.app.ui.Routes
@@ -176,6 +181,38 @@ internal fun LazyListState.isPinnedToBottom(): Boolean {
 }
 
 @Composable
+/**
+ * Wiring gap 6: the persisted chat font size (AppSettings.chatFontSize,
+ * 12–22) scales the message typography. MarkdownText and the streaming
+ * bubble read body styles from the ambient MaterialTheme, so wrapping the
+ * message area in a nested theme with scaled body styles is what makes the
+ * setting real.
+ */
+@Composable
+internal fun rememberScaledChatTypography(chatFontSize: Int): androidx.compose.material3.Typography {
+    val base = MaterialTheme.typography
+    val f = chatFontSize.coerceIn(12, 22)
+    return remember(base, f) {
+        androidx.compose.material3.Typography(
+            displayLarge = base.displayLarge,
+            displayMedium = base.displayMedium,
+            displaySmall = base.displaySmall,
+            headlineLarge = base.headlineLarge,
+            headlineMedium = base.headlineMedium,
+            headlineSmall = base.headlineSmall,
+            titleLarge = base.titleLarge,
+            titleMedium = base.titleMedium,
+            titleSmall = base.titleSmall,
+            bodyLarge = base.bodyLarge.copy(fontSize = (f + 1).sp, lineHeight = ((f + 1) * 1.45f).sp),
+            bodyMedium = base.bodyMedium.copy(fontSize = f.sp, lineHeight = (f * 1.45f).sp),
+            bodySmall = base.bodySmall.copy(fontSize = (f - 2).sp, lineHeight = ((f - 2) * 1.45f).sp),
+            labelLarge = base.labelLarge,
+            labelMedium = base.labelMedium,
+            labelSmall = base.labelSmall,
+        )
+    }
+}
+
 fun ChatScreen(nav: NavController, projectId: String) {
     // The ViewModel is owned by the ACTIVITY, not by this destination:
     // scoped to the chat destination itself, leaving the chat — even for
@@ -198,6 +235,11 @@ fun ChatScreen(nav: NavController, projectId: String) {
     // (emits on visibility-relevant changes). Live text is collected locally
     // inside StreamingBubble.
     val streamUi by vm.streamUi.collectAsState()
+    // Full session state collected once here for the quick-action chips
+    // (gap 5) — streamUi deliberately excludes them.
+    val sessionUi by vm.sessionState.collectAsState()
+    // Wiring gap 6: chatFontSize scales the message typography below.
+    val appSettings by AppGraph.get().settings.settings.collectAsState()
     val project by vm.project.collectAsState()
     val noProvider by vm.noProviderConfigured.collectAsState()
     val attachmentError by vm.attachmentError.collectAsState()
@@ -218,17 +260,21 @@ fun ChatScreen(nav: NavController, projectId: String) {
     // blocked on this decision; dismissing denies — fail-closed).
     val pendingPiApproval by vm.pendingPiApproval.collectAsState()
     pendingPiApproval?.let { ask ->
-        AlertDialog(
-            onDismissRequest = { vm.answerPiApproval(false) },
-            title = { Text(tr("Approval required")) },
-            text = { Text(ask.summary) },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { vm.answerPiApproval(true) }) { Text(tr("Allow")) }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { vm.answerPiApproval(false) }) { Text(tr("Deny")) }
-            },
-        )
+        // Shared component (audit round 2, R2-3): one fail-closed
+        // implementation for both engines — the hand-inlined copies here
+        // are how the DirectChat surface ended up with no dialog at all.
+        ApprovalDialog(ask = ask) { approved -> vm.answerPiApproval(approved) }
+    }
+    // Native-engine approvals (wiring spec d): ChatViewModel parks the
+    // approval prompt in pendingApproval and the session suspends until
+    // the user answers; dismissing denies — fail-closed, same as Pi.
+    // The prompt carries the concrete action detail (command / path +
+    // size) in its monospace detail slot — never a blind approval.
+    val pendingApproval by vm.pendingApproval.collectAsState()
+    pendingApproval?.let { prompt ->
+        ApprovalDialog(summary = prompt.summary, detail = prompt.detail) { approved ->
+            vm.answerApproval(approved)
+        }
     }
 
     var input by remember { mutableStateOf(NewProjectHandoff.takePendingPrompt()) }
@@ -256,6 +302,15 @@ fun ChatScreen(nav: NavController, projectId: String) {
     var editText by remember { mutableStateOf("") }
     val branchNote by vm.branchNote.collectAsState()
     val listState = rememberLazyListState()
+    val hasOlderMessages by vm.hasOlderMessages.collectAsState()
+    // P-01 (audit 2026-11-03): the list starts with the newest window
+    // only — reaching the very top pages older history in.
+    LaunchedEffect(listState, hasOlderMessages) {
+        if (!hasOlderMessages) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }.collect { index ->
+            if (index == 0) vm.loadOlderMessages()
+        }
+    }
 
     // Phase 3.3 camera: the system camera writes into the app cache through FileProvider.
     var cameraTarget by remember { mutableStateOf<Uri?>(null) }
@@ -361,7 +416,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
         actions = {
             if (streamUi.streaming) {
                 IconButton(onClick = vm::cancel) {
-                    Icon(Icons.Filled.StopCircle, contentDescription = "Stop generation")
+                    Icon(Icons.Filled.StopCircle, contentDescription = tr("Stop generation"))
                 }
             }
             // v4.4.6: export the conversation as a Markdown transcript
@@ -383,6 +438,15 @@ fun ChatScreen(nav: NavController, projectId: String) {
         // v4.4.4 (smoothness): stable provider holder — a bare List is unstable
         // and would defeat MessageBubble skipping on every pass.
         val choices = remember(providerChoices) { ProviderChoices(providerChoices) }
+        // Wiring gap 6: nested theme whose body styles scale with the
+        // persisted chat font size — message text (MarkdownText, bubbles)
+        // reads them from the ambient theme.
+        val chatTypography = rememberScaledChatTypography(appSettings.chatFontSize)
+        MaterialTheme(
+            colorScheme = MaterialTheme.colorScheme,
+            typography = chatTypography,
+            shapes = MaterialTheme.shapes,
+        ) {
         Column(modifier.fillMaxSize().imePadding()) {
             LazyColumn(
                 state = listState,
@@ -396,7 +460,10 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     item { ProviderSetupCard(onConfigure = { nav.navigate(Routes.PROVIDERS) }) }
                 }
                 items(messages, key = { it.id }) { message ->
-                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().animateItem()) {
+                    // P-13 (audit round 2): no animateItem() on message
+                    // rows — animating every row's placement made window
+                    // paging and list updates pay an animation per row.
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth()) {
                     // v4.4.4 (smoothness): hoisted lambdas — recreated instances
                     // made every MessageBubble non-skippable, so all messages
                     // recomposed on every stream tick. Keyed on the message so
@@ -453,6 +520,9 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 streamUi.memoryNote?.let { note ->
                     item { NebulaChip("Memory · $note", icon = Icons.Filled.Info) }
                 }
+                streamUi.contextWarning?.let { warning ->
+                    item { NebulaChip(warning, icon = Icons.Filled.Info) }
+                }
                 val errTitle = streamUi.errorTitle
                 if (errTitle != null) {
                     item { ErrorCard(errTitle, streamUi.errorMessage.orEmpty(), vm::retryLast, vm::clearError) }
@@ -462,7 +532,22 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 }
             }
 
-            // v4.4.6: quick prompt chips removed per user request.
+            // Wiring gap 5: engine-enriched quick actions (bolt actions)
+            // from the session state, routed by type per QuickActionsRow's
+            // contract: message → send, link → open href, file → diff view.
+            com.anvex.app.ui.components.QuickActionsRow(
+                actions = sessionUi.quickActions,
+                onAction = { action ->
+                    when {
+                        action.type == "link" && action.href.isNotBlank() -> runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(action.href)))
+                        }
+                        action.type == "message" || action.message.isNotBlank() -> vm.send(action.message)
+                        action.path.isNotBlank() -> diffPath = action.path
+                    }
+                },
+                modifier = Modifier.padding(horizontal = AnvexDimens.page),
+            )
             if (attachments.isNotEmpty()) {
                 AttachmentRow(attachments, onRemove = { uri ->
                     releaseAttachment(uri)
@@ -503,8 +588,8 @@ fun ChatScreen(nav: NavController, projectId: String) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    IconButton(onClick = { replyTo = null }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.Close, tr("Cancel"), modifier = Modifier.size(16.dp))
+                    IconButton(onClick = { replyTo = null }) {
+                        Icon(Icons.Filled.Close, tr("Cancel"), modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -533,6 +618,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 thinkingLevel = thinkingLevel,
                 onThinkingLevel = vm::setThinkingLevel,
                 onVoice = { startVoiceInput(context, voiceLauncher) },
+                onGenerateImage = { input = "/image " + input },
                 onCamera = {
                     val uri = newCameraUri(context)
                     if (uri != null) {
@@ -549,6 +635,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
                 onProject = { showKnowledge = true },
                 onToggleWeb = vm::setWebSearch,
             )
+        }
         }
     }
 
@@ -567,8 +654,8 @@ fun ChatScreen(nav: NavController, projectId: String) {
             title = { Text(tr("Allow tool call?")) },
             text = {
                 Column {
-                    Text("Server: ${request.server}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Tool: ${request.tool}", style = MaterialTheme.typography.bodyMedium)
+                    Text("${tr("Server")}: ${request.server}", style = MaterialTheme.typography.bodyMedium)
+                    Text("${tr("Tool")}: ${request.tool}", style = MaterialTheme.typography.bodyMedium)
                     Text(
                         request.arguments,
                         fontFamily = FontFamily.Monospace,
@@ -635,6 +722,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
             // the last response's recorded mutations.
             ReviewChangesSheet(
                 changes = pendingChangesCached,
+                journalDropped = vm.droppedMutations(),
                 initialPath = path,
                 onRevert = { p -> vm.revertChange(p) },
                 onOpenEditor = { p -> diffPath = null; nav.navigate(Routes.editor(projectId, p)) },
@@ -711,7 +799,7 @@ private fun EmptyChatState() {
         Text(tr("What are you building?"), style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Describe a feature or change. Anvex will edit the project and let you review the result.",
+            tr("Describe a feature or change. Anvex will edit the project and let you review the result."),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(0.86f),
@@ -725,7 +813,7 @@ private fun ThinkingMenu(selected: ThinkingLevel, enabled: Boolean, onSelect: (T
     var open by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     Box {
         NebulaChip(
-            label = "Thinking · ${selected.label}",
+            label = "${tr("Thinking")} · ${selected.label}",
             icon = Icons.Filled.Psychology,
             selected = selected != ThinkingLevel.NORMAL,
             onClick = { if (enabled) open = true },
@@ -739,11 +827,11 @@ private fun ThinkingMenu(selected: ThinkingLevel, enabled: Boolean, onSelect: (T
                                 fontWeight = if (level == selected) FontWeight.SemiBold else FontWeight.Normal)
                             Text(
                                 when (level) {
-                                    ThinkingLevel.LOW -> "Fast, light reasoning"
-                                    ThinkingLevel.NORMAL -> "Balanced (default)"
-                                    ThinkingLevel.HIGH -> "Deeper analysis"
-                                    ThinkingLevel.XHIGH -> "Complex tasks, slower"
-                                    ThinkingLevel.MAX -> "Maximum effort, slowest"
+                                    ThinkingLevel.LOW -> tr("Fast, light reasoning")
+                                    ThinkingLevel.NORMAL -> tr("Balanced (default)")
+                                    ThinkingLevel.HIGH -> tr("Deeper analysis")
+                                    ThinkingLevel.XHIGH -> tr("Complex tasks, slower")
+                                    ThinkingLevel.MAX -> tr("Maximum effort, slowest")
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -769,7 +857,7 @@ private fun AttachmentRow(attachments: List<Uri>, onRemove: (Uri) -> Unit, conte
             FilterChip(
                 selected = false,
                 onClick = { onRemove(uri) },
-                label = { Text(uri.lastPathSegment ?: "Attachment", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                label = { Text(uri.lastPathSegment ?: tr("Attachment"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = { Icon(if (graphMimeIsImage(context, uri)) Icons.Filled.Image else Icons.Filled.AttachFile, null) },
             )
         }
@@ -815,6 +903,9 @@ private fun Composer(
     onThinkingLevel: (ThinkingLevel) -> Unit,
     onVoice: () -> Unit,
     onCamera: () -> Unit = {},
+    // Wiring gap 10: /image discoverability — the attach sheet's
+    // "Generate image" option prefixes the draft with the /image command.
+    onGenerateImage: () -> Unit = {},
     modelLabel: String? = null,
     modelChoices: List<ProviderConfig> = emptyList(),
     activeProviderId: String? = null,
@@ -867,7 +958,9 @@ private fun Composer(
                     shape = RoundedCornerShape(AnvexDimens.radiusMedium),
                     colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                         unfocusedBorderColor = Color.Transparent,
-                        focusedBorderColor = Color.Transparent,
+                        // UI #2: a visible focus cue (was fully transparent,
+                        // so keyboard focus was invisible).
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
                         disabledBorderColor = Color.Transparent,
                     ),
                 )
@@ -972,6 +1065,7 @@ private fun Composer(
                         onAttach = { showAttachSheet = false; onAttach() },
                         onImage = { showAttachSheet = false; onImage() },
                         onCamera = { showAttachSheet = false; onCamera() },
+                        onGenerateImage = { showAttachSheet = false; onGenerateImage() },
                     )
                 }
                 Spacer(Modifier.width(8.dp))
@@ -1044,6 +1138,7 @@ private fun AttachSheet(
     onAttach: () -> Unit,
     onImage: () -> Unit,
     onCamera: () -> Unit,
+    onGenerateImage: () -> Unit = {},
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(horizontal = 8.dp).padding(bottom = 24.dp)) {
@@ -1075,6 +1170,12 @@ private fun AttachSheet(
                 title = tr("Take photo"),
                 subtitle = tr("Use the camera"),
                 onClick = onCamera,
+            )
+            AttachOption(
+                icon = Icons.Filled.Brush,
+                title = tr("Generate image"),
+                subtitle = tr("Create an image from a prompt"),
+                onClick = onGenerateImage,
             )
         }
     }
@@ -1157,7 +1258,7 @@ private fun MessageBubble(
             }
             if (!isUser) GradientBadge(Icons.Filled.AutoAwesome, size = 18)
             Text(
-                if (isUser) "You" else if (atelier) tr("Agent") else "Anvex",
+                if (isUser) tr("You") else tr("Agent"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium,
@@ -1247,11 +1348,12 @@ private fun MessageBubble(
                     ) {
                         if (isUser) {
                             // v4.4 (architect feature 8): edit this user message → branch turn.
-                            // Atelier: a compact 32dp edit affordance — the
-                            // classic 48dp row made one-word bubbles huge.
+                            // UI #4: 48dp touch target in both themes (the
+                            // Atelier 32dp button was below the minimum);
+                            // the glyph stays compact at 18dp under Atelier.
                             IconButton(
                                 onClick = onEditUser,
-                                modifier = Modifier.size(if (atelier) 32.dp else 48.dp),
+                                modifier = Modifier.size(48.dp),
                             ) {
                                 Icon(
                                     Icons.Filled.Edit,
@@ -1267,22 +1369,22 @@ private fun MessageBubble(
                                     clip?.setPrimaryClip(ClipData.newPlainText(copyResponseLabel, message.content))
                                 },
                                 modifier = Modifier.size(48.dp),
-                            ) { Icon(Icons.Filled.ContentCopy, "Copy response") }
+                            ) { Icon(Icons.Filled.ContentCopy, tr("Copy response")) }
                             IconButton(onClick = onSpeak, modifier = Modifier.size(48.dp)) {
                                 Icon(
                                     if (isSpeaking) Icons.Filled.StopCircle else Icons.Filled.VolumeUp,
-                                    if (isSpeaking) "Stop reading" else "Read aloud",
+                                    if (isSpeaking) tr("Stop reading") else tr("Read aloud"),
                                 )
                             }
                             if (providers.items.any { it.id != message.providerId }) {
                                 Box {
                                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(48.dp)) {
-                                        Icon(Icons.Filled.MoreVert, "Ask another model")
+                                        Icon(Icons.Filled.MoreVert, tr("Ask another model"))
                                     }
                                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                                         providers.items.filter { it.id != message.providerId }.forEach { provider ->
                                             DropdownMenuItem(
-                                                text = { Text("Ask ${provider.name}") },
+                                                text = { Text("${tr("Ask")} ${provider.name}") },
                                                 onClick = {
                                                     menuOpen = false
                                                     onAskOther(provider.id)
@@ -1294,7 +1396,7 @@ private fun MessageBubble(
                             }
                             if (canRegenerate) {
                                 IconButton(onClick = onRegenerate, modifier = Modifier.size(48.dp)) {
-                                    Icon(Icons.Filled.Refresh, "Regenerate response")
+                                    Icon(Icons.Filled.Refresh, tr("Regenerate response"))
                                 }
                             }
                         }
@@ -1321,7 +1423,7 @@ private fun MessageBubble(
                     val (files, others) = remember(summary) { summary.actions.partition { it.type == "artifact" } }
                     if (others.isNotEmpty()) {
                         Spacer(Modifier.height(10.dp))
-                        Text(summary.title.ifBlank { "Files changed" }, style = MaterialTheme.typography.titleSmall)
+                        Text(summary.title.ifBlank { tr("Files changed") }, style = MaterialTheme.typography.titleSmall)
                         others.forEach { action -> ArtifactActionLine(action, onDiff, versionsFor, onVersions, versionsRev) }
                     }
                     files.forEach { record ->
@@ -1362,12 +1464,12 @@ private fun ArtifactActionLine(
             // versionsRev invalidates when the journal grows.
             val versionCount = remember(filePath, versionsRev) { versionsFor(filePath).size }
             if (versionCount > 1) {
-                IconButton(onClick = { onVersions(filePath) }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { onVersions(filePath) }) {
                     Icon(
                         Icons.Filled.History,
                         contentDescription = tr("Version history"),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
@@ -1482,6 +1584,9 @@ private fun graphMimeIsImage(context: android.content.Context, uri: Uri): Boolea
     }
 }
 
+/** Long-edge cap for generated-image decoding (P-16, audit round 2). */
+private const val GENERATED_IMAGE_MAX_EDGE = 2048
+
 /** Shows an image produced by /image (stored in the app's files folder, read back via FileProvider). */
 @Composable
 // v4.4 lint: the producer assigns `value` directly below (verified); the Compose
@@ -1494,7 +1599,18 @@ private fun GeneratedImage(uri: String) {
         // plain statement so the producer is statically visible.
         val loaded = withContext(Dispatchers.IO) {
             runCatching {
-                context.contentResolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it) }?.asImageBitmap()
+                val resolver = context.contentResolver
+                val imageUri = Uri.parse(uri)
+                // P-16 (audit round 2): decode bounds first and subsample —
+                // a full-res generated image used to decode at native
+                // resolution (tens of MB of bitmap) for an on-screen card.
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                resolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                var sample = 1
+                val longEdge = maxOf(bounds.outWidth, bounds.outHeight)
+                while (longEdge > 0 && longEdge / (sample * 2) >= GENERATED_IMAGE_MAX_EDGE) sample *= 2
+                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                resolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, opts) }?.asImageBitmap()
             }.getOrNull()
         }
         value = loaded
@@ -1502,7 +1618,7 @@ private fun GeneratedImage(uri: String) {
     bitmap?.let {
         Image(
             bitmap = it,
-            contentDescription = "Generated image",
+            contentDescription = tr("Generated image"),
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(12.dp)),
         )
     }

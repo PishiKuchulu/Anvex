@@ -358,7 +358,28 @@ class StaticPreviewServer(
 
     private val json = Json { encodeDefaults = true }
 
+    /**
+     * Audit P-21 (second half): the console page embeds the CURRENT file
+     * manifest, so it cannot be cached indefinitely — but regenerating it
+     * (tree walk + index.html scan) on every request is wasteful during
+     * the console's poll bursts. A short TTL cache bounds the rebuilds;
+     * worst case a just-created file appears ~1.5 s late in the console.
+     */
+    @Volatile private var cachedHarnessPage: String? = null
+    @Volatile private var cachedHarnessPageAtMs: Long = 0L
+
     private fun harnessPage(): String {
+        val now = System.currentTimeMillis()
+        cachedHarnessPage?.let { page ->
+            if (now - cachedHarnessPageAtMs < HARNESS_PAGE_TTL_MS) return page
+        }
+        return buildHarnessPage().also {
+            cachedHarnessPage = it
+            cachedHarnessPageAtMs = now
+        }
+    }
+
+    private fun buildHarnessPage(): String {
         val files = fs.walk().filter { path -> path.split('/').none { it == ".git" || it == ".anvex" || it == ".anvex-pi" || it == "node_modules" } }
         val manifest = buildJsonArray {
             files.forEach { add(buildJsonObject { put("path", it) }) }
@@ -431,6 +452,9 @@ class StaticPreviewServer(
     }
 
     companion object {
+        /** TTL for the generated console page (audit P-21). */
+        private const val HARNESS_PAGE_TTL_MS = 1_500L
+
         fun mimeFor(path: String): String = when (path.substringAfterLast('.').lowercase()) {
             "html", "htm" -> "text/html; charset=utf-8"
             "css" -> "text/css; charset=utf-8"

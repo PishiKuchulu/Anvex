@@ -73,38 +73,89 @@ class SafProjectFileSystem(
 
     override fun writeFile(relativePath: String, content: String) = writeFileBytes(relativePath, content.toByteArray(Charsets.UTF_8))
 
+    /**
+     * Audit 04 (Low): writes used to open the LIVE document with "wt",
+     * truncating it before a single byte was written — a crash or
+     * provider failure mid-write destroyed the previous content. Writes
+     * now land in a sibling temp document first and are swapped into
+     * place (original renamed aside + temp renamed in; see
+     * [swapIntoPlace]), so the original survives any failure before the
+     * swap. Providers that refuse temp creation fall back to the
+     * previous in-place write; providers that refuse rename fall back
+     * to recreating the target from the completed temp — best effort
+     * per provider variance, but the destructive window is gone on
+     * every mainstream provider.
+     */
     override fun writeFileBytes(relativePath: String, bytes: ByteArray) {
         val (parentPath, name) = parentAndName(relativePath)
         val parent = document(parentPath, true) ?: throw java.io.IOException("Workspace folder unavailable")
         val existing = child(parent.first, name)
-        val uri = if (existing != null) {
-            if (existing.second) throw java.io.IOException("Path is a directory: $relativePath")
-            DocumentsContract.buildDocumentUriUsingTree(treeUri, existing.first)
-        } else {
-            DocumentsContract.createDocument(
-                resolver,
-                DocumentsContract.buildDocumentUriUsingTree(treeUri, parent.first),
-                mimeFor(name),
-                name,
-            ) ?: throw java.io.IOException("Cannot create $name")
+        if (existing != null && existing.second) throw java.io.IOException("Path is a directory: $relativePath")
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parent.first)
+        val tmpUri = createTempDocument(parentUri, name)
+        if (tmpUri == null) {
+            // Provider cannot create a temp document: legacy in-place write.
+            val uri = existing?.let { DocumentsContract.buildDocumentUriUsingTree(treeUri, it.first) }
+                ?: DocumentsContract.createDocument(resolver, parentUri, mimeFor(name), name)
+                ?: throw java.io.IOException("Cannot create $name")
+            resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
+                ?: throw java.io.IOException("Cannot write $name")
+            return
         }
-        resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
-            ?: throw java.io.IOException("Cannot write $name")
+        try {
+            resolver.openOutputStream(tmpUri, "wt")?.use { it.write(bytes) }
+                ?: throw java.io.IOException("Cannot write $name")
+        } catch (e: Exception) {
+            runCatching { DocumentsContract.deleteDocument(resolver, tmpUri) }
+            throw e
+        }
+        swapIntoPlace(tmpUri, existing, name) {
+            val uri = DocumentsContract.createDocument(resolver, parentUri, mimeFor(name), name)
+                ?: throw java.io.IOException("Cannot create $name")
+            resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
+                ?: throw java.io.IOException("Cannot write $name")
+        }
     }
 
     override fun writeFileStream(relativePath: String, input: java.io.InputStream, maxBytes: Long) {
         val (parentPath, name) = parentAndName(relativePath)
         val parent = document(parentPath, true) ?: throw java.io.IOException("Workspace folder unavailable")
         val existing = child(parent.first, name)
-        val uri = if (existing != null) {
-            if (existing.second) throw java.io.IOException("Path is a directory: $relativePath")
-            DocumentsContract.buildDocumentUriUsingTree(treeUri, existing.first)
-        } else {
-            DocumentsContract.createDocument(
-                resolver, DocumentsContract.buildDocumentUriUsingTree(treeUri, parent.first),
-                mimeFor(name), name
-            ) ?: throw java.io.IOException("Cannot create $name")
+        if (existing != null && existing.second) throw java.io.IOException("Path is a directory: $relativePath")
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parent.first)
+        val tmpUri = createTempDocument(parentUri, name)
+        if (tmpUri == null) {
+            // Provider cannot create a temp document: legacy in-place write.
+            val uri = existing?.let { DocumentsContract.buildDocumentUriUsingTree(treeUri, it.first) }
+                ?: DocumentsContract.createDocument(resolver, parentUri, mimeFor(name), name)
+                ?: throw java.io.IOException("Cannot create $name")
+            copyStreamInto(input, uri, name, maxBytes)
+            return
         }
+        try {
+            copyStreamInto(input, tmpUri, name, maxBytes)
+        } catch (e: Exception) {
+            runCatching { DocumentsContract.deleteDocument(resolver, tmpUri) }
+            throw e
+        }
+        swapIntoPlace(tmpUri, existing, name) {
+            val uri = DocumentsContract.createDocument(resolver, parentUri, mimeFor(name), name)
+                ?: throw java.io.IOException("Cannot create $name")
+            val copied = resolver.openInputStream(tmpUri)?.use { tmpIn ->
+                resolver.openOutputStream(uri, "wt")?.use { out -> tmpIn.copyTo(out) }
+            }
+            if (copied == null) throw java.io.IOException("Cannot write $name")
+        }
+    }
+
+    private fun createTempDocument(parentUri: Uri, name: String): Uri? = runCatching {
+        DocumentsContract.createDocument(
+            resolver, parentUri, mimeFor(name),
+            "$name.anvex-tmp-${java.util.UUID.randomUUID()}",
+        )
+    }.getOrNull()
+
+    private fun copyStreamInto(input: java.io.InputStream, uri: Uri, name: String, maxBytes: Long) {
         resolver.openOutputStream(uri, "wt")?.use { out ->
             val buffer = ByteArray(64 * 1024)
             var total = 0L
@@ -116,6 +167,77 @@ class SafProjectFileSystem(
                 out.write(buffer, 0, read)
             }
         } ?: throw java.io.IOException("Cannot write $name")
+    }
+
+    /**
+     * Moves a fully-written temp document onto [name]. Ordering (audit
+     * round 2, N5): the original is renamed ASIDE to a backup name
+     * first, then the temp is renamed onto the target; the backup is
+     * deleted only once the new content is in place, and restored if
+     * the swap fails — no failure point leaves the target missing. If
+     * the provider refuses the backup rename (rename support is
+     * all-or-nothing in practice), the legacy order remains as the
+     * fallback: delete the original, then [recreate] copies the
+     * completed content into a fresh target. The temp is cleaned up
+     * unless the rename succeeded (in which case the temp IS the
+     * target now).
+     */
+    private fun swapIntoPlace(
+        tmpUri: Uri,
+        existing: Pair<String, Boolean>?,
+        name: String,
+        recreate: () -> Unit,
+    ) {
+        val existingUri = existing?.let {
+            DocumentsContract.buildDocumentUriUsingTree(treeUri, it.first)
+        }
+        var backupUri: Uri? = null
+        if (existingUri != null) {
+            backupUri = runCatching {
+                DocumentsContract.renameDocument(
+                    resolver, existingUri, "$name.anvex-bak-${java.util.UUID.randomUUID()}",
+                )
+            }.getOrNull()
+        }
+        var renamed = false
+        var placed = false
+        try {
+            renamed = runCatching {
+                DocumentsContract.renameDocument(resolver, tmpUri, name) != null
+            }.getOrDefault(false)
+            placed = renamed
+            if (!renamed) {
+                if (backupUri == null && existingUri != null) {
+                    // Rename unsupported: legacy fallback so recreate
+                    // lands on the target name.
+                    runCatching { DocumentsContract.deleteDocument(resolver, existingUri) }
+                }
+                recreate()
+                placed = true
+            }
+        } finally {
+            when {
+                // The temp IS the target now; only the backup is stale.
+                renamed -> backupUri?.let { uri ->
+                    runCatching { DocumentsContract.deleteDocument(resolver, uri) }
+                }
+                // Recreate copied the temp into place; both are stale.
+                placed -> {
+                    backupUri?.let { uri ->
+                        runCatching { DocumentsContract.deleteDocument(resolver, uri) }
+                    }
+                    runCatching { DocumentsContract.deleteDocument(resolver, tmpUri) }
+                }
+                // Swap failed: restore the original if it was set aside,
+                // so the target keeps its previous content.
+                else -> {
+                    backupUri?.let { uri ->
+                        runCatching { DocumentsContract.renameDocument(resolver, uri, name) }
+                    }
+                    runCatching { DocumentsContract.deleteDocument(resolver, tmpUri) }
+                }
+            }
+        }
     }
 
     override fun readFile(relativePath: String) = readFileBytes(relativePath)?.toString(Charsets.UTF_8)

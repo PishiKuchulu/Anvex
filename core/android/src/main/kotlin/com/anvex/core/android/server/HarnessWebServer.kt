@@ -353,9 +353,15 @@ class HarnessWebServer(
             append("Cross-Origin-Resource-Policy: same-origin\r\n")
             // Review A4: the harness page is app-generated and drives the
             // __anvex bridge, so it gets a real CSP: same-origin assets,
-            // inline + eval for the in-page Babel transform, and the
-            // import map's esm.sh fallback for bare module imports.
-            append("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://esm.sh; object-src 'none'; base-uri 'none'; frame-ancestors 'self'\r\n")
+            // inline + eval for the in-page Babel transform.
+            // Audit 04 (Medium): a remote origin (esm.sh) previously sat
+            // in script-src/connect-src of this PRIVILEGED origin — a
+            // compromised CDN could have injected script into the page
+            // that holds the __anvex bridge. Verified before removal:
+            // the bundled harness page loads only local assets
+            // (runtime UMD bundles + bridge.js + app.jsx, no import map,
+            // no remote imports), so nothing needs the exception.
+            append("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'\r\n")
             pendingCookie.get()?.let { append("Set-Cookie: ").append(it).append("\r\n") }
             append("Connection: close\r\n\r\n")
         }

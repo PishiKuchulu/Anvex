@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,7 +26,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,15 +47,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.anvex.app.i18n.tr
 
 /**
  * Block model for the subset of Markdown the chat renders: headings, paragraphs,
- * bullet/numbered items, block quotes, fenced code, and horizontal rules.
- * Tables and images are shown as plain text on purpose (Phase 1 scope).
+ * bullet/numbered items, block quotes, fenced code, horizontal rules, and
+ * tables (added 2026-11-03 — tables used to render as raw `| a | b |` text).
+ * Images are shown as plain text on purpose.
  */
 internal sealed interface MdBlock {
     data class Paragraph(val text: String) : MdBlock
@@ -57,7 +62,21 @@ internal sealed interface MdBlock {
     data class ListItem(val marker: String, val text: String) : MdBlock
     data class Quote(val text: String) : MdBlock
     data class Code(val language: String, val code: String) : MdBlock
+    data class Table(val headers: List<String>, val rows: List<List<String>>) : MdBlock
     object Rule : MdBlock
+}
+
+/** Splits a `| a | b |` row into trimmed cells (edge pipes dropped). */
+private fun splitTableRow(line: String): List<String> {
+    val t = line.trim()
+    val inner = t.removePrefix("|").removeSuffix("|")
+    return inner.split("|").map { it.trim() }
+}
+
+/** A separator row under a table header: only `|`, `-`, `:` and spaces, with at least one `-`. */
+private fun isTableSeparator(line: String): Boolean {
+    val t = line.trim()
+    return t.contains('-') && t.all { it == '|' || it == '-' || it == ':' || it == ' ' }
 }
 
 private val HEADING_RE = Regex("""^(#{1,6})\s+(.*)$""")
@@ -93,6 +112,21 @@ internal fun parseMarkdownBlocks(source: String): List<MdBlock> {
             i++ // skip the closing fence
             continue
         }
+        // Table: a `| … |` header line immediately followed by a
+        // separator row. Consumes the header, the separator, and every
+        // following `| … |` line as a body row.
+        if (trimmed.startsWith("|") && i + 1 < lines.size && isTableSeparator(lines[i + 1])) {
+            flush()
+            val headers = splitTableRow(trimmed)
+            i += 2 // header + separator
+            val rows = mutableListOf<List<String>>()
+            while (i < lines.size && lines[i].trim().startsWith("|")) {
+                rows += splitTableRow(lines[i])
+                i++
+            }
+            blocks += MdBlock.Table(headers, rows)
+            continue
+        }
         val heading = HEADING_RE.matchEntire(trimmed)
         val item = ITEM_RE.matchEntire(trimmed)
         when {
@@ -123,8 +157,10 @@ internal fun parseMarkdownBlocks(source: String): List<MdBlock> {
 }
 
 /**
- * Inline styles: **bold**, *italic*, `code`, [label](url). Links are shown
- * underlined but not clickable (no URL is opened from model output).
+ * Inline styles: **bold**, *italic*, `code`, [label](url). Links carry a
+ * "URL" string annotation and ARE clickable (2026-11-03 audit: underlined
+ * primary-colored text that never opened was a fake affordance) — the
+ * renderer opens only http/https/mailto targets, in the system browser.
  */
 internal fun inlineAnnotated(text: String, codeBg: Color, linkColor: Color): AnnotatedString = buildAnnotatedString {
     var i = 0
@@ -163,9 +199,12 @@ internal fun inlineAnnotated(text: String, codeBg: Color, linkColor: Color): Ann
                 val close = text.indexOf("](", i + 1)
                 val end = if (close > 0) text.indexOf(')', close + 2) else -1
                 if (close > i && end > close) {
+                    val url = text.substring(close + 2, end).trim()
+                    pushStringAnnotation(tag = "URL", annotation = url)
                     withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
                         append(text.substring(i + 1, close))
                     }
+                    pop()
                     i = end + 1
                 } else {
                     append('['); i++
@@ -176,13 +215,6 @@ internal fun inlineAnnotated(text: String, codeBg: Color, linkColor: Color): Ann
             }
         }
     }
-}
-
-private fun headingSize(level: Int): TextUnit = when (level) {
-    1 -> 22.sp
-    2 -> 19.sp
-    3 -> 17.sp
-    else -> 16.sp
 }
 
 /**
@@ -202,10 +234,26 @@ fun MarkdownText(
         blocks.forEach { block ->
             when (block) {
                 is MdBlock.Paragraph -> InlineText(block.text, base)
-                is MdBlock.Heading -> InlineText(
-                    block.text,
-                    base.copy(fontWeight = FontWeight.Bold, fontSize = headingSize(block.level)),
-                )
+                is MdBlock.Heading -> {
+                    // 2026-11-03 audit: heading sizes were hard-coded sp
+                    // values ignoring the theme's type ramp — derive them
+                    // from the active typography instead.
+                    val headingStyle = when (block.level) {
+                        1 -> MaterialTheme.typography.headlineSmall
+                        2 -> MaterialTheme.typography.titleLarge
+                        3 -> MaterialTheme.typography.titleMedium
+                        else -> MaterialTheme.typography.titleSmall
+                    }
+                    InlineText(
+                        block.text,
+                        base.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = headingStyle.fontSize,
+                            lineHeight = headingStyle.lineHeight,
+                        ),
+                    )
+                }
+                is MdBlock.Table -> MarkdownTable(block, base)
                 is MdBlock.ListItem -> {
                     val rtl = isRtlText(block.text)
                     CompositionLocalProvider(
@@ -231,19 +279,71 @@ fun MarkdownText(
     }
 }
 
+/** Minimal table: header row + body rows, horizontally scrollable so wide
+ * tables never crush the chat bubble. Cells reuse the inline renderer. */
+@Composable
+private fun MarkdownTable(table: MdBlock.Table, base: TextStyle) {
+    val columnCount = maxOf(table.headers.size, table.rows.maxOfOrNull { it.size } ?: 0)
+    if (columnCount == 0) return
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                .horizontalScroll(rememberScrollState())
+                .padding(4.dp),
+        ) {
+            Row {
+                for (c in 0 until columnCount) {
+                    InlineText(
+                        table.headers.getOrElse(c) { "" },
+                        base.copy(fontWeight = FontWeight.Bold),
+                        Modifier.widthIn(min = 72.dp, max = 220.dp).padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            table.rows.forEach { row ->
+                Row {
+                    for (c in 0 until columnCount) {
+                        InlineText(
+                            row.getOrElse(c) { "" },
+                            base,
+                            Modifier.widthIn(min = 72.dp, max = 220.dp).padding(horizontal = 6.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun InlineText(text: String, style: TextStyle, modifier: Modifier = Modifier) {
     val codeBg = MaterialTheme.colorScheme.surfaceVariant
     val linkColor = MaterialTheme.colorScheme.primary
     val annotated = remember(text, codeBg, linkColor) { inlineAnnotated(text, codeBg, linkColor) }
     val rtl = isRtlText(text)
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     CompositionLocalProvider(
         LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
     ) {
-        Text(
+        @Suppress("DEPRECATION") // ClickableText: the pre-LinkAnnotation API this codebase's Compose version supports.
+        androidx.compose.foundation.text.ClickableText(
             text = annotated,
             modifier = modifier,
             style = directionalTextStyle(style, text),
+            onClick = { offset ->
+                // Only web/mail targets ever leave the app; anything else
+                // a model emits (javascript:, file:, …) is ignored.
+                val url = annotated.getStringAnnotations("URL", offset, offset)
+                    .firstOrNull()?.item?.trim().orEmpty()
+                if (url.startsWith("http://", true) || url.startsWith("https://", true) ||
+                    url.startsWith("mailto:", true)
+                ) {
+                    runCatching { uriHandler.openUri(url) }
+                }
+            },
         )
     }
 }
@@ -252,6 +352,20 @@ private fun InlineText(text: String, style: TextStyle, modifier: Modifier = Modi
 private fun CodeBlock(language: String, code: String, onRun: ((String) -> Unit)?) {
     val context = LocalContext.current
     val copyLabel = tr("code")
+    // 2026-11-03 audit: the two action descriptions were hard-coded
+    // English, and copying gave no feedback at all. Descriptions are
+    // localized now, and a successful copy swaps the icon to a check
+    // (with a localized "Copied" description) for a moment.
+    val copyDesc = tr("Copy code")
+    val copiedDesc = tr("Copied")
+    val runDesc = tr("Run Python")
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            kotlinx.coroutines.delay(1600)
+            copied = false
+        }
+    }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Column(
             Modifier
@@ -270,12 +384,18 @@ private fun CodeBlock(language: String, code: String, onRun: ((String) -> Unit)?
                     onClick = {
                         context.getSystemService(ClipboardManager::class.java)
                             ?.setPrimaryClip(ClipData.newPlainText(copyLabel, code))
+                        copied = true
                     },
                     modifier = Modifier.size(48.dp),
-                ) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy code") }
+                ) {
+                    Icon(
+                        if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                        contentDescription = if (copied) copiedDesc else copyDesc,
+                    )
+                }
                 if (onRun != null && language.trim().lowercase() in setOf("python", "py")) {
                     IconButton(onClick = { onRun(code) }, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = "Run Python")
+                        Icon(Icons.Filled.PlayArrow, contentDescription = runDesc)
                     }
                 }
             }

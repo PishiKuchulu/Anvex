@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -108,6 +109,7 @@ class BuildViewModel(
         if (_building.value) return
         _building.value = true
         _buildError.value = null
+        resetLogBuffer()
         _logLines.value = emptyList()
         viewModelScope.launch(Dispatchers.IO) {
             var workspace: File? = null
@@ -136,6 +138,8 @@ class BuildViewModel(
                 _buildError.value = e.message ?: e::class.simpleName ?: "Build failed."
             } finally {
                 workspace?.let { runCatching { graph.projects.cleanupBuildWorkspace(it) } }
+                // P-23: never leave the log tail sitting in the chunk buffer.
+                flushLogBuffer()
                 withContext(Dispatchers.Main) { _building.value = false }
                 refresh()
             }
@@ -154,8 +158,49 @@ class BuildViewModel(
         }
     }
 
+    // P-23 (audit round 2): log lines are buffered and published in
+    // chunks — appending used to copy the whole (≤2 000-line) list on
+    // EVERY line (~2M element copies over one build log). The buffer is
+    // synchronized: the build callback fires from engine threads.
+    private val logBuffer = ArrayList<String>()
+    private var logFlushPending = false
+
     private fun appendLog(line: String) {
-        _logLines.value = (_logLines.value + line).takeLast(AndroidBuildEngine.DEFAULT_MAX_LOG_LINES)
+        val flushNow: Boolean
+        synchronized(logBuffer) {
+            logBuffer.add(line)
+            flushNow = logBuffer.size >= LOG_FLUSH_CHUNK
+            if (!flushNow && !logFlushPending) {
+                logFlushPending = true
+                viewModelScope.launch {
+                    delay(LOG_FLUSH_DELAY_MS)
+                    flushLogBuffer()
+                }
+            }
+        }
+        if (flushNow) flushLogBuffer()
+    }
+
+    /** Publishes any buffered log lines (also called when a build ends). */
+    private fun flushLogBuffer() {
+        val chunk: List<String>
+        synchronized(logBuffer) {
+            if (logBuffer.isEmpty()) {
+                logFlushPending = false
+                return
+            }
+            chunk = ArrayList(logBuffer)
+            logBuffer.clear()
+            logFlushPending = false
+        }
+        _logLines.update { lines -> (lines + chunk).takeLast(AndroidBuildEngine.DEFAULT_MAX_LOG_LINES) }
+    }
+
+    private fun resetLogBuffer() {
+        synchronized(logBuffer) {
+            logBuffer.clear()
+            logFlushPending = false
+        }
     }
 
     // ---- cloud build (GitHub Actions) ------------------------------------
@@ -226,14 +271,34 @@ class BuildViewModel(
                 var run: CloudBuildRepository.RunInfo? = null
                 for (attempt in 1..CLOUD_MAX_POLLS) {
                     delay(CLOUD_POLL_INTERVAL_MS)
-                    val current = graph.cloudBuild.latestRun(owner, repo, branch, CloudBuildRepository.WORKFLOW_PATH).getOrNull()
-                    if (current != null && current.id > baseline) {
+                    // sinceId: the repository only returns runs newer
+                    // than the pre-dispatch baseline (audit 2026-11-03).
+                    val current = graph.cloudBuild.latestRun(owner, repo, branch, CloudBuildRepository.WORKFLOW_PATH, sinceId = baseline).getOrNull()
+                    if (current != null) {
                         run = current
                         _cloudRun.value = current
                         _cloudStatus.value = describeRun(current) + " — poll $attempt/$CLOUD_MAX_POLLS"
                         if (current.status.equals("completed", ignoreCase = true)) break
                     } else {
                         _cloudStatus.value = "Waiting for the workflow run to appear… (poll $attempt/$CLOUD_MAX_POLLS)"
+                    }
+                }
+                if (run == null) {
+                    // Slow phase (audit 2026-11-03): a freshly dispatched
+                    // run can take minutes to appear in the runs list; the
+                    // fast window alone (40 × 5 s) declared "no run
+                    // appeared" too early. Poll slower for longer first.
+                    for (attempt in 1..CLOUD_SLOW_POLLS) {
+                        delay(CLOUD_SLOW_POLL_INTERVAL_MS)
+                        val current = graph.cloudBuild.latestRun(owner, repo, branch, CloudBuildRepository.WORKFLOW_PATH, sinceId = baseline).getOrNull()
+                        if (current != null) {
+                            run = current
+                            _cloudRun.value = current
+                            _cloudStatus.value = describeRun(current) + " — slow poll $attempt/$CLOUD_SLOW_POLLS"
+                            if (current.status.equals("completed", ignoreCase = true)) break
+                        } else {
+                            _cloudStatus.value = "Still waiting for the workflow run to appear… (slow poll $attempt/$CLOUD_SLOW_POLLS)"
+                        }
                     }
                 }
                 val finished = run
@@ -258,9 +323,12 @@ class BuildViewModel(
     /** Stops the in-flight cloud watch (push/dispatch finish at their next suspension point). */
     fun stopCloudWatch() {
         cloudJob?.cancel()
+        // _cloudBusy is owned solely by the watch coroutine's finally —
+        // clearing it here too let a new pushAndBuild start while the
+        // cancelled watch was still unwinding, and the old finally then
+        // stomped the new run's busy flag (audit 2026-11-03).
         if (_cloudBusy.value) {
-            _cloudBusy.value = false
-            _cloudStatus.value = "Stopped."
+            _cloudStatus.value = "Stopping…"
         }
     }
 
@@ -351,8 +419,13 @@ class BuildViewModel(
     }
 
     private companion object {
+        /** P-23: log lines publish in chunks of this size, or after a short delay. */
+        const val LOG_FLUSH_CHUNK = 50
+        const val LOG_FLUSH_DELAY_MS = 150L
         const val CLOUD_MAX_POLLS = 40
         const val CLOUD_POLL_INTERVAL_MS = 5000L
+        const val CLOUD_SLOW_POLLS = 12
+        const val CLOUD_SLOW_POLL_INTERVAL_MS = 15_000L
         const val CLOUD_LOG_MAX_LINES = 200
     }
 }

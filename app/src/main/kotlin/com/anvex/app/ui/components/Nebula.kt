@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -29,10 +30,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -41,8 +44,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.anvex.app.i18n.tr
 import com.anvex.app.ui.theme.LocalBoltExtras
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 
 /**
  * v4.2 "Nebula" building blocks. Everything reads its colors from [LocalBoltExtras] and the
@@ -92,7 +98,8 @@ fun GlassCard(
         .background(extras.glass)
         .border(BorderStroke(1.dp, extras.glassBorder), shape)
     Box(
-        modifier = (if (onClick != null) base.clickable(onClick = onClick) else base).padding(contentPadding),
+        // 2026-11-03 audit: clickable cards announced no role to TalkBack.
+        modifier = (if (onClick != null) base.clickable(role = Role.Button, onClick = onClick) else base).padding(contentPadding),
     ) { content() }
 }
 
@@ -109,12 +116,27 @@ fun GradientButton(
     val shape = RoundedCornerShape(100.dp)
     val fill = if (enabled) Modifier.background(extras.accentBrush, shape)
     else Modifier.background(MaterialTheme.colorScheme.surfaceVariant, shape)
+    // 2026-11-03 audit: ripple alone is easy to miss on the gradient in
+    // bright light — a subtle pressed scale makes the state visible.
+    val interactionSource = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     Row(
         modifier = modifier
             .height(48.dp)
             .clip(shape)
             .then(fill)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .graphicsLayer {
+                val scale = if (pressed && enabled) 0.98f else 1f
+                scaleX = scale
+                scaleY = scale
+            }
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                interactionSource = interactionSource,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                onClick = onClick,
+            )
             .padding(horizontal = 22.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
@@ -148,7 +170,12 @@ fun NebulaChip(
     val fg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     val base = modifier.clip(shape).background(bg).border(BorderStroke(1.dp, stroke), shape)
     Row(
-        modifier = (if (onClick != null) base.clickable(onClick = onClick) else base)
+        // 2026-11-03 audit: chips announced neither role nor selection.
+        modifier = (if (onClick != null) {
+            base
+                .clickable(role = Role.Button, onClick = onClick)
+                .semantics { this.selected = selected }
+        } else base)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -222,7 +249,7 @@ fun NebulaTopBar(
         },
         navigationIcon = {
             if (onBack != null) {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Back")) }
             }
         },
         actions = { actions() },

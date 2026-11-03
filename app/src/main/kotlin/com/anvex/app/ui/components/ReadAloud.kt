@@ -42,8 +42,38 @@ class ReadAloud(context: Context) {
 
     fun speak(id: String, text: String) {
         if (!ready) { queued = id to text; return }
+        // 2026-11-03 audit: the engine language was pinned to the DEVICE
+        // locale, so Persian replies were voiced by an English voice
+        // (wrong phonemes, often unintelligible). Pick the utterance
+        // locale from the text being spoken; if that voice is missing,
+        // keep the previously set (device default) language.
+        val locale = localeForText(text)
+        if (locale != null && tts.setLanguage(locale) >= TextToSpeech.LANG_AVAILABLE) {
+            // Language switched for this utterance.
+        }
         tts.speak(plainForSpeech(text), TextToSpeech.QUEUE_FLUSH, null, id)
         _speakingId.value = id
+    }
+
+    /**
+     * Persian/Arabic-script text is spoken with a Persian voice; anything
+     * else returns null (keep the current engine language). Detection is
+     * by Unicode block, so mixed replies follow their dominant script's
+     * first strong run.
+     */
+    private fun localeForText(text: String): Locale? {
+        for (ch in text) {
+            val block = Character.UnicodeBlock.of(ch)
+            if (block == Character.UnicodeBlock.ARABIC ||
+                block == Character.UnicodeBlock.ARABIC_PRESENTATION_FORMS_A ||
+                block == Character.UnicodeBlock.ARABIC_PRESENTATION_FORMS_B ||
+                block == Character.UnicodeBlock.ARABIC_SUPPLEMENT
+            ) {
+                return Locale.forLanguageTag("fa")
+            }
+            if (ch.isLetter()) return null
+        }
+        return null
     }
 
     fun stop() {

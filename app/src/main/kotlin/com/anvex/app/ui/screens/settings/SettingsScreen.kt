@@ -53,6 +53,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,14 +110,17 @@ fun SettingsScreen(
 
     LaunchedEffect(Unit) { vm.refreshCacheSize() }
 
-    data class Category(val id: String, val label: String, val icon: ImageVector, val tint: Color, val count: Int)
+    // UI #3: tints come from the color scheme (were hard-coded hex that
+    // ignored the theme), and the per-category counts are gone — they were
+    // hand-maintained numbers that drifted from the real section contents.
+    data class Category(val id: String, val label: String, val icon: ImageVector, val tint: Color)
     val categories = listOf(
-        Category("ai", tr("AI & providers"), Icons.Filled.Psychology, MaterialTheme.colorScheme.primary, 4),
-        Category("memory", tr("Memory"), Icons.Filled.MemoryIcon, Color(0xFFA78BFA), 2),
-        Category("workspace", tr("Workspace & build"), Icons.Filled.Terminal, Color(0xFF34D399), 4),
-        Category("appearance", tr("Appearance"), Icons.Filled.Language, Color(0xFF7DD3FC), 5),
-        Category("data", tr("Data & security"), Icons.Filled.Security, Color(0xFFFBBF24), 3),
-        Category("developer", tr("Developer & about"), Icons.Filled.DeveloperMode, Color(0xFF94A3B8), 5),
+        Category("ai", tr("AI & providers"), Icons.Filled.Psychology, MaterialTheme.colorScheme.primary),
+        Category("memory", tr("Memory"), Icons.Filled.MemoryIcon, MaterialTheme.colorScheme.secondary),
+        Category("workspace", tr("Workspace & build"), Icons.Filled.Terminal, MaterialTheme.colorScheme.tertiary),
+        Category("appearance", tr("Appearance"), Icons.Filled.Language, MaterialTheme.colorScheme.primary),
+        Category("data", tr("Data & security"), Icons.Filled.Security, MaterialTheme.colorScheme.error),
+        Category("developer", tr("Developer & about"), Icons.Filled.DeveloperMode, MaterialTheme.colorScheme.onSurfaceVariant),
     )
 
     Scaffold(
@@ -155,7 +160,7 @@ fun SettingsScreen(
                     FilterChip(
                         selected = category == c.id,
                         onClick = { category = c.id },
-                        label = { Text("${c.label} · ${c.count}") },
+                        label = { Text(c.label) },
                         leadingIcon = { androidx.compose.material3.Icon(c.icon, null, Modifier.size(16.dp), tint = c.tint) },
                     )
                 }
@@ -490,9 +495,9 @@ private fun AppearanceCategory(
                             TextButton(onClick = { vm.setTheme(mode) }) {
                                 Text(
                                     when (mode) {
-                                        ThemeMode.SYSTEM -> "System"
-                                        ThemeMode.LIGHT -> "Light"
-                                        ThemeMode.DARK -> "Dark"
+                                        ThemeMode.SYSTEM -> tr("System")
+                                        ThemeMode.LIGHT -> tr("Light")
+                                        ThemeMode.DARK -> tr("Dark")
                                     },
                                     color = if (settings?.themeMode == mode) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -513,15 +518,15 @@ private fun AppearanceCategory(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             when (settings?.uiThemeStyle ?: UiThemeStyle.PROFESSIONAL) {
-                                UiThemeStyle.AURORA -> "Aurora — cyan/slate dark ladder, mono badges, status accents (web-prototype port)"
-                                UiThemeStyle.NEBULA -> "Nebula — deep-space canvas, violet→cyan gradient, glass cards"
-                                UiThemeStyle.PROFESSIONAL -> "Professional — Command Deck: Linear/Vercel dark, JetBrains Mono, 8pt grid (default)"
-                                UiThemeStyle.GLASS -> "Glass — Glassmorphism / Expressive Material 3"
-                                UiThemeStyle.MIDNIGHT -> "Midnight — deep-navy dark, ice-blue accent; calm and focused"
-                                UiThemeStyle.FOREST -> "Forest — deep-green dark, mint accent; easy on the eyes"
-                                UiThemeStyle.EMBER -> "Ember — warm-charcoal dark, amber accent; cozy contrast"
-                                UiThemeStyle.MINT -> "Mint — near-black green dark, bright mint accent, pill-rounded surfaces (Lovable design port)"
-                                UiThemeStyle.ATELIER -> "Atelier — warm paper/ink neutrals, orange accent, large radii («کارگاه» design)"
+                                UiThemeStyle.AURORA -> tr("Aurora — cyan/slate dark ladder, mono badges, status accents (web-prototype port)")
+                                UiThemeStyle.NEBULA -> tr("Nebula — deep-space canvas, violet→cyan gradient, glass cards")
+                                UiThemeStyle.PROFESSIONAL -> tr("Professional — Command Deck: Linear/Vercel dark, JetBrains Mono, 8pt grid (default)")
+                                UiThemeStyle.GLASS -> tr("Glass — Glassmorphism / Expressive Material 3")
+                                UiThemeStyle.MIDNIGHT -> tr("Midnight — deep-navy dark, ice-blue accent; calm and focused")
+                                UiThemeStyle.FOREST -> tr("Forest — deep-green dark, mint accent; easy on the eyes")
+                                UiThemeStyle.EMBER -> tr("Ember — warm-charcoal dark, amber accent; cozy contrast")
+                                UiThemeStyle.MINT -> tr("Mint — near-black green dark, bright mint accent, pill-rounded surfaces (Lovable design port)")
+                                UiThemeStyle.ATELIER -> tr("Atelier — warm paper/ink neutrals, orange accent, large radii («کارگاه» design)")
                             }
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -532,15 +537,15 @@ private fun AppearanceCategory(
                                     label = {
                                         Text(
                                             when (style) {
-                                                UiThemeStyle.AURORA -> "Aurora"
-                                                UiThemeStyle.NEBULA -> "Nebula"
-                                                UiThemeStyle.PROFESSIONAL -> "Professional"
-                                                UiThemeStyle.GLASS -> "Glass"
-                                                UiThemeStyle.MIDNIGHT -> "Midnight"
-                                                UiThemeStyle.FOREST -> "Forest"
-                                                UiThemeStyle.EMBER -> "Ember"
-                                                UiThemeStyle.MINT -> "Mint"
-                                                UiThemeStyle.ATELIER -> "Atelier"
+                                                UiThemeStyle.AURORA -> tr("Aurora")
+                                                UiThemeStyle.NEBULA -> tr("Nebula")
+                                                UiThemeStyle.PROFESSIONAL -> tr("Professional")
+                                                UiThemeStyle.GLASS -> tr("Glass")
+                                                UiThemeStyle.MIDNIGHT -> tr("Midnight")
+                                                UiThemeStyle.FOREST -> tr("Forest")
+                                                UiThemeStyle.EMBER -> tr("Ember")
+                                                UiThemeStyle.MINT -> tr("Mint")
+                                                UiThemeStyle.ATELIER -> tr("Atelier")
                                             }
                                         )
                                     },
@@ -563,16 +568,43 @@ private fun AppearanceCategory(
                 Text(tr("Editor font size"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 Text("${settings?.editorFontSize ?: 13} sp", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             }
+            val editorFontLabel = "${settings?.editorFontSize ?: 13} sp"
             Slider(
                 value = (settings?.editorFontSize ?: 13).toFloat(),
                 onValueChange = { vm.setEditorFont(it.toInt()) },
                 valueRange = 10f..24f,
                 steps = 13,
+                // UI #4: TalkBack announces the value, not just "slider".
+                modifier = Modifier.semantics { stateDescription = editorFontLabel },
+            )
+            // Wiring gap 6: chatFontSize was persisted with a Settings
+            // control missing — it now has one, and both chat screens
+            // scale message text from it.
+            Row {
+                Text(tr("Chat font size"), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Text("${settings?.chatFontSize ?: 15} sp", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            }
+            val chatFontLabel = "${settings?.chatFontSize ?: 15} sp"
+            Slider(
+                value = (settings?.chatFontSize ?: 15).toFloat(),
+                onValueChange = { vm.setChatFont(it.toInt()) },
+                valueRange = 12f..22f,
+                steps = 9,
+                modifier = Modifier.semantics { stateDescription = chatFontLabel },
             )
             ListItem(
                 headlineContent = { Text(tr("Auto-save")) },
                 supportingContent = { Text(tr("Save files about 0.7s after you stop typing")) },
                 trailingContent = { Switch(checked = settings?.editorAutoSave ?: true, onCheckedChange = vm::setAutoSave) },
+            )
+            // Wiring gap 6: previewConsoleVisible was persisted and read
+            // by the Preview screen but had no setter anywhere — this
+            // switch (and the Preview toolbar toggle, which persists
+            // through the same setter) makes it a real control.
+            ListItem(
+                headlineContent = { Text(tr("Console")) },
+                supportingContent = { Text(tr("Preview")) },
+                trailingContent = { Switch(checked = settings?.previewConsoleVisible ?: false, onCheckedChange = vm::setPreviewConsoleVisible) },
             )
         }
     }

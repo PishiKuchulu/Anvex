@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -77,11 +78,20 @@ fun AnvexDock(items: List<DockItem>) {
                             .clip(RoundedCornerShape(20.dp))
                             .clickable(enabled = item.enabled, role = Role.Tab, onClick = item.onClick)
                             .semantics { this.selected = item.selected }
+                            // 2026-11-03 audit: the item was ≈40dp tall —
+                            // below the 48dp touch-target minimum on the
+                            // app's most-tapped surface. The hit area is
+                            // now ≥48dp; the visuals stay compact.
+                            .heightIn(min = 48.dp)
                             .padding(vertical = 2.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
                     ) {
                         Icon(
                             item.icon,
-                            contentDescription = item.label,
+                            // The visible label below is the single
+                            // TalkBack announcement; describing the icon
+                            // too announced every destination twice.
+                            contentDescription = null,
                             modifier = Modifier.size(22.dp),
                             tint = if (item.selected) accent else dim,
                         )

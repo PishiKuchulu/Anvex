@@ -28,6 +28,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -142,17 +144,24 @@ fun AnvexApp() {
 
     if (settings?.onboardingSeen == false) {
         AlertDialog(
+            // Deliberately modal (first-run must be acknowledged), but the
+            // confirm write is guarded: a failed write used to surface as
+            // an uncaught exception in this scope; now the dialog simply
+            // stays until the write succeeds (2026-11-03 audit).
             onDismissRequest = { },
             title = { Text(tr("Welcome to Anvex")) },
             text = {
                 Text(
-                    "Chat with any model you add, build projects, get real ZIP/PDF files, and let the assistant " +
-                        "remember your preferences in the Memory tab. Start by adding a provider in Settings."
+                    tr("Chat with any model you add, build projects, get real ZIP/PDF files, and let the assistant remember your preferences in the Memory tab. Start by adding a provider in Settings.")
                 )
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(
-                    onClick = { scope.launch { graph.settings.setOnboardingSeen(true) } },
+                    onClick = {
+                        scope.launch {
+                            runCatching { graph.settings.setOnboardingSeen(true) }
+                        }
+                    },
                 ) { Text(tr("Get started")) }
             },
         )
@@ -413,8 +422,17 @@ private fun NavHostController.navigateTop(route: String) {
 private fun BoxScope.FloatingAgentStatus(tasks: List<com.anvex.core.model.TaskRunItem>) {
     val active = tasks.count { it.state == "RUNNING" || it.state == "RETRYING" || it.state == "WAITING_APPROVAL" }
     if (active == 0) return
+    // 2026-11-03 audit: the chip rendered hard-coded English with no
+    // semantics, despite looking tappable. It is a passive indicator:
+    // the label is localized and the whole chip carries one content
+    // description (resolved here — tr() cannot run inside the
+    // semantics lambda).
+    val chipText = "${tr("Agent")} • $active ${tr("active")}"
     Surface(
-        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 84.dp),
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(end = 16.dp, bottom = 84.dp)
+            .semantics { contentDescription = chipText },
         shape = MaterialTheme.shapes.large,
         tonalElevation = 4.dp,
         shadowElevation = 4.dp,
@@ -422,7 +440,7 @@ private fun BoxScope.FloatingAgentStatus(tasks: List<com.anvex.core.model.TaskRu
         Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
             Spacer(Modifier.size(8.dp))
-            Text("Agent • $active active", style = MaterialTheme.typography.labelLarge)
+            Text(chipText, style = MaterialTheme.typography.labelLarge)
         }
     }
 }

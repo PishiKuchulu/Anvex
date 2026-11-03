@@ -59,6 +59,8 @@ fun PiEnginePanel() {
     // tr() is @Composable — resolve click-handler strings here, not in the coroutine.
     val noProviderText = tr("No default provider is configured.")
     val unsupportedText = tr("This provider is not supported by the Pi engine yet.")
+    val runCompleteText = tr("Pi run complete")
+    val runFailedText = tr("Pi run failed")
 
     AnvexSectionHeader(tr("Agent engine"), tr("Choose which engine runs agent tasks"))
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -156,7 +158,7 @@ fun PiEnginePanel() {
                                         }
                                     },
                                 )
-                                line(if (result.success) "✓ Pi run complete" else "✗ ${result.error ?: "Pi run failed"}")
+                                line(if (result.success) "✓ $runCompleteText" else "✗ ${result.error ?: runFailedText}")
                                 result.sessionFile?.let { line("session: $it") }
                             } catch (t: Throwable) {
                                 line("✗ ${t.message ?: t.toString()}")

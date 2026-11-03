@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,6 +22,8 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +49,9 @@ import com.anvex.app.ui.components.AnvexIconTile
 import com.anvex.app.ui.screens.home.NewProjectHandoff
 import com.anvex.app.ui.screens.home.formatRelative
 import com.anvex.app.ui.screens.home.formatSize
+import com.anvex.app.ui.screens.home.starterLabel
 import com.anvex.app.vm.HomeViewModel
+import com.anvex.core.engine.ProjectTemplates
 import com.anvex.core.model.Project
 
 /**
@@ -97,7 +102,7 @@ fun ProjectsScreen(nav: NavController) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(tr("Projects"), style = MaterialTheme.typography.displaySmall)
                         Text(
-                            "${projects.size} project${if (projects.size == 1) "" else "s"}",
+                            "${projects.size} ${tr("projects")}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -120,16 +125,33 @@ fun ProjectsScreen(nav: NavController) {
             }
             if (projects.isEmpty()) {
                 item {
-                    Text(
-                        tr("No projects yet — create one from Home."),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // UI #5: a real empty state with the primary action
+                    // inline (was a plain line of text).
+                    AnvexCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            AnvexIconTile(
+                                Icons.Filled.Code,
+                                modifier = Modifier.size(56.dp),
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            )
+                            Text(tr("Start your first project"), style = MaterialTheme.typography.titleLarge)
+                            Text(
+                                tr("Describe an idea, then review what the AI changes before you keep it."),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Button(onClick = { showCreate = true }) { Text(tr("Create project")) }
+                        }
+                    }
                 }
             } else if (visibleProjects.isEmpty()) {
                 item {
                     Text(
-                        "No chats match \"$query\"",
+                        "${tr("No projects match")} \"$query\"",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -159,11 +181,22 @@ fun ProjectsScreen(nav: NavController) {
                         label = { Text(tr("Project name")) },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    // Wiring gap 2: Template chips select a real starter.
+                    Text(tr("Template"), style = MaterialTheme.typography.labelLarge)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(ProjectTemplates.Starter.entries) { starter ->
+                            FilterChip(
+                                selected = newUi.starter == starter,
+                                onClick = { vm.updateNewProject { copy(starter = starter) } },
+                                label = { Text(starterLabel(starter)) },
+                            )
+                        }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
                             value = newUi.parentWorkspaceUri?.let {
                                 Uri.parse(it).lastPathSegment?.substringAfterLast(":") ?: it
-                            } ?: "App private storage",
+                            } ?: tr("App private storage"),
                             onValueChange = {},
                             readOnly = true,
                             label = { Text(tr("Project folder")) },
@@ -171,7 +204,7 @@ fun ProjectsScreen(nav: NavController) {
                             maxLines = 1,
                         )
                         IconButton(onClick = { workspaceLauncher.launch(null) }) {
-                            Icon(Icons.Filled.Folder, contentDescription = "Choose project folder")
+                            Icon(Icons.Filled.Folder, contentDescription = tr("Choose project folder"))
                         }
                     }
                     Text(

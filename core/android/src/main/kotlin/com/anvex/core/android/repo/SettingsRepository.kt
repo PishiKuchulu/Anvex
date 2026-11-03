@@ -3,11 +3,13 @@ package com.anvex.core.android.repo
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import com.anvex.core.model.ThinkingLevel
 import kotlinx.serialization.Serializable
@@ -124,7 +126,16 @@ class SettingsRepository(private val context: Context) {
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
     }
 
-    val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
+    val settings: Flow<AppSettings> = context.dataStore.data
+        // Audit 02: a corrupt preferences file (DataStore surfaces it as
+        // an IOException / CorruptionException) used to terminate this
+        // flow, and every screen collecting `settings.first()` crashed or
+        // spun forever. The DataStore-recommended recovery is to fall
+        // back to defaults; later edits rewrite a healthy file.
+        .catch { e ->
+            if (e is java.io.IOException) emit(emptyPreferences()) else throw e
+        }
+        .map { p ->
         AppSettings(
             themeMode = p[Keys.THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.DARK,
             language = p[Keys.LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() } ?: AppLanguage.SYSTEM,
@@ -157,6 +168,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setEditorFontSize(v: Int) = context.dataStore.edit { it[Keys.EDITOR_FONT] = v.coerceIn(10, 24) }
     suspend fun setEditorAutoSave(v: Boolean) = context.dataStore.edit { it[Keys.AUTOSAVE] = v }
     suspend fun setChatFontSize(v: Int) = context.dataStore.edit { it[Keys.CHAT_FONT] = v.coerceIn(12, 22) }
+    suspend fun setPreviewConsoleVisible(v: Boolean) = context.dataStore.edit { it[Keys.CONSOLE_VISIBLE] = v }
     suspend fun setLastProject(id: String) = context.dataStore.edit { it[Keys.LAST_PROJECT] = id }
     suspend fun setThinkingLevel(level: ThinkingLevel) = context.dataStore.edit { it[Keys.THINKING] = level.name }
     suspend fun setOnboardingSeen(v: Boolean) = context.dataStore.edit { it[Keys.ONBOARDING] = v }

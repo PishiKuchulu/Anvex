@@ -14,6 +14,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.anvex.core.android.repo.AtelierAccent
@@ -280,6 +281,10 @@ private val NebulaLightScheme = lightColorScheme(
     onTertiary = Color.White,
     tertiaryContainer = Color(0xFFB4F4D8),
     onTertiaryContainer = Color(0xFF002115),
+    // CONTRACT (both Nebula schemes): background stays Transparent — the
+    // canvas is drawn by NebulaBackground at the app root. Any surface
+    // composed outside that root shows the raw window background instead;
+    // do not "fix" this to an opaque color without replacing the canvas.
     background = Color.Transparent,
     onBackground = Color(0xFF17162A),
     surface = Color(0xFFFFFFFF),
@@ -596,6 +601,35 @@ private val MintShapes = Shapes(
     extraLarge = RoundedCornerShape(28.dp),
 )
 
+// 2026-11-03 audit (Layer 1): MIDNIGHT, FOREST and EMBER used to fall
+// through to ProfessionalShapes, so three of the nine "styles" differed
+// from Professional only in color. Each now carries its own shape
+// language: Midnight is near-square/technical, Forest is soft/organic,
+// Ember is warm with asymmetric-feeling generous radii.
+private val MidnightShapes = Shapes(
+    extraSmall = RoundedCornerShape(3.dp),
+    small = RoundedCornerShape(5.dp),
+    medium = RoundedCornerShape(7.dp),
+    large = RoundedCornerShape(10.dp),
+    extraLarge = RoundedCornerShape(14.dp),
+)
+
+private val ForestShapes = Shapes(
+    extraSmall = RoundedCornerShape(10.dp),
+    small = RoundedCornerShape(14.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(30.dp),
+)
+
+private val EmberShapes = Shapes(
+    extraSmall = RoundedCornerShape(6.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(14.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(26.dp),
+)
+
 private val MintExtrasDark = AnvexExtras(
     accentStart = Color(0xFF5CF2B0), accentEnd = Color(0xFF34D399),
     canvasTop = Color(0xFF0C1210), canvasBottom = Color(0xFF050807),
@@ -790,6 +824,9 @@ fun AnvexTheme(
         style == UiThemeStyle.NEBULA -> NebulaShapes
         style == UiThemeStyle.GLASS || useDynamic -> GlassShapes
         style == UiThemeStyle.AURORA -> AuroraShapes
+        style == UiThemeStyle.MIDNIGHT -> MidnightShapes
+        style == UiThemeStyle.FOREST -> ForestShapes
+        style == UiThemeStyle.EMBER -> EmberShapes
         style == UiThemeStyle.MINT -> MintShapes
         style == UiThemeStyle.ATELIER -> AtelierShapes
         else -> ProfessionalShapes
@@ -801,9 +838,13 @@ fun AnvexTheme(
     val applyAccent = style == UiThemeStyle.ATELIER && !useDynamic &&
         atelierAccent != AtelierAccent.ORANGE && accentPreset != null
     val effectiveScheme = if (applyAccent && accentPreset != null) {
+        val accentPrimary = if (useDark) accentPreset.primaryDark else accentPreset.primaryLight
         colorScheme.copy(
-            primary = if (useDark) accentPreset.primaryDark else accentPreset.primaryLight,
-            onPrimary = Color.White,
+            primary = accentPrimary,
+            // 2026-11-03 audit (Layer 1): white was forced for every accent;
+            // on the lighter presets (dark-scheme Green/Teal/Blue) white
+            // text drops below WCAG AA. Pick the on-color by luminance.
+            onPrimary = if (accentPrimary.luminance() > 0.42f) Color(0xFF14161A) else Color.White,
         )
     } else {
         colorScheme
@@ -830,5 +871,26 @@ fun AnvexTheme(
             shapes = shapes,
             content = content,
         )
+    }
+}
+
+/**
+ * 2026-11-03 audit (Layer 1, cross-cutting): ambient infinite animations
+ * (thinking indicator, update-dialog glow/shimmer) must respect the
+ * system reduced-motion setting. True when the system animator duration
+ * scale is 0 (animations disabled / reduced motion on). Read once per
+ * composition root that uses it; callers render a static frame instead.
+ */
+@Composable
+fun rememberReducedMotion(): Boolean {
+    val context = LocalContext.current
+    return androidx.compose.runtime.remember(context) {
+        runCatching {
+            android.provider.Settings.Global.getFloat(
+                context.contentResolver,
+                android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            ) == 0f
+        }.getOrDefault(false)
     }
 }

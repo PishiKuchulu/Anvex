@@ -58,11 +58,27 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
     val scope = rememberCoroutineScope()
     val manager = remember { AppGraph.get().artifactManager }
     var status by remember { mutableStateOf<String?>(null) }
+    // 2026-11-03 audit: the status line always used the primary (success)
+    // color, so a failed save was announced in the success color. Success
+    // vs failure is now carried as state, not inferred from the wording.
+    var statusIsError by remember { mutableStateOf(false) }
+    // Status strings are resolved here, in the composable body — the
+    // click handlers below run in coroutine lambdas where tr() (a
+    // @Composable) can never be called.
+    val savedLabel = tr("Saved")
+    val saveFailedLabel = tr("Save failed")
+    val openFailedLabel = tr("Open failed")
+    val shareFailedLabel = tr("Share failed")
+    val removedText = tr("The file was removed.")
+    val noViewerText = tr("No viewer for this file type — use Save or Share.")
+    val shareLabel = tr("Share")
+    val fileLabel = tr("File")
     // In-app viewer for text deliverables (user request 2026-11-02): until now
     // the card offered only Save/Share, so tapping a report showed nothing.
     var viewerText by remember { mutableStateOf<String?>(null) }
     var viewerMarkdown by remember { mutableStateOf(false) }
     var viewerMono by remember { mutableStateOf(false) }
+    var viewerTruncated by remember { mutableStateOf(false) }
     val stored = record.filePath.orEmpty()
     val failed = record.status == "FAILED"
     val displayName = if (stored.length > 37 && stored[36] == '-') stored.substring(37) else stored
@@ -78,9 +94,9 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                 GradientBadge(icon, size = 40)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(displayName.ifBlank { "File" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(displayName.ifBlank { fileLabel }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        if (failed) (record.note ?: "Could not create the file")
+                        if (failed) (record.note ?: tr("Could not create the file"))
                         else "${record.command?.uppercase().orEmpty()} · ${formatBytes(record.bytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -90,16 +106,21 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
             if (!failed) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GradientButton(
-                        text = "Save",
+                        text = tr("Save"),
                         icon = Icons.Filled.Download,
                         onClick = {
                             scope.launch {
-                                status = runCatching {
+                                val result = runCatching {
                                     withContext(Dispatchers.IO) {
-                                        val a = manager.find(projectId, stored) ?: error("The file was removed.")
+                                        val a = manager.find(projectId, stored) ?: error(removedText)
                                         manager.saveToDownloads(a)
                                     }
-                                }.fold({ "Saved to $it" }, { "Save failed: ${it.message}" })
+                                }
+                                statusIsError = result.isFailure
+                                status = result.fold(
+                                    { "$savedLabel: $it" },
+                                    { "$saveFailedLabel: ${it.message}" },
+                                )
                             }
                         },
                     )
@@ -107,18 +128,22 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                         scope.launch {
                             runCatching {
                                 val a = withContext(Dispatchers.IO) {
-                                    manager.find(projectId, stored) ?: error("The file was removed.")
+                                    manager.find(projectId, stored) ?: error(removedText)
                                 }
                                 when (a.format) {
                                     com.anvex.core.engine.ArtifactFormat.MD,
                                     com.anvex.core.engine.ArtifactFormat.TXT,
                                     com.anvex.core.engine.ArtifactFormat.JSON -> {
-                                        val text = withContext(Dispatchers.IO) {
-                                            a.file.readText(Charsets.UTF_8).take(400_000)
+                                        val full = withContext(Dispatchers.IO) {
+                                            a.file.readText(Charsets.UTF_8)
                                         }
+                                        // 2026-11-03 audit: the 400k cap
+                                        // used to cut silently mid-text;
+                                        // the viewer now says so (footer).
+                                        viewerTruncated = full.length > 400_000
                                         viewerMarkdown = a.format == com.anvex.core.engine.ArtifactFormat.MD
                                         viewerMono = a.format == com.anvex.core.engine.ArtifactFormat.JSON
-                                        viewerText = text
+                                        viewerText = full.take(400_000)
                                     }
                                     com.anvex.core.engine.ArtifactFormat.PDF,
                                     com.anvex.core.engine.ArtifactFormat.MP4 -> {
@@ -128,9 +153,12 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                                         }
                                         context.startActivity(view)
                                     }
-                                    else -> error("No viewer for this file type — use Save or Share.")
+                                    else -> error(noViewerText)
                                 }
-                            }.onFailure { status = "Open failed: ${it.message}" }
+                            }.onFailure {
+                                statusIsError = true
+                                status = "$openFailedLabel: ${it.message}"
+                            }
                         }
                     }) {
                         Icon(Icons.Filled.Visibility, null, Modifier.size(18.dp))
@@ -139,14 +167,17 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                     }
                     OutlinedButton(onClick = {
                         runCatching {
-                            val a = manager.find(projectId, stored) ?: error("The file was removed.")
+                            val a = manager.find(projectId, stored) ?: error(removedText)
                             val send = Intent(Intent.ACTION_SEND).apply {
                                 type = a.mimeType
                                 putExtra(Intent.EXTRA_STREAM, manager.shareUri(a))
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
-                            context.startActivity(Intent.createChooser(send, "Share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        }.onFailure { status = "Share failed: ${it.message}" }
+                            context.startActivity(Intent.createChooser(send, shareLabel).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }.onFailure {
+                            statusIsError = true
+                            status = "$shareFailedLabel: ${it.message}"
+                        }
                     }) {
                         Icon(Icons.Filled.Share, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -154,7 +185,14 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                     }
                 }
             }
-            status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+            status?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (statusIsError) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
     viewerText?.let { text ->
@@ -169,7 +207,7 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
                         Text(
-                            displayName.ifBlank { "File" },
+                            displayName.ifBlank { fileLabel },
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -190,6 +228,14 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontFamily = if (viewerMono) FontFamily.Monospace else FontFamily.Default,
                                 ),
+                            )
+                        }
+                        if (viewerTruncated) {
+                            Text(
+                                tr("Preview truncated — open the saved file to see everything."),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 12.dp),
                             )
                         }
                     }

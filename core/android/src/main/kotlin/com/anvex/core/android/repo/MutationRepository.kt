@@ -26,8 +26,10 @@ class MutationRepository(private val dao: MutationDao) {
 
     suspend fun recordAll(projectId: String, mutations: List<FileMutation>) {
         if (mutations.isEmpty()) return
-        dao.insertAll(mutations.map { it.toEntity(projectId) })
-        dao.trim(projectId, KEEP)
+        // One transaction (audit 02): insert and trim can no longer be torn
+        // apart by a process death, and observers never see the untrimmed
+        // window that excluded the newest entries.
+        dao.insertAndTrim(mutations.map { it.toEntity(projectId) }, projectId, KEEP)
     }
 
     suspend fun deleteForProject(projectId: String) = dao.deleteForProject(projectId)

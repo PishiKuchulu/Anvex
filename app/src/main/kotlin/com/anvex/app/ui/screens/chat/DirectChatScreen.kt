@@ -21,8 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
@@ -76,6 +78,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -100,6 +103,7 @@ import com.anvex.app.ui.components.directionalTextStyle
 import com.anvex.app.ui.components.isRtlText
 import com.anvex.app.ui.components.quotedReplyText
 import com.anvex.app.vm.DirectChatViewModel
+import com.anvex.core.android.AppGraph
 import com.anvex.core.model.ChatMessage
 import com.anvex.core.model.MessageRole
 import kotlinx.coroutines.launch
@@ -156,7 +160,16 @@ fun DirectChatScreen(nav: NavController) {
     val activeProviderId by vm.activeProviderId.collectAsState()
     val activeId by vm.activeId.collectAsState()
     val messages by vm.messages.collectAsState()
-    val sessionState by vm.sessionState.collectAsState()
+    // P-05 (audit round 2): the root collects only narrow session slices
+    // that change a few times per turn — collecting the full sessionState
+    // here recomposed the whole screen on every 80 ms stream publish.
+    // The stream text itself is collected inside DirectStreamingBubble.
+    val uiStreaming by vm.uiStreaming.collectAsState()
+    val uiStatusLine by vm.uiStatusLine.collectAsState()
+    val uiError by vm.uiError.collectAsState()
+    val uiContextWarning by vm.uiContextWarning.collectAsState()
+    val uiQuickActions by vm.uiQuickActions.collectAsState()
+    val uiHasStreamContent by vm.uiHasStreamContent.collectAsState()
     val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
         com.anvex.core.android.repo.UiThemeStyle.ATELIER
     val streamActive by vm.streamActive.collectAsState()
@@ -165,6 +178,8 @@ fun DirectChatScreen(nav: NavController) {
     val webOn by vm.webSearchOn.collectAsState()
     val webAvail by vm.webSearchAvailable.collectAsState()
     val attachmentError by vm.attachmentError.collectAsState()
+    // Wiring gap 6: chatFontSize scales the message typography below.
+    val appSettings by AppGraph.get().settings.settings.collectAsState()
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -180,20 +195,44 @@ fun DirectChatScreen(nav: NavController) {
     var menuFor by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<DirectChatViewModel.Conversation?>(null) }
     var renameText by remember { mutableStateOf("") }
+    // UI #5: a dismissed session error stays dismissed until a different
+    // error arrives (Dismiss also clears the VM's error surfaces).
+    var dismissedErrorKey by remember { mutableStateOf<String?>(null) }
     val sheetState = rememberModalBottomSheetState()
     val listState = rememberLazyListState()
+    val hasOlderMessages by vm.hasOlderMessages.collectAsState()
+    // P-01 (audit 2026-11-03): reaching the top pages older history in.
+    LaunchedEffect(listState, hasOlderMessages) {
+        if (!hasOlderMessages) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }.collect { index ->
+            if (index == 0) vm.loadOlderMessages()
+        }
+    }
 
     val activeTitle = (conversations + archivedConversations).firstOrNull { it.id == activeId }?.title ?: tr("Chat")
 
+    // Approval dialog (audit round 2, R2-1/NEW-1): the VM has always
+    // parked approval requests for direct chat, but this screen never
+    // rendered them — every approval-gated action stalled for the full
+    // 45 s bridge timeout and was then silently denied. Same shared
+    // fail-closed component as the project chat.
+    val pendingApproval by vm.pendingApproval.collectAsState()
+    pendingApproval?.let { prompt ->
+        com.anvex.app.ui.components.ApprovalDialog(
+            summary = prompt.summary,
+            detail = prompt.detail,
+        ) { approved -> vm.answerApproval(approved) }
+    }
+
     // v4.4.5 (smoothness): follow the tail only when already at the bottom.
     // v4.6: edge-based pinned check (isPinnedToBottom, shared with the project
-    // chat) and never while the user is scrolling — the index-based check ran
-    // on EVERY stream chunk and cancelled the user's scroll until generation
-    // finished, making a long answer impossible to read while it streamed.
-    LaunchedEffect(messages.size, sessionState.streamText.length) {
-        val total = messages.size + if (sessionState.streamText.isNotEmpty()) 1 else 0
-        if (total > 0 && !listState.isScrollInProgress && listState.isPinnedToBottom()) {
-            listState.scrollToItem((total - 1).coerceAtLeast(0))
+    // chat) and never while the user is scrolling. P-05: this effect keys
+    // on committed messages only — the streaming bubble follows its own
+    // tail locally while it grows.
+    LaunchedEffect(messages.size) {
+        val count = listState.layoutInfo.totalItemsCount
+        if (count > 0 && !listState.isScrollInProgress && listState.isPinnedToBottom()) {
+            listState.scrollToItem(count - 1)
         }
     }
 
@@ -227,7 +266,7 @@ fun DirectChatScreen(nav: NavController) {
     fun send() {
         val text = input.trim()
         if (text.isEmpty() && attachments.isEmpty() && replyTo == null) return
-        if (sessionState.streaming) return
+        if (uiStreaming) return
         val quote = replyTo
         replyTo = null
         val finalText = if (quote != null) quotedReplyText(quote.content, text) else text
@@ -285,7 +324,7 @@ fun DirectChatScreen(nav: NavController) {
                 }
                 if (visibleConversations.isEmpty() && visibleArchived.isEmpty() && chatQuery.isNotBlank()) {
                     Text(
-                        "No chats match \"${chatQuery.trim()}\"",
+                        "${tr("No chats match")} \"${chatQuery.trim()}\"",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(16.dp),
@@ -386,6 +425,13 @@ fun DirectChatScreen(nav: NavController) {
                 )
             },
         ) { padding ->
+            // Wiring gap 6: nested theme with the persisted chat font size
+            // applied to body styles (message text reads them ambiently).
+            MaterialTheme(
+                colorScheme = MaterialTheme.colorScheme,
+                typography = rememberScaledChatTypography(appSettings.chatFontSize),
+                shapes = MaterialTheme.shapes,
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -413,8 +459,8 @@ fun DirectChatScreen(nav: NavController) {
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.weight(1f),
                             )
-                            IconButton(onClick = { vm.clearAttachmentError() }, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Filled.Close, contentDescription = tr("Dismiss"), modifier = Modifier.size(16.dp))
+                            IconButton(onClick = { vm.clearAttachmentError() }) {
+                                Icon(Icons.Filled.Close, contentDescription = tr("Dismiss"), modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -482,48 +528,102 @@ fun DirectChatScreen(nav: NavController) {
                             }
                         }
                         items(messages, key = { it.id }) { msg ->
-                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().animateItem()) {
+                    // P-13 (audit round 2): no animateItem() on message rows.
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth()) {
                             DirectMessageBubble(msg, onShowActions = { actionMessage = msg })
-                        
+
                     }
                 }
-                        if (sessionState.streamText.isNotEmpty()) {
+                        if (uiHasStreamContent) {
                             item(key = "streaming") {
-                                StreamingBubble(
-                                    text = sessionState.streamText,
-                                    reasoning = sessionState.streamReasoning,
+                                // P-05: collects the session state locally —
+                                // stream ticks recompose only this bubble.
+                                DirectStreamingBubble(
+                                    session = vm.sessionState,
+                                    listState = listState,
                                 )
                             }
                         }
-                        if (sessionState.statusLine != null && sessionState.streaming) {
+                        if (uiStatusLine != null && uiStreaming) {
                             item(key = "status") {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        sessionState.statusLine!!,
+                                        uiStatusLine!!,
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
                         }
-                        if (sessionState.error != null) {
-                            item(key = "error") {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.errorContainer,
-                                    shape = RoundedCornerShape(12.dp),
-                                ) {
-                                    Text(
-                                        "${sessionState.error!!.userTitle}: ${sessionState.error!!.message}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        modifier = Modifier.padding(12.dp),
-                                    )
+                        uiContextWarning?.let { warning ->
+                            item(key = "context-warning") {
+                                Text(
+                                    warning,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        uiError?.let { err ->
+                            val errKey = err.userTitle + "|" + err.message
+                            // UI #5 (High): the error was static text with no
+                            // way forward — now Retry (resends the last user
+                            // message) and Dismiss, like the project chat.
+                            if (dismissedErrorKey != errKey) {
+                                item(key = "error") {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.errorContainer,
+                                        shape = RoundedCornerShape(12.dp),
+                                    ) {
+                                        Column(Modifier.padding(12.dp)) {
+                                            Text(
+                                                "${err.userTitle}: ${err.message}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                            )
+                                            Row {
+                                                TextButton(
+                                                    // True retry: the VM resends
+                                                    // with the original attachments
+                                                    // and drops the error stub.
+                                                    onClick = { vm.retryLast() },
+                                                ) { Text(tr("Retry")) }
+                                                TextButton(
+                                                    onClick = {
+                                                        dismissedErrorKey = errKey
+                                                        vm.clearError()
+                                                    },
+                                                ) { Text(tr("Dismiss")) }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+
+                    // Wiring gap 5: engine-enriched quick actions, routed
+                    // like the project chat (no project here, so file
+                    // actions fall back to sending their message).
+                    com.anvex.app.ui.components.QuickActionsRow(
+                        actions = uiQuickActions,
+                        onAction = { action ->
+                            when {
+                                action.type == "link" && action.href.isNotBlank() -> runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            Uri.parse(action.href),
+                                        ),
+                                    )
+                                }
+                                else -> vm.send(action.message, emptyList())
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
 
                     // Attachments preview strip.
                     if (attachments.isNotEmpty()) {
@@ -539,7 +639,7 @@ fun DirectChatScreen(nav: NavController) {
                                     onClick = { attachments.remove(uri) },
                                     label = {
                                         Text(
-                                            uri.lastPathSegment?.substringAfterLast('/')?.take(18) ?: "file",
+                                            uri.lastPathSegment?.substringAfterLast('/')?.take(18) ?: tr("File"),
                                             maxLines = 1, overflow = TextOverflow.Ellipsis,
                                         )
                                     },
@@ -571,8 +671,8 @@ fun DirectChatScreen(nav: NavController) {
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
-                            IconButton(onClick = { replyTo = null }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Filled.Close, contentDescription = tr("Cancel"), modifier = Modifier.size(16.dp))
+                            IconButton(onClick = { replyTo = null }) {
+                                Icon(Icons.Filled.Close, contentDescription = tr("Cancel"), modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -608,7 +708,7 @@ fun DirectChatScreen(nav: NavController) {
                                     Row(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(999.dp))
-                                            .clickable(enabled = !sessionState.streaming) { modelMenuOpen = true }
+                                            .clickable(enabled = !uiStreaming) { modelMenuOpen = true }
                                             .padding(horizontal = 8.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
@@ -713,7 +813,7 @@ fun DirectChatScreen(nav: NavController) {
                             }
                         }
                         Spacer(Modifier.width(8.dp))
-                        if (sessionState.streaming) {
+                        if (uiStreaming) {
                             // Thinking state shows the goo loader in EVERY theme (tap
                             // still cancels) — Atelier included, at the user's request
                             // (2026-11-02); its stop-square variant was dropped.
@@ -772,6 +872,7 @@ fun DirectChatScreen(nav: NavController) {
                     }
                 }
             }
+            }
         }
     }
 
@@ -800,13 +901,23 @@ fun DirectChatScreen(nav: NavController) {
                     singleLine = true,
                     label = { Text(tr("Conversation title")) },
                     modifier = Modifier.fillMaxWidth(),
+                    // UI #5: an empty title could be saved before (the VM
+                    // silently kept the old one) — guard + explain inline.
+                    supportingText = if (renameText.isBlank()) {
+                        { Text(tr("Title can't be empty")) }
+                    } else {
+                        null
+                    },
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    vm.renameConversation(renameTarget!!.id, renameText)
-                    renameTarget = null
-                }) { Text(tr("Save")) }
+                TextButton(
+                    onClick = {
+                        vm.renameConversation(renameTarget!!.id, renameText)
+                        renameTarget = null
+                    },
+                    enabled = renameText.isNotBlank(),
+                ) { Text(tr("Save")) }
             },
             dismissButton = {
                 TextButton(onClick = { renameTarget = null }) { Text(tr("Cancel")) }
@@ -927,6 +1038,31 @@ private fun DirectMessageBubble(msg: ChatMessage, onShowActions: () -> Unit = {}
     }
 }
 
+/**
+ * P-05 (audit round 2): collects the session StateFlow LOCALLY so the
+ * 80 ms stream ticks recompose only this bubble — never the screen root
+ * (the pattern ChatScreen's StreamingBubble already uses). Follows its
+ * own tail while streaming, only when the user is pinned to the bottom.
+ */
+@Composable
+private fun DirectStreamingBubble(
+    session: StateFlow<com.anvex.core.android.session.ChatSession.UiState>,
+    listState: LazyListState,
+) {
+    val s by session.collectAsState()
+    val text = s.streamText
+    val reasoning = s.streamReasoning
+    LaunchedEffect(text.length / 160) {
+        val count = listState.layoutInfo.totalItemsCount
+        if (count > 0 && !listState.isScrollInProgress && listState.isPinnedToBottom()) {
+            listState.scrollToItem(count - 1)
+        }
+    }
+    if (text.isNotEmpty() || reasoning.isNotBlank()) {
+        StreamingBubble(text = text, reasoning = reasoning)
+    }
+}
+
 @Composable
 private fun StreamingBubble(text: String, reasoning: String) {
     val atelier = com.anvex.app.ui.theme.LocalThemeStyle.current ==
@@ -1028,7 +1164,6 @@ private fun ConversationDrawerRow(
             Box {
                 IconButton(
                     onClick = { onMenuOpenChange(true) },
-                    modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,

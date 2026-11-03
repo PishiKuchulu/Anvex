@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,10 +35,12 @@ import androidx.compose.ui.semantics.semantics
 /**
  * Atelier («کارگاه») dock: the design replaces the floating pill bar with a
  * flat bar attached to the bottom edge — surface-colored, one hairline on
- * top, four destinations, and the active one marked by a short accent bar
- * above its icon (the accent is reserved for "the primary thing right
- * now", per the design's color rule). Shown only while the Atelier style
- * is active; every other style keeps the floating [AnvexDock].
+ * top, five destinations (Home · Projects · Chat · Agent · Memory), and
+ * the active one marked by a short accent bar above its icon plus a bold
+ * label (the accent is reserved for "the primary thing right now", per
+ * the design's color rule; the weight keeps selection readable without
+ * relying on color alone). Shown only while the Atelier style is active;
+ * every other style keeps the floating [AnvexDock].
  */
 @Composable
 fun AtelierDock(items: List<DockItem>) {
@@ -67,7 +70,12 @@ fun AtelierDock(items: List<DockItem>) {
                             .clip(RoundedCornerShape(12.dp))
                             .clickable(enabled = item.enabled, role = Role.Tab, onClick = item.onClick)
                             .semantics { this.selected = item.selected }
+                            // 2026-11-03 audit: same sub-48dp target as
+                            // the classic dock — hit area is now ≥48dp,
+                            // visuals unchanged.
+                            .heightIn(min = 48.dp)
                             .padding(top = 2.dp, bottom = 2.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
                     ) {
                         Box(
                             modifier = Modifier
@@ -80,7 +88,8 @@ fun AtelierDock(items: List<DockItem>) {
                         )
                         Icon(
                             item.icon,
-                            contentDescription = item.label,
+                            // Label text below is the single announcement.
+                            contentDescription = null,
                             modifier = Modifier
                                 .padding(top = 4.dp)
                                 .size(22.dp),
@@ -89,6 +98,8 @@ fun AtelierDock(items: List<DockItem>) {
                         Text(
                             item.label,
                             fontSize = 11.sp,
+                            fontWeight = if (item.selected) androidx.compose.ui.text.font.FontWeight.Bold
+                                else androidx.compose.ui.text.font.FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color = if (item.selected) accent else dim,

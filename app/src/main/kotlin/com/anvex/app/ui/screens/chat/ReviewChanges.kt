@@ -2,6 +2,9 @@ package com.anvex.app.ui.screens.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,6 +104,7 @@ private fun computeDiff(before: String?, after: String?): List<DiffLine> {
 fun ReviewChangesSheet(
     changes: List<FileMutation>,
     initialPath: String?,
+    journalDropped: Int = 0,
     onRevert: (String) -> Unit,
     onOpenEditor: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -144,6 +148,17 @@ fun ReviewChangesSheet(
                         Icon(Icons.Filled.Close, contentDescription = tr("Close"))
                     }
                 }
+                if (journalDropped > 0) {
+                    // MR-3 (audit round 2): the engine journal evicted its
+                    // oldest entries at the log bounds — say so instead of
+                    // silently presenting a journal that begins mid-turn.
+                    Text(
+                        tr("Journal trimmed: %1\$d earlier change(s) not shown").format(journalDropped),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 // Sensitive-file notice (design: "no sensitive file changed"
                 // reassurance, or a warning when one did change).
                 Surface(
@@ -174,7 +189,10 @@ fun ReviewChangesSheet(
                             color = if (isSel) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.clip(RoundedCornerShape(999.dp))
-                                .clickable { selectedPath = change.path },
+                                // UI #4: tab semantics — the selected file is
+                                // announced as selected to TalkBack.
+                                .semantics { selected = isSel }
+                                .clickable(role = Role.Tab) { selectedPath = change.path },
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -242,7 +260,10 @@ fun ReviewChangesSheet(
                     }
                 } else {
                     LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                        items(diff) { line ->
+                        // P-24 (audit round 2): keyed rows — the
+                        // (oldNo, newNo, kind) triple is unique within a
+                        // diff, so row state survives diff recomputation.
+                        items(diff, key = { "${it.oldNo}:${it.newNo}:${it.kind}" }) { line ->
                             val bg = when (line.kind) {
                                 DiffKind.ADD -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.13f)
                                 DiffKind.DEL -> MaterialTheme.colorScheme.error.copy(alpha = 0.11f)

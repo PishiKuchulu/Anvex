@@ -60,4 +60,42 @@ class ContextBuilderSecurityTest {
         assertTrue(context.contains("README.md (5 bytes)"))
         assertTrue(context.contains("Project file list (61 files):"))
     }
+
+    @Test fun buildWithStatusSurfacesBackendFailureAsWarning() {
+        // Regression (2026-11-03): a throwing walk (SAF permission loss)
+        // used to degrade to the generic fallback text with NO signal —
+        // the model proceeded blind and the user was never told.
+        val backing = FakeFs()
+        val fs = object : ProjectFileSystem by backing {
+            override fun walkWithSizes(): List<Pair<String, Long?>> =
+                throw IllegalStateException("backend down")
+        }
+        val result = ContextBuilder.buildWithStatus(fs)
+        assertTrue(result.context.startsWith("Project context could not be read safely"))
+        assertTrue(result.warning?.contains("Project context unavailable (IllegalStateException)") == true)
+    }
+
+    @Test fun buildWithStatusSuccessHasNoWarning() {
+        val fs = FakeFs()
+        fs.writeFile("a.txt", "hello")
+        assertEquals(null, ContextBuilder.buildWithStatus(fs).warning)
+    }
+
+    @Test fun laterPriorityFilesAreNotStarvedByOneHugeEarlierFile() {
+        // Regression (2026-11-03): every priority file was capped at the
+        // same 14k, so a huge first file consumed the content budget and
+        // later key files were truncated to whatever crumbs remained —
+        // here the LAST file's tail marker only survives with fair shares.
+        val fs = FakeFs()
+        fs.writeFile("src/open.txt", "OPEN " + "o".repeat(12_995))
+        fs.writeFile("src/p1.txt", "P1 " + "a".repeat(11_997))
+        fs.writeFile("src/p2.txt", "b".repeat(8_994) + "P2TAIL")
+        val context = ContextBuilder.build(
+            fs,
+            openFilePath = "src/open.txt",
+            mentionedFiles = listOf("src/p1.txt", "src/p2.txt"),
+            maxTotalChars = 36_000,
+        )
+        assertTrue("last priority file lost its tail to budget starvation", context.contains("P2TAIL"))
+    }
 }

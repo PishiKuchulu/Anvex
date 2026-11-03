@@ -31,8 +31,20 @@ class SigningKeyViewModel : ViewModel() {
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy
 
-    private val _status = MutableStateFlow<String?>(null)
-    val status: StateFlow<String?> = _status
+    /**
+     * Typed status (audit 2026-11-03): the screen used to color the
+     * status by substring-matching its text ("fail", "denied", …) —
+     * the kind now travels with the message.
+     */
+    sealed interface Status {
+        val text: String
+        data class Info(override val text: String) : Status
+        data class Success(override val text: String) : Status
+        data class Failure(override val text: String) : Status
+    }
+
+    private val _status = MutableStateFlow<Status?>(null)
+    val status: StateFlow<Status?> = _status
 
     private val _pushDone = MutableStateFlow(false)
     val pushDone: StateFlow<Boolean> = _pushDone
@@ -48,9 +60,9 @@ class SigningKeyViewModel : ViewModel() {
                     SigningKeyManager.generate(alias.trim(), storePassword, keyPassword, validityYears)
                 }
                 _generated.value = Generated(result.pkcs12Bytes, result.alias, result.certFingerprint)
-                _status.value = "Signing key generated on this device."
+                _status.value = Status.Success("Signing key generated on this device.")
             } catch (e: Exception) {
-                _status.value = e.message ?: "Key generation failed."
+                _status.value = Status.Failure(e.message ?: "Key generation failed.")
             } finally {
                 storePassword.wipe()
                 keyPassword.wipe()
@@ -65,7 +77,12 @@ class SigningKeyViewModel : ViewModel() {
         storePassword: CharArray,
         keyPassword: CharArray,
     ) {
-        val gen = _generated.value ?: return
+        val gen = _generated.value ?: run {
+            // Was a silent no-op: the push button looked dead when no key
+            // had been generated yet (audit 2026-11-03).
+            _status.value = Status.Info("Generate a signing key first.")
+            return
+        }
         if (_busy.value) return
         _busy.value = true
         _status.value = null
@@ -80,12 +97,12 @@ class SigningKeyViewModel : ViewModel() {
                     token,
                 ).getOrThrow()
                 _pushDone.value = true
-                _status.value = "4 secrets pushed to $owner/$repo."
+                _status.value = Status.Success("4 secrets pushed to $owner/$repo.")
             } catch (t: Throwable) {
                 // Throwable, not just Exception: crypto/native failures can
                 // surface as Errors (e.g. UnsatisfiedLinkError), which must
                 // never crash the app from here.
-                _status.value = t.message ?: "Secret push failed."
+                _status.value = Status.Failure(t.message ?: "Secret push failed.")
             } finally {
                 storePassword.wipe()
                 keyPassword.wipe()
@@ -95,12 +112,17 @@ class SigningKeyViewModel : ViewModel() {
     }
 
     fun clearGenerated() {
+        // Zero the key material BEFORE dropping the reference (audit
+        // 2026-11-03): passwords are wiped everywhere else in this flow,
+        // but the PKCS12 bytes themselves used to linger in the heap
+        // until GC got around to them.
+        _generated.value?.pkcs12?.fill(0)
         _generated.value = null
         _pushDone.value = false
         _status.value = null
     }
 
-    fun setStatus(message: String) {
-        _status.value = message
+    fun setStatus(status: Status) {
+        _status.value = status
     }
 }

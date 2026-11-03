@@ -8,6 +8,8 @@ import com.anvex.core.engine.PreviewHarness
 import com.anvex.core.model.Project
 import com.anvex.core.model.ProjectType
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -59,22 +61,43 @@ class PreviewViewModel(
 
     private var startJob: kotlinx.coroutines.Job? = null
 
+    /** Serializes preview-server installation; only the newest start may install. */
+    private val startMutex = kotlinx.coroutines.sync.Mutex()
+
+    @Volatile
+    private var startGeneration = 0
+
     private val _pageErrors = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val pageErrors: SharedFlow<String> = _pageErrors
 
     /** Start (or restart after project-type change) the preview server. */
     fun start(type: ProjectType) {
         stop()
+        val token = ++startGeneration
         startJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val fs = runCatching { graph.projects.fileSystemForAsync(projectId) }.getOrNull() ?: return@launch
             val server = StaticPreviewServer(fs, type, graph.runtimeAssetLoader)
             server.start()
-            if (!isActive) {
+            // Install under a mutex, only when this is still the newest
+            // start request (audit 2026-11-03): starts run on the
+            // multi-threaded IO dispatcher, and a superseded job could
+            // otherwise install its server AFTER the newer one —
+            // stopping the live server and pointing the UI at a dead
+            // one. A plain isActive check left that window open.
+            val stillActive = isActive
+            val installed = startMutex.withLock {
+                if (token == startGeneration && stillActive) {
+                    graph.previewServer?.stop()
+                    graph.previewServer = server
+                    true
+                } else {
+                    false
+                }
+            }
+            if (!installed) {
                 server.stop()
                 return@launch
             }
-            graph.previewServer?.stop()
-            graph.previewServer = server
             _rootUrl.value = server.rootUrl
             _url.value = server.entryUrl
             loadPreviewFiles(fs)
@@ -103,6 +126,7 @@ class PreviewViewModel(
     }
 
     fun stop() {
+        startGeneration++
         startJob?.cancel()
         startJob = null
         graph.previewServer?.stop()
@@ -147,7 +171,16 @@ class PreviewViewModel(
                 }
                 "ready" -> appendLine(ConsoleLine("info", "Preview ready"))
             }
-        } catch (e: Exception) { android.util.Log.w("Anvex", "non-fatal: ${e.javaClass.simpleName}", e);
+        } catch (e: Exception) {
+            android.util.Log.w("Anvex", "non-fatal: ${e.javaClass.simpleName}", e)
+            // Surface the first parse failure in the console itself
+            // (audit 2026-11-03): bridge messages used to vanish
+            // silently, so a page whose bridge broke looked merely
+            // quiet. One notice is enough — no per-failure spam.
+            if (bridgeParseFailures == 0) {
+                appendLine(ConsoleLine("warn", "Some preview messages could not be parsed — the console may be incomplete."))
+            }
+            bridgeParseFailures++
         }
     }
 
@@ -155,8 +188,10 @@ class PreviewViewModel(
         _console.value = emptyList()
     }
 
+    private var bridgeParseFailures = 0
+
     private fun appendLine(line: ConsoleLine) {
-        _console.value = (_console.value + line).takeLast(300) // bounded ring buffer
+        _console.update { lines -> (lines + line).takeLast(300) } // bounded ring buffer, atomic append
     }
 
     override fun onCleared() {

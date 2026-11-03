@@ -78,10 +78,10 @@ fun FileExplorerSheet(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = { newEntryDir = "" to false }) {
-                    Icon(Icons.Filled.NoteAdd, contentDescription = "New file")
+                    Icon(Icons.Filled.NoteAdd, contentDescription = tr("New file"))
                 }
                 IconButton(onClick = { newEntryDir = "" to true }) {
-                    Icon(Icons.Filled.CreateNewFolder, contentDescription = "New folder")
+                    Icon(Icons.Filled.CreateNewFolder, contentDescription = tr("New folder"))
                 }
             }
             error?.let {
@@ -93,7 +93,7 @@ fun FileExplorerSheet(
                 )
             }
             Text(
-                "Project files",
+                tr("Project files"),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -217,7 +217,7 @@ private fun FileRow(
         IconButton(onClick = { menuOpen = true }) {
             Icon(
                 Icons.Filled.MoreVert,
-                contentDescription = "Actions",
+                contentDescription = tr("Actions"),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -254,13 +254,13 @@ private fun CreateEntryDialog(isFolder: Boolean, onConfirm: (String) -> Unit, on
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isFolder) "New folder" else "New file") },
+        title = { Text(if (isFolder) tr("New folder") else tr("New file")) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
                 singleLine = true,
-                label = { Text(if (isFolder) "Folder name" else "File name (e.g. App.jsx)") },
+                label = { Text(if (isFolder) tr("Folder name") else tr("File name (e.g. App.jsx)")) },
             )
         },
         confirmButton = {

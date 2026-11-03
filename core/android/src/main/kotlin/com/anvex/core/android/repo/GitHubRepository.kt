@@ -6,6 +6,11 @@ import com.anvex.core.engine.PathSanitizer
 import com.anvex.core.engine.ArtifactHygienePolicy
 import com.anvex.core.engine.ProjectFileSystem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -26,10 +31,34 @@ class GitHubRepository(private val context: android.content.Context) {
     fun saveToken(token: String) {
         val clean = token.trim()
         require(clean.length in 20..512) { "Invalid GitHub token length." }
-        prefs.edit().putString(tokenKey, KeystoreCrypto.encrypt(clean)).apply()
+        // Audit 04 (Low): bind the ciphertext to its purpose with AAD
+        // ("v2:" marker), like provider keys — a bare Keystore ciphertext
+        // could otherwise be replayed into any other encrypted field.
+        prefs.edit().putString(tokenKey, TOKEN_V2_PREFIX + KeystoreCrypto.encrypt(clean, TOKEN_AAD)).apply()
     }
     fun clearToken() { prefs.edit().remove(tokenKey).apply() }
-    private fun token(): String = prefs.getString(tokenKey, null)?.let { runCatching { KeystoreCrypto.decrypt(it) }.getOrDefault("") } ?: ""
+
+    private fun decryptToken(stored: String): String = runCatching {
+        if (stored.startsWith(TOKEN_V2_PREFIX)) {
+            KeystoreCrypto.decrypt(stored.removePrefix(TOKEN_V2_PREFIX), TOKEN_AAD)
+        } else {
+            // Legacy unversioned value: AAD attempt, then the plain form.
+            runCatching { KeystoreCrypto.decrypt(stored, TOKEN_AAD) }
+                .getOrElse { KeystoreCrypto.decrypt(stored) }
+        }
+    }.getOrDefault("")
+
+    private fun token(): String {
+        val stored = prefs.getString(tokenKey, null) ?: return ""
+        val plain = decryptToken(stored)
+        // Opportunistic upgrade: a legacy value that still decrypts is
+        // re-stored in the AAD-bound form, so the unbound window closes
+        // on first use instead of waiting for a manual re-entry.
+        if (plain.isNotBlank() && !stored.startsWith(TOKEN_V2_PREFIX)) {
+            runCatching { saveToken(plain) }
+        }
+        return plain
+    }
 
     // -- GitHub Device Authorization Flow (OAuth for apps without a backend) --
     // No client secret is needed; the user creates a GitHub OAuth App once and
@@ -148,13 +177,18 @@ class GitHubRepository(private val context: android.content.Context) {
 
             // Content-scan everything BEFORE uploading anything (unchanged rule):
             // a likely secret stops the whole sync, nothing is half-pushed.
-            val payloads = included.map { path ->
+            // Audit P-19: the scan used to MATERIALIZE every file's bytes and
+            // hold them for the whole push (tens of MB resident on big
+            // projects). Bytes are released right after scanning now; the
+            // upload phase re-reads each file and re-verifies size + secret,
+            // so a file changed between scan and upload cannot slip
+            // unscanned content in either.
+            for (path in included) {
                 val bytes = fs.readFileBytes(path) ?: error("Could not read '$path'.")
                 require(bytes.size <= MAX_FILE_BYTES) { "File '$path' exceeds the GitHub sync limit." }
                 require(!ArtifactHygienePolicy.containsLikelySecret(path, bytes)) {
                     error("GitHub sync stopped: a likely secret was detected in $path. Remove the secret and retry.")
                 }
-                path to bytes
             }
 
             // v4.10.1 (BUG-10): Git Data API — blobs + ONE tree + ONE commit +
@@ -175,14 +209,33 @@ class GitHubRepository(private val context: android.content.Context) {
                 }
             } else emptyList()
 
+            // Blob uploads with bounded parallelism (audit P-19): results
+            // land in per-index slots, so the tree below is built in the
+            // same deterministic order as before.
+            val blobShas = arrayOfNulls<String>(included.size)
+            coroutineScope {
+                val gate = Semaphore(MAX_PARALLEL_BLOBS)
+                included.mapIndexed { index, path ->
+                    async {
+                        gate.withPermit {
+                            val bytes = fs.readFileBytes(path) ?: error("Could not read '$path'.")
+                            require(bytes.size <= MAX_FILE_BYTES) { "File '$path' exceeds the GitHub sync limit." }
+                            require(!ArtifactHygienePolicy.containsLikelySecret(path, bytes)) {
+                                error("GitHub sync stopped: a likely secret was detected in $path. Remove the secret and retry.")
+                            }
+                            val blob = requestJson(
+                                "$api/git/blobs", auth, "POST",
+                                JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"),
+                            )
+                            blobShas[index] = blob.optString("sha")
+                        }
+                    }
+                }.awaitAll()
+            }
             val treeEntries = org.json.JSONArray()
             var pushed = 0
-            for ((path, bytes) in payloads) {
-                val blob = requestJson(
-                    "$api/git/blobs", auth, "POST",
-                    JSONObject().put("content", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("encoding", "base64"),
-                )
-                treeEntries.put(JSONObject().put("path", path).put("mode", "100644").put("type", "blob").put("sha", blob.optString("sha")))
+            for ((index, path) in included.withIndex()) {
+                treeEntries.put(JSONObject().put("path", path).put("mode", "100644").put("type", "blob").put("sha", blobShas[index]))
                 pushed++
             }
             // Carry over remote files the sync does not manage (excluded by the
@@ -254,20 +307,41 @@ class GitHubRepository(private val context: android.content.Context) {
                 require(blobUrl.startsWith("https://api.github.com/repos/")) { "Unexpected GitHub blob URL." }
                 pending += Pending(path, blobUrl)
             }
-            // Phase 2: download + write.
+            // Phase 2: download + write. Audit 02: a failure mid-pull used
+            // to leave a half-updated workspace indistinguishable from a
+            // completed pull. Before-images are captured as files are
+            // written (memory-bounded by MAX_PULL_BACKUP_BYTES; files past
+            // the cap are written without one) and any failure rolls the
+            // backed-up files back in reverse order.
+            val backups = ArrayList<Pair<String, ByteArray?>>()
+            var backupBytes = 0L
             var written = 0
-            for (entry in pending) {
-                val blob = requestJson(entry.blobUrl, auth, "GET")
-                val content = blob.optString("content").replace("\n", "")
-                val bytes = Base64.decode(content, Base64.DEFAULT)
-                require(bytes.size <= MAX_FILE_BYTES) { "Remote file '${entry.path}' exceeds the sync limit." }
-                if (ArtifactHygienePolicy.containsLikelySecret(entry.path, bytes)) {
-                    skipped += entry.path
-                    continue
+            try {
+                for (entry in pending) {
+                    val blob = requestJson(entry.blobUrl, auth, "GET")
+                    val content = blob.optString("content").replace("\n", "")
+                    val bytes = Base64.decode(content, Base64.DEFAULT)
+                    require(bytes.size <= MAX_FILE_BYTES) { "Remote file '${entry.path}' exceeds the sync limit." }
+                    if (ArtifactHygienePolicy.containsLikelySecret(entry.path, bytes)) {
+                        skipped += entry.path
+                        continue
+                    }
+                    val before = runCatching { fs.readFileBytes(entry.path) }.getOrNull()
+                    if (backupBytes + (before?.size ?: 0) <= MAX_PULL_BACKUP_BYTES) {
+                        backups += entry.path to before
+                        backupBytes += before?.size ?: 0
+                    }
+                    PathSanitizer.parent(entry.path)?.let { if (it.isNotBlank()) fs.mkdirs(it) }
+                    fs.writeFileBytes(entry.path, bytes)
+                    written++
                 }
-                PathSanitizer.parent(entry.path)?.let { if (it.isNotBlank()) fs.mkdirs(it) }
-                fs.writeFileBytes(entry.path, bytes)
-                written++
+            } catch (e: Exception) {
+                for ((path, before) in backups.asReversed()) {
+                    runCatching {
+                        if (before != null) fs.writeFileBytes(path, before) else fs.delete(path)
+                    }
+                }
+                throw e
             }
             SyncOutcome(written, skipped)
         }
@@ -323,5 +397,15 @@ class GitHubRepository(private val context: android.content.Context) {
     companion object {
         const val MAX_FILES = 2_000
         const val MAX_FILE_BYTES = 8L * 1024 * 1024
+
+        /** Prefix marking AAD-bound token ciphertexts (audit 04). */
+        private const val TOKEN_V2_PREFIX = "v2:"
+        private val TOKEN_AAD: ByteArray = "anvex-github-token-v1".toByteArray(Charsets.UTF_8)
+
+        /** Bounded parallel blob uploads during push (audit P-19). */
+        private const val MAX_PARALLEL_BLOBS = 4
+
+        /** Cap on pull before-images kept for rollback (audit 02). */
+        private const val MAX_PULL_BACKUP_BYTES = 64L * 1024 * 1024
     }
 }

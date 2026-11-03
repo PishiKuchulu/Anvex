@@ -97,6 +97,9 @@ private fun MessageActionRow(icon: ImageVector, label: String, onClick: () -> Un
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // 2026-11-03 audit: rows were borderline ≈44–46dp — pin the
+            // hit area to the 48dp minimum explicitly.
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),

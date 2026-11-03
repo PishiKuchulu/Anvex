@@ -3,11 +3,44 @@ package com.anvex.core.engine
 /** Central, side-effect-free risk policy used before any AI-originated action. */
 object ActionSafetyPolicy {
     enum class Risk { SAFE, REQUIRES_APPROVAL }
-    data class Assessment(val risk: Risk, val reason: String) {
+
+    /**
+     * [detail] carries the concrete instance data behind a verdict — the
+     * command text, target path + size, artifact name — so an approval
+     * prompt can show the user WHAT is being approved, not just the
+     * category of risk (audit round 2, N1: the dialog used to be blind).
+     * Empty for SAFE verdicts and for verdicts with no instance data.
+     */
+    data class Assessment(val risk: Risk, val reason: String, val detail: String = "") {
         val requiresApproval: Boolean get() = risk == Risk.REQUIRES_APPROVAL
     }
 
+    private const val MAX_DETAIL_CHARS = 400
+
+    /** Human byte count for approval details (e.g. "2.4 MB"). */
+    private fun humanBytes(bytes: Int): String = when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+        else -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    }
+
+    /** Preview of free-form content for an approval detail, length-bounded. */
+    private fun preview(text: String): String {
+        val clean = text.trim()
+        return if (clean.length > MAX_DETAIL_CHARS) clean.take(MAX_DETAIL_CHARS) + "…" else clean
+    }
+
     fun assess(command: String): Assessment {
+        val verdict = assessCommand(command)
+        // Approval prompts must name the command being approved.
+        return if (verdict.requiresApproval && verdict.detail.isBlank()) {
+            verdict.copy(detail = preview(command))
+        } else {
+            verdict
+        }
+    }
+
+    private fun assessCommand(command: String): Assessment {
         // v4.10.1 (external review SEC-03): the old policy matched anchored
         // regexes against the raw string, so `/bin/rm -rf x`, `env rm -rf x`,
         // `rm${IFS}-rf x`, `find . -delete`, `git -C . reset --hard` and
@@ -284,17 +317,39 @@ object ActionSafetyPolicy {
     private val ECHO_REDIRECT_LIKE = Regex("^echo\\s+[^;&|<>`\\$]+\\s*>>?\\s*[^;&|<>`\\$]+$")
 
     fun assess(action: BoltAction): Assessment = when (action) {
-        is BoltAction.FileAction -> if (action.content.toByteArray().size > 2_000_000)
-            Assessment(Risk.REQUIRES_APPROVAL, "Large AI file mutation requires explicit approval.")
-        else Assessment(Risk.SAFE, "File mutation is within the safe size budget.")
+        is BoltAction.FileAction -> {
+            val size = action.content.toByteArray().size
+            if (size > 2_000_000)
+                Assessment(
+                    Risk.REQUIRES_APPROVAL,
+                    "Large AI file mutation requires explicit approval.",
+                    detail = "${action.filePath} · ${humanBytes(size)}",
+                )
+            else Assessment(Risk.SAFE, "File mutation is within the safe size budget.")
+        }
         is BoltAction.ShellAction -> assess(action.content)
         is BoltAction.StartAction -> assess(action.content)
-        is BoltAction.ArtifactAction -> if (action.content.toByteArray().size > 20 * 1024 * 1024 || action.paths.size > 20_000)
-            Assessment(Risk.REQUIRES_APPROVAL, "Large generated-file request exceeds the normal packaging budget.")
-        else Assessment(Risk.SAFE, "Generated-file request is within the packaging budget.")
+        is BoltAction.ArtifactAction -> {
+            val size = action.content.toByteArray().size
+            if (size > 20 * 1024 * 1024 || action.paths.size > 20_000)
+                Assessment(
+                    Risk.REQUIRES_APPROVAL,
+                    "Large generated-file request exceeds the normal packaging budget.",
+                    detail = "${action.outputName} (${action.format}) · ${action.paths.size} path(s) · content ${humanBytes(size)}",
+                )
+            else Assessment(Risk.SAFE, "Generated-file request is within the packaging budget.")
+        }
         is BoltAction.ToolAction -> if (action.name == "mcp")
-            Assessment(Risk.REQUIRES_APPROVAL, "External MCP tool call needs the user's approval.")
+            Assessment(
+                Risk.REQUIRES_APPROVAL,
+                "External MCP tool call needs the user's approval.",
+                detail = preview(action.argument.ifBlank { action.name }),
+            )
         else Assessment(Risk.SAFE, "Read-only tool call.")
-        is BoltAction.UnknownAction -> Assessment(Risk.REQUIRES_APPROVAL, "Unknown action type cannot be executed without explicit approval.")
+        is BoltAction.UnknownAction -> Assessment(
+            Risk.REQUIRES_APPROVAL,
+            "Unknown action type cannot be executed without explicit approval.",
+            detail = "type: ${action.type} · " + preview(action.content),
+        )
     }
 }

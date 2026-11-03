@@ -10,8 +10,11 @@ import com.anvex.core.android.AppGraph
 /**
  * v4.0 (GOAL 4): JetBrains Mono is bundled offline (assets/harness/fonts, SIL OFL 1.1) and used for
  * every code-bearing surface: the editor, terminal, diff, build logs and path chips.
- * The UI font remains the platform sans (Roboto/Inter-like) for readability,
- * including Persian fallback glyphs.
+ * The UI font is Vazirmatn (bundled, see [VazirmatnFont]) in EVERY style —
+ * it carries both Persian and Latin glyphs, so the app's primary language
+ * renders with consistent weight and metrics on every device instead of
+ * falling back to whatever Persian font the device happens to ship
+ * (2026-11-03 audit, Layer 1: only Atelier had a Persian-capable font).
  */
 /** One font copy, shared with the web harness (served from assets/harness/fonts). Lazy: needs AppGraph. */
 val AnvexMono: FontFamily by lazy {
@@ -23,12 +26,16 @@ val AnvexMono: FontFamily by lazy {
     )
 }
 
-private val UiFont = FontFamily.SansSerif
+private val UiFont: FontFamily get() = VazirmatnFont
 val CodeFont: FontFamily by lazy { AnvexMono }
 
 /** Material 3 type scale tuned for a compact IDE without sacrificing readability. */
 val AnvexTypography = Typography(
+    displayLarge = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 44.sp, lineHeight = 52.sp),
+    displayMedium = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 36.sp, lineHeight = 44.sp),
     displaySmall = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 30.sp, lineHeight = 36.sp),
+    headlineLarge = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 34.sp),
+    headlineMedium = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 32.sp),
     headlineSmall = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp),
     titleLarge = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp),
     titleMedium = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 22.sp),
@@ -44,8 +51,9 @@ val AnvexTypography = Typography(
 /** Convenience style for monospace inline content (paths, commands, file names). */
 val AnvexCodeStyle = TextStyle(fontFamily = AnvexMono, fontSize = 12.sp, lineHeight = 18.sp)
 
-/** Atelier («کارگاه») UI font: Vazirmatn (SIL OFL 1.1), bundled in assets/fonts. Lazy: needs AppGraph. */
-val AtelierFont: FontFamily by lazy {
+/** Vazirmatn (SIL OFL 1.1), bundled in assets/fonts — the one UI font for
+ * every theme style (Persian + Latin coverage). Lazy: needs AppGraph. */
+val VazirmatnFont: FontFamily by lazy {
     val assets = AppGraph.get().context.assets
     FontFamily(
         androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Regular.ttf", assets, FontWeight.Normal),
@@ -55,13 +63,20 @@ val AtelierFont: FontFamily by lazy {
     )
 }
 
+/** Kept name for the Atelier scale below; same bundled family as [VazirmatnFont]. */
+val AtelierFont: FontFamily get() = VazirmatnFont
+
 /**
  * Atelier type scale (design spec section 4): Display 26/800, Title 20/800,
  * Headline 16/800, Body 14/500, Caption 12/500 — mapped onto the Material
  * slots the existing screens already read.
  */
 val AtelierTypography = Typography(
+    displayLarge = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 34.sp, lineHeight = 44.sp),
+    displayMedium = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 40.sp),
     displaySmall = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, lineHeight = 34.sp),
+    headlineLarge = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, lineHeight = 32.sp),
+    headlineMedium = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, lineHeight = 30.sp),
     headlineSmall = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, lineHeight = 27.sp),
     titleLarge = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, lineHeight = 27.sp),
     titleMedium = TextStyle(fontFamily = AtelierFont, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, lineHeight = 22.sp),

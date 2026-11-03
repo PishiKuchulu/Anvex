@@ -14,6 +14,7 @@ import com.anvex.core.ai.AiError
 import com.anvex.core.ai.ProviderClientFactory
 import com.anvex.core.android.AppGraph
 import com.anvex.core.android.repo.AgentEngine
+import com.anvex.core.android.repo.ChatRepository
 import com.anvex.core.android.runtime.pi.PiEngine
 import com.anvex.core.android.runtime.pi.PiProviderMapping
 import com.anvex.core.android.runtime.pi.PiToolMapping
@@ -30,6 +31,7 @@ import com.anvex.core.model.ProviderConfig
 import com.anvex.core.model.ThinkingLevel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -62,8 +64,53 @@ class ChatViewModel(
 
     private val graph = AppGraph.get()
 
-    val messages: StateFlow<List<ChatMessage>> = graph.chat.observeForProject(projectId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // P-01 (audit 2026-11-03): the UI observes only the newest
+    // UI_WINDOW messages; older pages are prepended on demand via
+    // [loadOlderMessages]. Full history stays available to transcript
+    // export through observeForProject (Home), never to this list.
+    private val _olderMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    private var olderExhausted = false
+    private var loadingOlder = false
+    private val _hasOlderMessages = MutableStateFlow(false)
+    /** True while a [loadOlderMessages] call can still page in history. */
+    val hasOlderMessages: StateFlow<Boolean> = _hasOlderMessages.asStateFlow()
+
+    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            graph.chat.observeRecentForProject(projectId).collect { recent ->
+                _messages.value = (_olderMessages.value + recent).distinctBy { it.id }
+                if (!olderExhausted) {
+                    _hasOlderMessages.value =
+                        recent.size >= ChatRepository.UI_WINDOW || _olderMessages.value.isNotEmpty()
+                }
+            }
+        }
+    }
+
+    /** Page one window of older messages in front of the loaded ones. */
+    fun loadOlderMessages() {
+        if (loadingOlder || olderExhausted) return
+        val oldest = _messages.value.firstOrNull() ?: return
+        loadingOlder = true
+        viewModelScope.launch {
+            try {
+                val older = graph.chat.loadOlder(projectId, oldest.createdAt, oldest.id)
+                if (older.size < ChatRepository.UI_WINDOW) olderExhausted = true
+                if (olderExhausted) _hasOlderMessages.value = false
+                if (older.isEmpty()) {
+                    _hasOlderMessages.value = false
+                } else {
+                    _olderMessages.value = older + _olderMessages.value
+                    _messages.value = (older + _messages.value).distinctBy { it.id }
+                }
+            } finally {
+                loadingOlder = false
+            }
+        }
+    }
 
     val project: StateFlow<Project?> = graph.projects.observeAll()
         .map { list -> list.firstOrNull { it.id == projectId } }
@@ -107,6 +154,30 @@ class ChatViewModel(
         _pendingPiApproval.value = null
     }
 
+    // Native-engine action approvals (audit fix, 2026-11-03): mirrors the
+    // Pi approval pattern above. When the agent attempts an action the
+    // safety policy classifies as needing approval (destructive shell,
+    // oversized writes, unknown types), ChatSession's approvalRequester
+    // parks a summary here and suspends until the user answers; the
+    // session-side wait is bounded and denies on timeout.
+    private var pendingApprovalDeferred: CompletableDeferred<Boolean>? = null
+    private val _pendingApproval = MutableStateFlow<ChatSession.ApprovalPrompt?>(null)
+    /** A native-engine action waiting for the user's approval (rendered by ChatScreen). */
+    val pendingApproval: StateFlow<ChatSession.ApprovalPrompt?> = _pendingApproval.asStateFlow()
+
+    fun answerApproval(approved: Boolean) {
+        pendingApprovalDeferred?.complete(approved)
+        pendingApprovalDeferred = null
+        _pendingApproval.value = null
+    }
+
+    /** Deny and clear any parked approval (session rebuild / VM teardown). */
+    private fun denyPendingApproval() {
+        pendingApprovalDeferred?.complete(false)
+        pendingApprovalDeferred = null
+        _pendingApproval.value = null
+    }
+
     /**
      * v4.4.4 (smoothness): lightweight stream snapshot for the chat list chrome.
      * The full [sessionState] ticks up to every 80ms while streaming (stream
@@ -122,6 +193,7 @@ class ChatViewModel(
                 errorTitle = s.error?.userTitle,
                 errorMessage = s.error?.message,
                 memoryNote = s.memoryNote,
+                contextWarning = s.contextWarning,
             )
         }
         .distinctUntilChanged()
@@ -181,10 +253,19 @@ class ChatViewModel(
             graph.providers.observeAll()
                 .map { list -> list.firstOrNull { it.isDefault } ?: list.firstOrNull() }
                 .distinctUntilChanged { old, new ->
+                    // The client is built ONCE from the full runtime config,
+                    // so every field that feeds it must participate in the
+                    // comparison — editing only the temperature, token cap
+                    // or headers used to keep the stale values for all chats
+                    // until some compared field happened to change.
                     old?.id == new?.id && old?.apiKeyEnc == new?.apiKeyEnc &&
-                        old?.baseUrl == new?.baseUrl && old?.model == new?.model
+                        old?.baseUrl == new?.baseUrl && old?.model == new?.model &&
+                        old?.temperature == new?.temperature &&
+                        old?.maxTokens == new?.maxTokens &&
+                        old?.extraHeaders == new?.extraHeaders
                 }
                 .collectLatest { config ->
+                    denyPendingApproval()
                     _session.value?.close()
                     _session.value = null
                     if (config != null) {
@@ -192,7 +273,12 @@ class ChatViewModel(
                         if (runtime != null) {
                             val client = graph.fallbackAiClient() ?: ProviderClientFactory.create(runtime)
                             val fs = graph.projects.fileSystemForAsync(projectId)
-                            val thinking = graph.settings.settings.first().thinkingLevel
+                            // Guarded (audit 2026-11-03): an unguarded
+                            // settings read here let a DataStore failure
+                            // cancel the collector, leaving the session
+                            // unbuilt and every send silently dropped.
+                            val thinking = runCatching { graph.settings.settings.first().thinkingLevel }
+                                .getOrDefault(ThinkingLevel.NORMAL)
                             val s = ChatSession(
                                 projectId = projectId,
                                 fs = fs,
@@ -205,9 +291,16 @@ class ChatViewModel(
                                 onProjectFilesChanged = { graph.projects.refreshType(projectId) },
                                 extras = graph.sessionExtras(),
                             )
-                            s.historyProvider = { graph.chat.observeForProject(projectId).first() }
+                            s.historyProvider = { graph.chat.historyWindow(projectId) }
+                            s.providerConfigLookup = { id -> graph.providers.get(id) }
                             s.webSearchEnabledProvider = { _webOn.value && webSearchAvailable.value }
                             s.mcpCaller = { server, tool, args -> mcpRunner.call(server, tool, args) }
+                            s.approvalRequester = { prompt ->
+                                val deferred = CompletableDeferred<Boolean>()
+                                pendingApprovalDeferred = deferred
+                                _pendingApproval.value = prompt
+                                deferred.await()
+                            }
                             s.projectContextProvider = {
                                 val fs = runCatching { graph.projects.fileSystemForAsync(projectId) }.getOrNull()
                                 val base = if (fs == null) "" else ProjectKnowledge.contextBlock(fs, ProjectKnowledge.instructions(graph.context, projectId))
@@ -226,6 +319,7 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
+        denyPendingApproval()
         _session.value?.close()
         super.onCleared()
     }
@@ -282,10 +376,11 @@ class ChatViewModel(
         val session = _session.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
             var rolledBack = 0
+            var journalCapped = false
             var rollbackError: String? = null
             runCatching {
                 val fs = graph.projects.fileSystemForAsync(projectId)
-                val history = graph.chat.observeForProject(projectId).first()
+                val history = graph.chat.observeRecentForProject(projectId).first()
                 val afterIds = history.filter { it.createdAt > edited.createdAt }
                     .mapNotNull { m -> m.id.takeIf { m.role == MessageRole.ASSISTANT } }
                     .toSet()
@@ -293,25 +388,67 @@ class ChatViewModel(
                     val mutations = graph.mutations.observeRecent(projectId, 200).first()
                         .filter { it.messageId?.let { id -> id in afterIds } == true }
                         .sortedByDescending { it.timestamp }
+                    journalCapped = mutations.size >= 200
+                    // The rollback itself mutates files. Journal every
+                    // restore (before = content on disk now, after =
+                    // restored content) so the journal's before/after
+                    // chain stays faithful and later revert / versions /
+                    // restore operate on real snapshots instead of stale
+                    // ones (audit 2026-11-03).
+                    val rollbackJournal = ArrayList<FileMutation>()
                     for (mutation in mutations) {
-                        when (mutation.operation) {
-                            MutationOp.DELETE -> mutation.before?.let { fs.writeFile(mutation.path, it) }
-                            MutationOp.MODIFY -> mutation.before?.let { fs.writeFile(mutation.path, it) }
-                            MutationOp.RENAME -> { /* best-effort: rename-back not journaled; documented limitation */ }
-                            else -> mutation.before?.let { fs.writeFile(mutation.path, it) }
+                        val beforeContent = mutation.before
+                        val restored = when {
+                            // Rename-back is not journaled (documented limitation).
+                            mutation.operation == MutationOp.RENAME -> false
+                            beforeContent != null -> {
+                                val onDisk = runCatching { fs.readFile(mutation.path) }.getOrNull()
+                                fs.writeFile(mutation.path, beforeContent)
+                                rollbackJournal += FileMutation(
+                                    path = mutation.path,
+                                    operation = if (onDisk == null) MutationOp.CREATE else MutationOp.MODIFY,
+                                    before = onDisk,
+                                    after = beforeContent,
+                                    source = com.anvex.core.model.MutationSource.USER_EDIT,
+                                )
+                                true
+                            }
+                            mutation.operation == MutationOp.MODIFY -> {
+                                // A create-style write: remove the file to return to pre-turn state.
+                                val onDisk = runCatching { fs.readFile(mutation.path) }.getOrNull()
+                                if (fs.delete(mutation.path, recursive = false)) {
+                                    rollbackJournal += FileMutation(
+                                        path = mutation.path,
+                                        operation = MutationOp.DELETE,
+                                        before = onDisk,
+                                        after = null,
+                                        source = com.anvex.core.model.MutationSource.USER_EDIT,
+                                    )
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            // e.g. a directory DELETE whose content was never
+                            // captured: not restorable, and no longer counted
+                            // as rolled back.
+                            else -> false
                         }
-                        if (mutation.before == null && mutation.operation == MutationOp.MODIFY) {
-                            // A create-style write: remove the file to return to pre-turn state.
-                            fs.delete(mutation.path, recursive = false)
-                        }
-                        rolledBack++
+                        // Count only mutations actually restored (the old
+                        // code counted RENAME no-ops and unrestorable
+                        // entries too, overstating the rollback).
+                        if (restored) rolledBack++
+                    }
+                    if (rollbackJournal.isNotEmpty()) {
+                        runCatching { graph.mutations.recordAll(projectId, rollbackJournal) }
                     }
                 }
             }.onFailure { rollbackError = it.message ?: it::class.simpleName }
             withContext(Dispatchers.Main) {
                 _branchNote.value = when {
                     rollbackError != null -> "Branch rollback incomplete: $rollbackError — the AI may see newer files than expected."
-                    rolledBack > 0 -> "Branched: rolled back $rolledBack file change(s) to the state at that message."
+                    rolledBack > 0 -> "Branched: rolled back $rolledBack file change(s) to the state at that message." +
+                        if (journalCapped) " Only the newest 200 journaled changes are kept — older changes after that message were beyond the journal window and were not rolled back." else ""
                     else -> null
                 }
                 session.openFilePath = graph.activeFile(projectId)
@@ -413,8 +550,14 @@ class ChatViewModel(
                     val workspacePath = persistAttachment(fs, safeName, bytes)
                         ?: return@withContext PreparedAttachments(emptyList(), emptyList(),
                             "Cannot save $name to the project workspace.")
-                    val inspection = inspectZip(bytes)
                     val extraction = extractZipToWorkspace(fs, bytes, safeName)
+                    // P-08: the archive used to be decompressed TWICE on
+                    // every send — once by inspectZip, once by the
+                    // extractor. When extraction succeeded, the model reads
+                    // the extracted files itself and the extractor's report
+                    // already carries the manifest, so the bounded
+                    // inspection pass is skipped entirely.
+                    val inspection = if (extraction != null) "" else inspectZip(bytes)
                     payloads += com.anvex.core.ai.ChatAttachment(
                         name = name,
                         mimeType = mime,
@@ -575,6 +718,8 @@ class ChatViewModel(
     }
 
     companion object {
+        /** Pi snapshot publish cadence; mirrors the native engine's 80 ms UI throttle. */
+        private const val PI_SNAPSHOT_INTERVAL_MS = 80L
         private const val MAX_ATTACHMENTS = 5
         private const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
         private const val MAX_FILE_BYTES = 10L * 1024 * 1024
@@ -584,6 +729,13 @@ class ChatViewModel(
     }
 
     fun cancel() {
+        // Stop must revoke a parked approval too (audit round 2, NEW-2):
+        // the dialog used to stay up after Stop, and an Allow tapped then
+        // executed the gated action inside the cancelled turn. Denying
+        // here completes the deferred as a refusal; the session bridge
+        // additionally re-checks turn liveness before anything proceeds.
+        denyPendingApproval()
+        if (pendingPiDeferred != null) answerPiApproval(false)
         if (piJob?.isActive == true) piJob?.cancel()
         _session.value?.cancel()
     }
@@ -594,8 +746,15 @@ class ChatViewModel(
      * [pendingPiApproval], and persists the final assistant message —
      * mirroring the native path's storage contract.
      */
-    private fun piSend(text: String, selected: List<Uri>) {
-        piJob?.cancel()
+    /**
+     * Starts a Pi turn; returns false (starting nothing) when a Pi turn
+     * is already running. Re-entry used to CANCEL the in-flight job, so
+     * a second send — or a regenerate racing a stream — silently killed
+     * the running turn and stranded its staged-copy edits. Only the
+     * explicit Stop action ([cancel]) cancels a Pi turn now.
+     */
+    private fun piSend(text: String, selected: List<Uri>): Boolean {
+        if (piJob?.isActive == true) return false
         piJob = viewModelScope.launch {
             val prepared = prepareAttachments(selected)
             if (prepared.error != null) {
@@ -644,15 +803,25 @@ class ChatViewModel(
                 root = stageDir
                 staged = stageDir
             }
-            graph.chat.upsert(
-                ChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    projectId = projectId,
-                    role = MessageRole.USER,
-                    content = text,
-                    attachments = prepared.metadata,
-                ),
-            )
+            val persisted = runCatching {
+                graph.chat.upsert(
+                    ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        projectId = projectId,
+                        role = MessageRole.USER,
+                        content = text,
+                        attachments = prepared.metadata,
+                    ),
+                )
+            }
+            if (persisted.isFailure && persisted.exceptionOrNull() !is kotlinx.coroutines.CancellationException) {
+                // Same storage-wedge guard as the native session: a failed
+                // user-message write must surface, not kill the turn silently.
+                _piUi.value = ChatSession.UiState(
+                    error = AiError(AiError.Kind.UNKNOWN, "Your message could not be saved."),
+                )
+                return@launch
+            }
             val attachNote = if (prepared.metadata.isEmpty()) {
                 ""
             } else {
@@ -660,6 +829,23 @@ class ChatViewModel(
                     prepared.metadata.joinToString(", ") { it.name } + "]"
             }
             _piUi.value = ChatSession.UiState(streaming = true, statusLine = "Pi is starting…")
+            // P-17: the bridge fires a snapshot per engine event, each a
+            // full copy of the stream text; publishing every one recomposed
+            // the chat at event rate. Snapshots are conflated through a
+            // StateFlow and published at the native engine's 80 ms cadence.
+            val snapFlow = MutableStateFlow<com.anvex.core.android.runtime.pi.PiChatBridge.Snapshot?>(null)
+            val snapCollector = launch {
+                snapFlow.collect { snap ->
+                    if (snap != null) {
+                        _piUi.value = ChatSession.UiState(
+                            streaming = true,
+                            streamText = snap.streamText,
+                            statusLine = snap.statusLine,
+                        )
+                        delay(PI_SNAPSHOT_INTERVAL_MS)
+                    }
+                }
+            }
             try {
                 val outcome = graph.piChatBridge.runTurn(
                     chatKey = projectId,
@@ -676,14 +862,9 @@ class ChatViewModel(
                         _pendingPiApproval.value = ask
                         deferred.await()
                     },
-                    onSnapshot = { snap ->
-                        _piUi.value = ChatSession.UiState(
-                            streaming = true,
-                            streamText = snap.streamText,
-                            statusLine = snap.statusLine,
-                        )
-                    },
+                    onSnapshot = { snap -> snapFlow.value = snap },
                 )
+                snapCollector.cancel()
                 // v4.10.5: Pi on a staged copy (cloud projects) — sync
                 // its edits back. Never deletes cloud files; a sync note
                 // rides along so the user sees what landed.
@@ -745,6 +926,17 @@ class ChatViewModel(
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
+                // Cancelling a Pi turn on a staged (SAF) project used to
+                // strand Pi's already-made edits in the staging copy —
+                // the sync-back lived only on the success and exception
+                // paths. Run it under NonCancellable, then rethrow.
+                if (staged != null) {
+                    runCatching {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                            graph.projects.syncBackStagedCopy(projectId, staged)
+                        }
+                    }
+                }
                 throw e
             } catch (e: Exception) {
                 // Pi crashed mid-turn: still sync back any edits from the
@@ -769,10 +961,12 @@ class ChatViewModel(
                 }
             }
         }
+        return true
     }
 
     fun retryLast() {
         val lastUser = messages.value.lastOrNull { it.role == MessageRole.USER } ?: return
+        if (sessionState.value.streaming) return // a retry mid-turn is refused by the session anyway
         if (piActive) {
             val uris = lastUser.attachments.mapNotNull { runCatching { Uri.parse(it.uri) }.getOrNull() }
             piSend(lastUser.content, uris)
@@ -785,6 +979,13 @@ class ChatViewModel(
                 _attachmentError.value = "Retry attachments unavailable: ${prepared.error}"
                 return@launch
             }
+            // Drop the failed turn's persisted error stub before
+            // resending: it used to stay in the thread AND re-enter the
+            // model's history as a prior assistant turn on every retry
+            // (audit 2026-11-03).
+            val history = graph.chat.observeRecentForProject(projectId).first()
+            history.filter { it.createdAt > lastUser.createdAt && it.role == MessageRole.ASSISTANT && it.error != null }
+                .forEach { runCatching { graph.chat.delete(it.id) } }
             _session.value?.let { session ->
                 session.openFilePath = graph.activeFile(projectId)
                 session.send(lastUser.content, prepared.payloads, lastUser.attachments)
@@ -793,9 +994,11 @@ class ChatViewModel(
     }
 
     /**
-     * Regenerate the last reply: drop the last user turn and every assistant
-     * reply after it from storage, then resend that user turn. The history
-     * stays at one user + one assistant turn instead of growing a duplicate.
+     * Regenerate the last reply: resend the last user turn, and once the
+     * resend is accepted, drop the old copies (the stored user turn and
+     * every assistant reply after it) from storage. The history stays at
+     * one user + one assistant turn instead of growing a duplicate — and
+     * a refused resend deletes nothing.
      */
     fun regenerateLast() {
         val session = _session.value
@@ -813,17 +1016,45 @@ class ChatViewModel(
                 _attachmentError.value = "Regenerate attachments unavailable: ${prepared.error}"
                 return@launch
             }
-            stale.forEach { graph.chat.delete(it.id) }
+            // Audit fix (2026-11-03): the stale rows — the stored user
+            // message itself plus every reply — used to be deleted BEFORE
+            // the resend. If the send was then refused (session rebuilt or
+            // marked busy in between), the user's message was gone for
+            // good. The accepted send re-persists the user message, so
+            // deletion happens only after acceptance; on refusal the
+            // thread stays exactly as it was.
             if (piActive) {
+                if (piJob?.isActive == true) {
+                    _attachmentError.value =
+                        "Could not regenerate right now — your messages were kept. Try again in a moment."
+                    return@launch
+                }
                 // Pi keeps its own transcript; drop the stored Pi session
                 // too so regenerate does not answer inside the old context.
                 graph.piChatBridge.forget(projectId)
-                piSend(lastUser.content, uris)
+                if (piSend(lastUser.content, uris)) {
+                    stale.forEach { runCatching { graph.chat.delete(it.id) } }
+                }
                 return@launch
             }
-            session ?: return@launch
-            session.openFilePath = graph.activeFile(projectId)
-            session.send(lastUser.content, prepared.payloads, lastUser.attachments)
+            val liveSession = _session.value ?: return@launch
+            liveSession.openFilePath = graph.activeFile(projectId)
+            // Round 2 (NEW-5): the stale ids travel WITH the send so the
+            // turn's history snapshot excludes them — deletion below lands
+            // after acceptance and used to race the snapshot, re-feeding
+            // the replaced exchange to the model.
+            val accepted = liveSession.send(
+                lastUser.content,
+                prepared.payloads,
+                lastUser.attachments,
+                excludeHistoryIds = stale.map { it.id }.toSet(),
+            )
+            if (accepted) {
+                stale.forEach { runCatching { graph.chat.delete(it.id) } }
+            } else {
+                _attachmentError.value =
+                    "Could not regenerate right now — your messages were kept. Try again in a moment."
+            }
         }
     }
 
@@ -898,7 +1129,14 @@ class ChatViewModel(
             try {
                 com.anvex.core.ai.ProviderClientFactory.create(runtime).streamChat(
                     com.anvex.core.ai.ChatRequest(
-                        systemPrompt = "You are a helpful assistant.",
+                        // Audit fix (2026-11-03): this second opinion sees
+                        // ONLY the question — no project context — but was
+                        // presented in the thread as if it knew the
+                        // project, inviting invented file/function claims.
+                        // The prompt now states the limit explicitly.
+                        systemPrompt = "You are a helpful assistant. You are answering a question about a software " +
+                            "project, but you do NOT have access to the project's files in this conversation. " +
+                            "Answer from the question alone, and say so if file details would be needed.",
                         turns = listOf(com.anvex.core.ai.ChatTurn(MessageRole.USER, question.content)),
                         thinkingLevel = _session.value?.thinkingLevel ?: thinkingLevel.value,
                     )
@@ -1012,6 +1250,9 @@ class ChatViewModel(
 
     fun pendingChanges(): List<com.anvex.core.model.FileMutation> =
         _session.value?.pendingChanges ?: emptyList()
+
+    /** Engine-journal entries evicted by the log bounds this session (review UI warns when > 0). */
+    fun droppedMutations(): Int = _session.value?.droppedMutations ?: 0
 
     /**
      * v4.0 audit fix: cheap snapshot for recomposition — prefers the persisted mutation
@@ -1138,4 +1379,5 @@ data class StreamUi(
     val errorTitle: String? = null,
     val errorMessage: String? = null,
     val memoryNote: String? = null,
+    val contextWarning: String? = null,
 )

@@ -147,6 +147,18 @@ class AppGraph private constructor(private val app: Application) {
             } catch (_: Exception) {
                 reliability.log("security", "WARN", "Legacy provider header migration could not complete.")
             }
+            // Audit 04: one-time sweep binding unversioned provider
+            // ciphertexts to their rows (AAD "v2:" form). Replaces the
+            // read-path write-back runtimeConfig used to perform.
+            try {
+                providers.migrateUnversionedKeys()
+            } catch (_: Exception) {
+                reliability.log("security", "WARN", "Provider key AAD migration could not complete.")
+            }
+            // Audit 02: seed the synchronous workspace-URI cache, and make
+            // project deletion clean up Pi session transcripts.
+            runCatching { projects.warmWorkspaceCache() }
+            projects.onProjectDeleted = { id -> runCatching { piChatBridge.forget(id) } }
             taskEngine.drain()
             approvals.purgeExpired()
             val persistedSettings = settings.settings.first()
@@ -164,8 +176,19 @@ class AppGraph private constructor(private val app: Application) {
     suspend fun fallbackAiClient(): com.anvex.core.ai.ProviderClient? {
         val configs = providers.observeAll().first()
         val ordered = configs.sortedWith(compareByDescending<com.anvex.core.model.ProviderConfig> { it.isDefault }.thenBy { it.createdAt })
-        val clients = ordered.mapNotNull { cfg -> providers.runtimeConfig(cfg.id)?.let { com.anvex.core.ai.ProviderClientFactory.create(it) } }
-        return clients.takeIf { it.isNotEmpty() }?.let(::FallbackProviderClient)
+        // Configs and clients are built as pairs so the fallback chain
+        // can stamp each completion with the answering provider's
+        // identity (audit 2026-11-03); a mapNotNull over clients alone
+        // would lose the parallel config.
+        val pairs = ordered.mapNotNull { cfg ->
+            providers.runtimeConfig(cfg.id)?.let { cfg to com.anvex.core.ai.ProviderClientFactory.create(it) }
+        }
+        return pairs.takeIf { it.isNotEmpty() }?.let {
+            com.anvex.core.ai.FallbackProviderClient(
+                clients = it.map { pair -> pair.second },
+                clientIdentities = it.map { pair -> pair.first.id to pair.first.model },
+            )
+        }
     }
 
     /**
@@ -173,9 +196,16 @@ class AppGraph private constructor(private val app: Application) {
      * by the preview server from app assets. Wrapped so failures degrade to
      * "asset not found" (404) instead of crashing the server thread.
      */
+    /**
+     * Audit P-21: the asset bytes are immutable for the process lifetime,
+     * so they are memoized — previously EVERY preview/harness page load
+     * re-read ~1 MB of bundled JS from the APK.
+     */
+    private val runtimeAssetCache = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
     val runtimeAssetLoader: (String) -> ByteArray? = { name ->
-        try {
+        runtimeAssetCache[name] ?: try {
             app.assets.open("runtime/$name").use { it.readBytes() }
+                .also { runtimeAssetCache[name] = it }
         } catch (_: Exception) {
             null
         }
@@ -203,9 +233,29 @@ class AppGraph private constructor(private val app: Application) {
     /** Journal synchronous editor tree mutations without blocking on database I/O. */
     fun recordUserTreeMutation(projectId: String, mutation: com.anvex.core.model.FileMutation) {
         reliabilityScope.launch {
+            // Audit 02: failures used to be swallowed whole — the journal
+            // silently lost user edits. Record at least the loss itself.
             runCatching { mutations.recordAll(projectId, listOf(mutation)) }
+                .onFailure {
+                    reliability.log("journal", "WARN", "User-edit journal write failed: ${it::class.simpleName}")
+                }
         }
     }
+
+    /**
+     * Engine-aware task enqueue (audit 05, Gap 1): the Agent Center's
+     * start action must go through here so a goal runs on the engine the
+     * user actually selected — previously every goal went to the native
+     * bridge even when Pi was the configured engine, leaving
+     * [PiTaskBridge.enqueue] with no production caller. Returns the
+     * durable task id.
+     */
+    suspend fun enqueueAgentTask(goal: String, projectId: String, context: String = ""): Long =
+        if (settings.settings.first().agentEngine == com.anvex.core.android.repo.AgentEngine.PI) {
+            piTaskBridge.enqueue(prompt = goal, projectId = projectId, context = context)
+        } else {
+            agentTaskBridge.enqueue(goal = goal, context = context, projectId = projectId)
+        }
 
     suspend fun recordUserEdit(projectId: String, path: String, before: String?, after: String) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

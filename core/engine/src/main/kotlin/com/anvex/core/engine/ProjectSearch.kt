@@ -11,11 +11,13 @@ object ProjectSearch {
         if (query.isEmpty() || maxMatches <= 0) return emptyList()
         val needle = if (caseSensitive) query else query.lowercase()
         val out = ArrayList<Match>()
-        for (path in fs.walk()) {
+        // Sizes ride along with the walk: a per-path fileSize() here
+        // re-resolves every candidate through the storage backend (on SAF
+        // workspaces, one provider round-trip per file in the project).
+        for ((path, size) in fs.walkWithSizes()) {
             if (out.size >= maxMatches) break
             if (shouldSkip(path)) continue
-            val size = fs.fileSize(path) ?: continue
-            if (size > MAX_TEXT_FILE_BYTES) continue
+            if (size == null || size > MAX_TEXT_FILE_BYTES) continue
             val text = fs.readFile(path) ?: continue
             if (text.indexOf('\u0000') >= 0) continue
             text.lineSequence().forEachIndexed { index, line ->
@@ -34,11 +36,10 @@ object ProjectSearch {
     fun replaceAll(fs: ProjectFileSystem, query: String, replacement: String, caseSensitive: Boolean = false, maxFiles: Int = 500): List<ReplaceResult> {
         if (query.isEmpty() || maxFiles <= 0) return emptyList()
         val out = ArrayList<ReplaceResult>()
-        for (path in fs.walk()) {
+        for ((path, size) in fs.walkWithSizes()) {
             if (out.size >= maxFiles) break
             if (shouldSkip(path)) continue
-            val size = fs.fileSize(path) ?: continue
-            if (size > MAX_TEXT_FILE_BYTES) continue
+            if (size == null || size > MAX_TEXT_FILE_BYTES) continue
             val old = fs.readFile(path) ?: continue
             if (old.indexOf('\u0000') >= 0) continue
             val newText: String
