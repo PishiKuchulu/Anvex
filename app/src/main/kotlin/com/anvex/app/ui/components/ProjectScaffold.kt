@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Edit
@@ -61,6 +62,10 @@ fun ProjectScaffold(
     content: @Composable (Modifier) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var showCodeSearch by remember { mutableStateOf(false) }
+    if (showCodeSearch) {
+        CodeSearchDialog(projectId = projectId, onDismiss = { showCodeSearch = false })
+    }
     val atelier = com.anvex.app.ui.theme.LocalThemeStyle.current ==
         com.anvex.core.android.repo.UiThemeStyle.ATELIER
 
@@ -111,6 +116,11 @@ fun ProjectScaffold(
                             text = { Text(tr("Git")) },
                             leadingIcon = { Icon(Icons.Filled.AccountTree, null) },
                             onClick = { menuOpen = false; nav.navigate(Routes.git(projectId)) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(tr("Code search")) },
+                            leadingIcon = { Icon(Icons.Filled.Search, null) },
+                            onClick = { menuOpen = false; showCodeSearch = true },
                         )
                         DropdownMenuItem(
                             text = { Text(tr("Build APK")) },

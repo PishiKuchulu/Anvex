@@ -286,6 +286,7 @@ MEDIA CONTRACT FOR THIS TURN:
   You can gather information before answering by emitting read-only tool actions inside a <boltArtifact id="research" title="Research"> block:
     <boltAction type="read" path="src/App.jsx"></boltAction>     — read a project file (full content)
     <boltAction type="list" path="src"></boltAction>             — list project files under a folder ("." for everything)
+    <boltAction type="search_code" query="where tokens are refreshed"></boltAction>  — semantic search over this project's code; returns the most relevant chunks (only works when the user has enabled Code search for this project)
 """)
         if (o.webTools) {
             append("""    <boltAction type="fetch" url="https://example.com/page"></boltAction>  — download a web page as plain text (https only)

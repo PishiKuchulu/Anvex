@@ -89,6 +89,14 @@ class AndroidRuntimeGateway(
     fun devServerManager(): com.anvex.core.android.server.DevServerManager? =
         context?.let { com.anvex.core.android.server.DevServerManager(it, this) }
 
+    /**
+     * P7 (F6): the local-RAG facade (per-project enablement, model
+     * download, indexer scheduling, semantic search). Null without an
+     * application context.
+     */
+    fun ragManager(): com.anvex.core.android.runtime.rag.RagManager? =
+        context?.let { com.anvex.core.android.runtime.rag.RagManager(it, this) }
+
     private suspend fun realRoot(projectId: String): File? {
         if (projectId == HOME_PROJECT_ID) return homeDir?.also { it.mkdirs() }
         val fs = projects.fileSystemForAsync(projectId)

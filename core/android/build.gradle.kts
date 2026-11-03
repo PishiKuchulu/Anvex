@@ -1,5 +1,6 @@
 import java.net.URL
 import java.security.MessageDigest
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 plugins {
@@ -168,18 +169,18 @@ val downloadRagLibs = tasks.register("downloadRagLibs") {
         )
         outDir.mkdirs(); distDir.mkdirs()
         fun shaOf(f: File): String =
-            java.security.MessageDigest.getInstance("SHA-256").digest(f.readBytes())
+            MessageDigest.getInstance("SHA-256").digest(f.readBytes())
                 .joinToString("") { "%02x".format(it) }
         for (pin in pins) {
             val file = File(outDir, pin.name)
             if (!file.exists() || shaOf(file) != pin.sha) {
                 logger.lifecycle("Anvex: downloading ${pin.name}")
-                java.net.URL(pin.url).openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+                URL(pin.url).openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
                 check(shaOf(file) == pin.sha) { "SHA-256 mismatch for ${pin.name}" }
             }
         }
         fun unzip(zip: File, dest: File) {
-            java.util.zip.ZipFile(zip).use { zf ->
+            ZipFile(zip).use { zf ->
                 val entries = zf.entries()
                 while (entries.hasMoreElements()) {
                     val e = entries.nextElement()
@@ -276,6 +277,11 @@ dependencies {
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
     implementation(libs.datastore.preferences)
+
+    // P7 (F6): ONNX Runtime (prebuilt AAR) for MiniLM embeddings and
+    // WorkManager for the constrained codebase indexer.
+    implementation(libs.onnxruntime.android)
+    implementation(libs.work.runtime.ktx)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
