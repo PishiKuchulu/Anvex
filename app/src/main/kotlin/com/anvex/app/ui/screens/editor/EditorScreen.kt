@@ -16,10 +16,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -70,6 +75,25 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
     var searchQuery by remember { mutableStateOf("") }
     var replaceText by remember { mutableStateOf("") }
 
+    // P8 (F2b): symbol references + rename.
+    val editorScope = rememberCoroutineScope()
+    var symbolWord by remember { mutableStateOf<String?>(null) }
+    var references by remember {
+        mutableStateOf(emptyList<com.anvex.core.engine.codeintel.SymbolOccurrence>())
+    }
+    var showReferences by remember { mutableStateOf(false) }
+    var showRename by remember { mutableStateOf(false) }
+    var renameInput by remember { mutableStateOf("") }
+    var renamePlan by remember {
+        mutableStateOf<com.anvex.core.android.runtime.symbols.RenamePlan?>(null)
+    }
+    var symbolNote by remember { mutableStateOf<String?>(null) }
+    val labelFindReferences = tr("Find references")
+    val labelRenameSymbol = tr("Rename symbol")
+    val notePlaceCursor = tr("Place the cursor on a symbol first.")
+    val noteRenamed = tr("Symbol renamed.")
+    val labelDefinition = tr("definition")
+
     LaunchedEffect(initialFile) {
         if (initialFile != null) vm.openFile(initialFile)
     }
@@ -89,6 +113,33 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
             }
             IconButton(onClick = { showSearch = !showSearch }) {
                 Icon(Icons.Filled.Search, contentDescription = tr("Search"))
+            }
+            IconButton(onClick = {
+                val word = vm.symbolAtCursor()
+                if (word == null) {
+                    symbolNote = notePlaceCursor
+                } else {
+                    symbolWord = word
+                    editorScope.launch {
+                        references = vm.findSymbolReferences(word)
+                        showReferences = true
+                    }
+                }
+            }) {
+                Icon(Icons.Filled.ManageSearch, contentDescription = labelFindReferences)
+            }
+            IconButton(onClick = {
+                val word = vm.symbolAtCursor()
+                if (word == null) {
+                    symbolNote = notePlaceCursor
+                } else {
+                    symbolWord = word
+                    renameInput = word
+                    renamePlan = null
+                    showRename = true
+                }
+            }) {
+                Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = labelRenameSymbol)
             }
         },
     ) { modifier ->
@@ -271,6 +322,110 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
             onDismiss = { showExplorer = false },
             )
         }
+    }
+
+    if (showReferences) {
+        AlertDialog(
+            onDismissRequest = { showReferences = false },
+            title = { Text(tr("References: %1\$s", symbolWord ?: "")) },
+            text = {
+                if (references.isEmpty()) {
+                    Text(tr("No occurrences found."))
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                        items(references) { occurrence ->
+                            Text(
+                                "${occurrence.path}:${occurrence.line + 1}" +
+                                    if (occurrence.isDefinition) " ($labelDefinition)" else "",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showReferences = false
+                                        vm.openFileAt(occurrence.path, occurrence.startOffset)
+                                    }
+                                    .padding(vertical = 6.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showReferences = false }) { Text(tr("Close")) }
+            },
+        )
+    }
+
+    if (showRename) {
+        val word = symbolWord ?: ""
+        LaunchedEffect(renameInput, showRename) {
+            renamePlan = if (renameInput.isNotBlank() && renameInput != word) {
+                vm.symbolRenamePreview(word, renameInput)
+            } else {
+                null
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            title = { Text(tr("Rename symbol")) },
+            text = {
+                Column {
+                    Text(
+                        tr("Rename %1\$s everywhere it occurs in this project. Every changed file is journaled and can be reverted from Review changes.", word),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    OutlinedTextField(
+                        value = renameInput,
+                        onValueChange = { renameInput = it },
+                        label = { Text(tr("New name")) },
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    val plan = renamePlan
+                    if (renameInput.isNotBlank() && renameInput != word) {
+                        Text(
+                            if (plan != null) {
+                                tr("%1\$d occurrences in %2\$d files", plan.occurrenceCount, plan.edits.size)
+                            } else {
+                                tr("No occurrences, or the new name is not a valid identifier.")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renamePlan != null,
+                    onClick = {
+                        val target = renameInput
+                        showRename = false
+                        editorScope.launch {
+                            val changed = vm.applySymbolRename(word, target)
+                            if (changed > 0) symbolNote = noteRenamed
+                        }
+                    },
+                ) { Text(tr("Rename")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRename = false }) { Text(tr("Cancel")) }
+            },
+        )
+    }
+
+    symbolNote?.let { note ->
+        AlertDialog(
+            onDismissRequest = { symbolNote = null },
+            title = { Text(tr("Symbols")) },
+            text = { Text(note) },
+            confirmButton = {
+                TextButton(onClick = { symbolNote = null }) { Text(tr("OK")) }
+            },
+        )
     }
 }
 

@@ -7,6 +7,8 @@ import com.anvex.core.android.AppGraph
 import com.anvex.core.engine.PathSanitizer
 import com.anvex.core.engine.ProjectFileSystem
 import com.anvex.core.engine.ProjectSearch
+import com.anvex.core.engine.codeintel.SymbolIndexCore
+import com.anvex.core.engine.codeintel.SymbolOccurrence
 import com.anvex.core.model.FileNode
 import com.anvex.core.model.Project
 import kotlinx.coroutines.Dispatchers
@@ -341,6 +343,113 @@ class EditorViewModel(
             }
             total
         }
+
+    // ------------------------------------------------- P8 (F2b): symbols
+
+    private val symbolManager by lazy { graph.androidRuntime.symbolIndexManager() }
+
+    /**
+     * The identifier at the active tab's cursor (or the current
+     * selection when it is exactly an identifier), for Find References
+     * and Rename Symbol.
+     */
+    fun symbolAtCursor(): String? {
+        val tab = tabs.value.firstOrNull { it.path == activePath.value } ?: return null
+        val value = tab.text
+        val text = value.text
+        if (text.isEmpty()) return null
+        val selection = value.selection
+        if (!selection.collapsed) {
+            val selected = text.substring(selection.min, selection.max)
+            return selected.takeIf { SymbolIndexCore.isValidIdentifier(it) }
+        }
+        val cursor = selection.min
+        var start = cursor
+        while (start > 0 && SymbolIndexCore.isIdentifierPart(text[start - 1])) start--
+        var end = cursor
+        while (end < text.length && SymbolIndexCore.isIdentifierPart(text[end])) end++
+        if (start == end) return null
+        return text.substring(start, end).takeIf { it.isNotEmpty() }
+    }
+
+    /** Fresh-index references for [name] across the project. */
+    suspend fun findSymbolReferences(name: String): List<SymbolOccurrence> =
+        withContext(Dispatchers.IO) {
+            val manager = symbolManager ?: return@withContext emptyList()
+            runCatching {
+                manager.indexProject(projectId)
+                manager.findReferences(projectId, name)
+            }.getOrDefault(emptyList())
+        }
+
+    /** Dry-run rename plan (occurrence/file counts for the dialog). */
+    suspend fun symbolRenamePreview(
+        name: String,
+        newName: String,
+    ): com.anvex.core.android.runtime.symbols.RenamePlan? =
+        withContext(Dispatchers.IO) {
+            val manager = symbolManager ?: return@withContext null
+            runCatching {
+                manager.indexProject(projectId)
+                manager.renamePlan(projectId, name, newName)
+            }.getOrNull()
+        }
+
+    /**
+     * Applies a symbol rename through the same journaled bulk-edit
+     * pattern as project replace-all: befores captured, each changed
+     * file recorded as a USER_EDIT mutation (Review-visible, undoable),
+     * then open tabs resynced. Returns the number of occurrences
+     * replaced, 0 when the plan is empty/invalid.
+     */
+    suspend fun applySymbolRename(name: String, newName: String): Int =
+        withContext(Dispatchers.IO) {
+            val manager = symbolManager ?: return@withContext 0
+            val plan = runCatching { manager.renamePlan(projectId, name, newName) }
+                .getOrNull() ?: return@withContext 0
+            var total = 0
+            val afters = HashMap<String, String?>()
+            for ((path, newText) in plan.edits) {
+                val before = runCatching { fs.readFile(path) }.getOrNull()
+                val occurrences = before?.let {
+                    SymbolIndexCore.findOccurrences(it, name).size
+                } ?: 0
+                if (occurrences == 0) continue
+                runCatching { fs.writeFile(path, newText) }.getOrNull() ?: continue
+                total += occurrences
+                afters[path] = newText
+                graph.recordUserTreeMutation(projectId, com.anvex.core.model.FileMutation(
+                    path = path, operation = com.anvex.core.model.MutationOp.MODIFY,
+                    before = before, after = newText,
+                    source = com.anvex.core.model.MutationSource.USER_EDIT,
+                ))
+            }
+            if (total > 0) {
+                runCatching { manager.indexProject(projectId) }
+                withContext(Dispatchers.Main.immediate) { syncTabsAfterBulkChange(afters) }
+                treeRevision.value++; refreshTree()
+            }
+            total
+        }
+
+    /** Opens [path] and places the cursor at [offset] once loaded. */
+    fun openFileAt(path: String, offset: Int) {
+        openFile(path)
+        viewModelScope.launch {
+            repeat(60) {
+                val tab = tabs.value.firstOrNull { it.path == path }
+                if (tab != null) {
+                    val clamped = offset.coerceIn(0, tab.text.text.length)
+                    updateTab(path) {
+                        it.copy(text = it.text.copy(selection = androidx.compose.ui.text.TextRange(clamped)))
+                    }
+                    setActive(path)
+                    return@launch
+                }
+                delay(50)
+            }
+        }
+    }
 
     /**
      * Resync open tabs after an on-disk bulk change (project replace-all):

@@ -63,7 +63,7 @@ class SymbolIndexManager(
      * with definition sites (from the index) marked. Call
      * [indexProject] first for fresh definition marks.
      */
-    fun findReferences(projectId: String, name: String): List<SymbolOccurrence> {
+    suspend fun findReferences(projectId: String, name: String): List<SymbolOccurrence> {
         val fs = gateway.fileSystem(projectId) ?: return emptyList()
         val definitionSites = store.definitions(projectId, name)
             .map { it.path to it.startOffset }
@@ -90,7 +90,7 @@ class SymbolIndexManager(
      * [newName] is not a valid identifier, equals [name], or when
      * nothing would change.
      */
-    fun renamePlan(projectId: String, name: String, newName: String): RenamePlan? {
+    suspend fun renamePlan(projectId: String, name: String, newName: String): RenamePlan? {
         if (newName == name || !SymbolIndexCore.isValidIdentifier(newName)) return null
         val fs = gateway.fileSystem(projectId) ?: return null
         val edits = LinkedHashMap<String, String>()
