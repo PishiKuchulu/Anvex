@@ -54,6 +54,11 @@ fun CodeSearchDialog(projectId: String, onDismiss: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     val modelState by manager.models.state.collectAsState()
+    // tr() is @Composable: note strings are hoisted here because the
+    // assignments happen inside click/coroutine lambdas.
+    val noteQueued = tr("Indexing queued.")
+    val noteModelFailed = tr("Model download failed.")
+    val noteCleared = tr("Index cleared.")
 
     LaunchedEffect(projectId) {
         enabled = manager.isEnabledNow(projectId)
@@ -86,9 +91,9 @@ fun CodeSearchDialog(projectId: String, onDismiss: () -> Unit) {
                                     val ready = manager.models.ensureModel()
                                     if (ready) {
                                         manager.enqueueIndexNow(projectId)
-                                        note = tr("Indexing queued.")
+                                        note = noteQueued
                                     } else {
-                                        note = tr("Model download failed.")
+                                        note = noteModelFailed
                                     }
                                 }
                                 chunks = manager.chunkCount(projectId)
@@ -150,7 +155,7 @@ fun CodeSearchDialog(projectId: String, onDismiss: () -> Unit) {
                 TextButton(
                     onClick = {
                         manager.enqueueIndexNow(projectId)
-                        note = tr("Indexing queued.")
+                        note = noteQueued
                     },
                     enabled = enabled && modelState is RagModelState.Ready && !busy,
                 ) { Text(tr("Index now")) }
@@ -159,7 +164,7 @@ fun CodeSearchDialog(projectId: String, onDismiss: () -> Unit) {
                         scope.launch {
                             manager.clearProject(projectId)
                             chunks = 0
-                            note = tr("Index cleared.")
+                            note = noteCleared
                         }
                     },
                     enabled = chunks > 0 && !busy,
