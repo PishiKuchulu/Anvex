@@ -213,4 +213,10 @@ val verifyNativeLibs = tasks.register("verifyNativeLibs") {
         println("verifyNativeLibs: all native libraries present, 16K-aligned, JNI symbols exported.")
     }
 }
-tasks.named("assembleDebug") { finalizedBy(verifyNativeLibs) }
+// AGP registers the assemble tasks in its own afterEvaluate, so the
+// finalizer wiring must be deferred the same way — a top-level
+// tasks.named("assembleDebug") here fails script evaluation with
+// "Task with name 'assembleDebug' not found" (CI round 2 of P0).
+afterEvaluate {
+    tasks.named("assembleDebug") { finalizedBy(verifyNativeLibs) }
+}
