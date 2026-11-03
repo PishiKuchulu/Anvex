@@ -97,6 +97,14 @@ class AndroidRuntimeGateway(
     fun ragManager(): com.anvex.core.android.runtime.rag.RagManager? =
         context?.let { com.anvex.core.android.runtime.rag.RagManager(it, this) }
 
+    /** P8 (F2b): symbol index manager, or null without a context. */
+    fun symbolIndexManager(): com.anvex.core.android.runtime.symbols.SymbolIndexManager? =
+        context?.let {
+            com.anvex.core.android.runtime.symbols.SymbolIndexManager(
+                this, com.anvex.core.android.runtime.symbols.SymbolStore(it),
+            )
+        }
+
     private suspend fun realRoot(projectId: String): File? {
         if (projectId == HOME_PROJECT_ID) return homeDir?.also { it.mkdirs() }
         val fs = projects.fileSystemForAsync(projectId)

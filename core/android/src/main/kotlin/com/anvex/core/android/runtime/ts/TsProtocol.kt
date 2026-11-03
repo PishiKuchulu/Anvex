@@ -4,6 +4,8 @@ import com.anvex.core.engine.codeintel.FoldRange
 import com.anvex.core.engine.codeintel.HighlightKind
 import com.anvex.core.engine.codeintel.HighlightSpan
 import com.anvex.core.engine.codeintel.ParsedDocument
+import com.anvex.core.engine.codeintel.SymbolDefinition
+import com.anvex.core.engine.codeintel.SymbolKind
 
 /**
  * Decodes the ts_bridge.cpp line protocol into a [ParsedDocument] with
@@ -19,6 +21,7 @@ object TsProtocol {
         var handle = 0L
         val spans = ArrayList<HighlightSpan>()
         val folds = ArrayList<FoldRange>()
+        val definitions = ArrayList<SymbolDefinition>()
         for (line in raw.split('\n')) {
             if (line.isEmpty()) continue
             val parts = line.split(' ')
@@ -39,10 +42,19 @@ object TsProtocol {
                     val endRow = parts[2].toIntOrNull() ?: continue
                     if (endRow > startRow) folds += FoldRange(startRow, endRow)
                 }
+                "D" -> {
+                    if (parts.size != 4) continue
+                    val startByte = parts[1].toIntOrNull() ?: continue
+                    val endByte = parts[2].toIntOrNull() ?: continue
+                    val kind = SymbolKind.fromWire(parts[3].toIntOrNull() ?: -1) ?: continue
+                    val start = byteToChar[startByte] ?: continue
+                    val end = byteToChar[endByte] ?: continue
+                    if (end > start) definitions += SymbolDefinition(start, end, kind)
+                }
             }
         }
         if (handle <= 0) return null
-        return ParsedDocument(handle, spans, folds)
+        return ParsedDocument(handle, spans, folds, definitions)
     }
 
     /**

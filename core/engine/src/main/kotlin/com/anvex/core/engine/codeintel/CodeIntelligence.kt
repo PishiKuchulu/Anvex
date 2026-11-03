@@ -61,12 +61,31 @@ data class HighlightSpan(val start: Int, val end: Int, val kind: HighlightKind)
 /** A foldable region over 0-based [startLine, endLine] (inclusive). */
 data class FoldRange(val startLine: Int, val endLine: Int)
 
+/** P8 (F2b): the kind of a symbol definition. Wire ids from ts_bridge. */
+enum class SymbolKind {
+    FUNCTION, TYPE, PROPERTY;
+
+    companion object {
+        fun fromWire(code: Int): SymbolKind? = when (code) {
+            1 -> FUNCTION
+            2 -> TYPE
+            3 -> PROPERTY
+            else -> null
+        }
+    }
+}
+
+/** A symbol definition's name range, as UTF-16 char offsets [start, end). */
+data class SymbolDefinition(val start: Int, val end: Int, val kind: SymbolKind)
+
 /**
  * A parsed document: the native tree [handle] (opaque, for incremental
  * reparses) plus the derived spans/folds for one exact source text.
+ * [definitions] (P8/F2b) names the declared symbols for the index.
  */
 data class ParsedDocument(
     val handle: Long,
     val spans: List<HighlightSpan>,
     val folds: List<FoldRange>,
+    val definitions: List<SymbolDefinition> = emptyList(),
 )

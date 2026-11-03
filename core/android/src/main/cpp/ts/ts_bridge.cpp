@@ -99,12 +99,20 @@ struct Span {
     int kind;
 };
 
+struct Def {
+    uint32_t start, end;
+    int kind;  // 1 function, 2 type, 3 property — mirrors SymbolKind wire ids
+};
+
 struct Walker {
     const char *src;
     size_t src_len;
     std::vector<Span> spans;
     std::vector<std::pair<uint32_t, uint32_t>> folds;
     std::set<std::pair<uint32_t, uint32_t>> emitted;
+    // P8 (F2b): the grammar being walked + the definitions found.
+    std::string lang;
+    std::vector<Def> defs;
 
     void emit(TSNode node, int kind) {
         uint32_t s = ts_node_start_byte(node);
@@ -153,6 +161,85 @@ struct Walker {
         }
     }
 
+    TSNode child_of_type(TSNode node, const char *type) {
+        uint32_t count = ts_node_child_count(node);
+        for (uint32_t i = 0; i < count; i++) {
+            TSNode child = ts_node_child(node, i);
+            if (std::string(ts_node_type(child)) == type) return child;
+        }
+        return TSNode{};
+    }
+
+    TSNode first_identifier(TSNode node) {
+        uint32_t count = ts_node_named_child_count(node);
+        for (uint32_t i = 0; i < count; i++) {
+            TSNode child = ts_node_named_child(node, i);
+            std::string t = ts_node_type(child);
+            if (t == "simple_identifier" || t == "identifier" ||
+                t == "type_identifier" || t == "property_identifier") {
+                return child;
+            }
+        }
+        return TSNode{};
+    }
+
+    // P8 (F2b): per-grammar declaration rules for the symbol index.
+    // Only the declaration NAME range is emitted; references are found
+    // on the Kotlin side by identifier scan (the lightweight model).
+    void maybe_definition(TSNode node, const std::string &type) {
+        int kind = 0;
+        TSNode name{};
+        auto name_field = [&]() {
+            return ts_node_child_by_field_name(node, "name", 4);
+        };
+        if (lang == "kotlin") {
+            if (type == "function_declaration") {
+                kind = 1; name = name_field();
+            } else if (type == "class_declaration" || type == "object_declaration" ||
+                       type == "type_alias") {
+                kind = 2; name = name_field();
+            } else if (type == "property_declaration") {
+                kind = 3;
+                TSNode decl = child_of_type(node, "variable_declaration");
+                if (!ts_node_is_null(decl)) name = first_identifier(decl);
+            }
+        } else if (lang == "java") {
+            if (type == "method_declaration" || type == "constructor_declaration") {
+                kind = 1; name = name_field();
+            } else if (type == "class_declaration" || type == "interface_declaration" ||
+                       type == "enum_declaration") {
+                kind = 2; name = name_field();
+            } else if (type == "field_declaration") {
+                kind = 3;
+                TSNode decl = child_of_type(node, "variable_declarator");
+                if (!ts_node_is_null(decl)) {
+                    name = ts_node_child_by_field_name(decl, "name", 4);
+                }
+            } else if (type == "enum_constant") {
+                kind = 3; name = name_field();
+            }
+        } else if (lang == "typescript" || lang == "tsx") {
+            if (type == "function_declaration" || type == "method_definition") {
+                kind = 1; name = name_field();
+            } else if (type == "class_declaration" || type == "abstract_class_declaration" ||
+                       type == "interface_declaration" || type == "type_alias_declaration" ||
+                       type == "enum_declaration") {
+                kind = 2; name = name_field();
+            } else if (type == "property_definition" || type == "variable_declarator") {
+                kind = 3; name = name_field();
+            }
+        } else if (lang == "python") {
+            if (type == "function_definition") {
+                kind = 1; name = name_field();
+            } else if (type == "class_definition") {
+                kind = 2; name = name_field();
+            }
+        }
+        if (kind != 0 && !ts_node_is_null(name)) {
+            defs.push_back({ts_node_start_byte(name), ts_node_end_byte(name), kind});
+        }
+    }
+
     void walk(TSNode node, int depth) {
         if (depth > 1000) return;
         std::string type = ts_node_type(node);
@@ -192,6 +279,7 @@ struct Walker {
         }
 
         classify_fields(node, type);
+        maybe_definition(node, type);
 
         // Fold ranges: multi-line bodies and blocks.
         TSPoint start = ts_node_start_point(node);
@@ -299,6 +387,7 @@ Java_com_anvex_core_android_runtime_ts_TsBridge_nativeParse(
     if (!tree) return env->NewStringUTF("");
 
     Walker walker{src.data(), src.size()};
+    walker.lang = lang;
     walker.walk(ts_tree_root_node(tree), 0);
     std::sort(walker.spans.begin(), walker.spans.end(),
               [](const Span &a, const Span &b) {
@@ -321,6 +410,10 @@ Java_com_anvex_core_android_runtime_ts_TsBridge_nativeParse(
     }
     for (const auto &f : walker.folds) {
         std::snprintf(buf, sizeof(buf), "F %u %u\n", f.first, f.second);
+        out += buf;
+    }
+    for (const Def &d : walker.defs) {
+        std::snprintf(buf, sizeof(buf), "D %u %u %d\n", d.start, d.end, d.kind);
         out += buf;
     }
     return env->NewStringUTF(out.c_str());
