@@ -12,7 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
-import com.anvex.app.Routes
+import com.anvex.app.ui.Routes
 import com.anvex.app.i18n.tr
 import com.anvex.app.ui.theme.AnvexDimens
 import com.anvex.app.ui.theme.AnvexMono
@@ -191,7 +191,7 @@ fun GitScreen(navController: NavHostController, projectId: String) {
                             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                                 Column(Modifier.padding(16.dp)) {
                                     Text("${tr("Conflicts")} (${conflicts.size})", style = MaterialTheme.typography.titleSmall)
-                                    conflicts.forEach { path ->
+                                    for (path in conflicts) {
                                         Text(
                                             path,
                                             Modifier.fillMaxWidth().clickable {
@@ -220,7 +220,7 @@ fun GitScreen(navController: NavHostController, projectId: String) {
                                 if (status.isEmpty()) {
                                     Text(tr("Working tree clean"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                status.forEach { entry ->
+                                for (entry in status) {
                                     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("${entry.index}${entry.workdir}", fontFamily = AnvexMono, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                         Text(entry.path, fontFamily = AnvexMono, style = MaterialTheme.typography.bodySmall)
@@ -258,7 +258,7 @@ fun GitScreen(navController: NavHostController, projectId: String) {
                                     Text(tr("Branches"), style = MaterialTheme.typography.titleSmall)
                                     TextButton(onClick = { showNewBranch = true }) { Text(tr("New branch")) }
                                 }
-                                branches.forEach { branch ->
+                                for (branch in branches) {
                                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
                                             (if (branch.current) "● " else "○ ") + branch.name,
@@ -302,7 +302,7 @@ fun GitScreen(navController: NavHostController, projectId: String) {
                                 if (log.isEmpty()) {
                                     Text(tr("No commits yet"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                log.forEach { commit ->
+                                for (commit in log) {
                                     Column(Modifier.padding(vertical = 4.dp)) {
                                         Text(commit.subject, style = MaterialTheme.typography.bodyMedium)
                                         Text(

@@ -114,7 +114,7 @@ fun ConflictResolverScreen(navController: NavHostController, projectId: String, 
             if (segments != null) {
                 // ------- marker mode -------
                 var conflictIndex = -1
-                segments.forEach { segment ->
+                for (segment in segments) {
                     when (segment) {
                         is ConflictSegment.Text -> {
                             if (segment.lines.any { it.isNotBlank() }) {
@@ -195,6 +195,7 @@ private fun StageBlock(title: String, lines: List<String>, color: androidx.compo
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PickRow(
     hasBase: Boolean,
@@ -209,7 +210,7 @@ private fun PickRow(
             add(ConflictTextParser.Pick.OURS_THEN_THEIRS to tr("Both (ours first)"))
             add(ConflictTextParser.Pick.THEIRS_THEN_OURS to tr("Both (theirs first)"))
         }
-        options.forEach { (pick, label) ->
+        for ((pick, label) in options) {
             FilterChip(
                 selected = selected == pick,
                 onClick = { onPick(pick) },
