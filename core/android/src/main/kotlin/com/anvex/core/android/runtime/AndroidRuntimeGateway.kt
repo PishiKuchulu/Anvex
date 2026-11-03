@@ -73,6 +73,14 @@ class AndroidRuntimeGateway(
 
     suspend fun realRootDirectory(projectId: String): File? = realRoot(projectId)
 
+    /** F1: the project's abstract filesystem (any backend), for the git mirror sync. */
+    suspend fun fileSystem(projectId: String): com.anvex.core.engine.ProjectFileSystem? =
+        if (projectId == HOME_PROJECT_ID) null else projects.fileSystemForAsync(projectId)
+
+    /** F1: app-private git mirror directory for SAF projects (null without a context). */
+    fun gitMirrorDirectory(projectId: String): File? =
+        context?.let { com.anvex.core.android.runtime.git.GitMirror.dir(it, projectId) }
+
     private suspend fun realRoot(projectId: String): File? {
         if (projectId == HOME_PROJECT_ID) return homeDir?.also { it.mkdirs() }
         val fs = projects.fileSystemForAsync(projectId)

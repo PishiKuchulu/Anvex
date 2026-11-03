@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cloud
@@ -105,6 +106,11 @@ fun ProjectScaffold(
                             text = { Text(tr("Terminal")) },
                             leadingIcon = { Icon(Icons.Filled.Terminal, null) },
                             onClick = { menuOpen = false; nav.navigate(Routes.terminal(projectId)) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(tr("Git")) },
+                            leadingIcon = { Icon(Icons.Filled.AccountTree, null) },
+                            onClick = { menuOpen = false; nav.navigate(Routes.git(projectId)) },
                         )
                         DropdownMenuItem(
                             text = { Text(tr("Build APK")) },

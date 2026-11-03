@@ -81,6 +81,8 @@ object Routes {
     const val EXTENSIONS = "extensions"
     const val AGENT_CENTER = "agent-center"
     const val TERMINAL = "terminal/{projectId}"
+    const val GIT = "git/{projectId}"
+    const val GIT_CONFLICT = "git-conflict/{projectId}?file={file}"
     const val HARNESS = "harness/{projectId}"
     const val SIGNING_KEY = "signing-key"
 
@@ -88,6 +90,9 @@ object Routes {
         if (kind.isNullOrBlank()) "provider/$id" else "provider/$id?kind=$kind"
     fun chat(projectId: String) = "chat/$projectId"
     fun terminal(projectId: String) = "terminal/$projectId"
+    fun git(projectId: String) = "git/$projectId"
+    fun gitConflict(projectId: String, file: String) =
+        "git-conflict/$projectId?file=${android.net.Uri.encode(file)}"
     fun editor(projectId: String, file: String? = null) =
         if (file == null) "editor/$projectId" else "editor/$projectId?file=${android.net.Uri.encode(file)}"
     fun preview(projectId: String) = "preview/$projectId"
@@ -345,6 +350,21 @@ private fun AnvexNavHost(
         composable(Routes.GITHUB, arguments = listOf(navArgument("projectId") { type = NavType.StringType })) { entry ->
             val projectId = requireNotNull(entry.arguments?.getString("projectId")) { "Missing required navigation argument: projectId" }
             GitHubScreen(navController, projectId)
+        }
+        composable(Routes.GIT, arguments = listOf(navArgument("projectId") { type = NavType.StringType })) { entry ->
+            val projectId = requireNotNull(entry.arguments?.getString("projectId")) { "Missing required navigation argument: projectId" }
+            com.anvex.app.ui.screens.git.GitScreen(navController, projectId)
+        }
+        composable(
+            Routes.GIT_CONFLICT,
+            arguments = listOf(
+                navArgument("projectId") { type = NavType.StringType },
+                navArgument("file") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val projectId = requireNotNull(entry.arguments?.getString("projectId")) { "Missing required navigation argument: projectId" }
+            val file = entry.arguments?.getString("file").orEmpty()
+            com.anvex.app.ui.screens.git.ConflictResolverScreen(navController, projectId, file)
         }
         composable(Routes.PROVIDERS) { ProvidersScreen(navController) }
         composable(
