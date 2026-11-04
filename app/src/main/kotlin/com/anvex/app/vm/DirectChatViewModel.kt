@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -209,6 +210,23 @@ class DirectChatViewModel : ViewModel() {
      */
     fun switchProvider(id: String) {
         viewModelScope.launch { graph.providers.setDefault(id) }
+    }
+
+    /** Multi-model switcher: same expansion as the project chat. */
+    val modelChoices: StateFlow<List<ChatViewModel.ModelChoice>> =
+        combine(graph.providers.observeAll(), graph.settings.providerModelSets) { providers, sets ->
+            expandModelChoices(providers, sets)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Switch to a specific model of a provider (see ChatViewModel). */
+    fun switchProviderModel(id: String, model: String) {
+        viewModelScope.launch {
+            graph.providers.setDefault(id)
+            val config = graph.providers.get(id) ?: return@launch
+            if (config.model != model) {
+                graph.providers.save(config.copy(model = model), null)
+            }
+        }
     }
 
     // ---- Drawer search: title match locally, message-content match via

@@ -229,7 +229,14 @@ fun MarkdownText(
     onRunPython: ((String) -> Unit)? = null,
 ) {
     val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
-    val base = MaterialTheme.typography.bodyMedium.copy(color = textColor)
+    // Callers that pass no color (the deliverable viewer, DirectChat) used
+    // to render through ClickableText with Color.Unspecified, which does
+    // NOT fall back to the theme content color — dark text on the dark
+    // theme, effectively invisible (user report, 2026-11-04). Default to
+    // the theme's onSurface instead.
+    val base = MaterialTheme.typography.bodyMedium.copy(
+        color = if (textColor == Color.Unspecified) MaterialTheme.colorScheme.onSurface else textColor,
+    )
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         blocks.forEach { block ->
             when (block) {
@@ -255,7 +262,7 @@ fun MarkdownText(
                 }
                 is MdBlock.Table -> MarkdownTable(block, base)
                 is MdBlock.ListItem -> {
-                    val rtl = isRtlText(block.text)
+                    val rtl = isRtlContent(block.text)
                     CompositionLocalProvider(
                         LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                     ) {
@@ -323,7 +330,7 @@ private fun InlineText(text: String, style: TextStyle, modifier: Modifier = Modi
     val codeBg = MaterialTheme.colorScheme.surfaceVariant
     val linkColor = MaterialTheme.colorScheme.primary
     val annotated = remember(text, codeBg, linkColor) { inlineAnnotated(text, codeBg, linkColor) }
-    val rtl = isRtlText(text)
+    val rtl = isRtlContent(text)
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     CompositionLocalProvider(
         LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
@@ -332,7 +339,7 @@ private fun InlineText(text: String, style: TextStyle, modifier: Modifier = Modi
         androidx.compose.foundation.text.ClickableText(
             text = annotated,
             modifier = modifier,
-            style = directionalTextStyle(style, text),
+            style = directionalTextStyle(style, rtl),
             onClick = { offset ->
                 // Only web/mail targets ever leave the app; anything else
                 // a model emits (javascript:, file:, …) is ignored.

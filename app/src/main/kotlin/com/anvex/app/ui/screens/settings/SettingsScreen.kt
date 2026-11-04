@@ -16,6 +16,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material.icons.filled.DeveloperMode
@@ -99,7 +101,10 @@ fun SettingsScreen(
     val cacheBytes by vm.cacheBytes.collectAsState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
-    var category by rememberSaveable { mutableStateOf("ai") }
+    // 2026-11-04 (owner request): accordion settings — one section open
+    // at a time in a single scrolling list (was a chip selector showing
+    // one category at a time).
+    var expandedSection by rememberSaveable { mutableStateOf("ai") }
     var showTerminalPicker by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     // v4.0 audit fix: destructive actions require an explicit confirmation dialog.
@@ -113,15 +118,23 @@ fun SettingsScreen(
     // UI #3: tints come from the color scheme (were hard-coded hex that
     // ignored the theme), and the per-category counts are gone — they were
     // hand-maintained numbers that drifted from the real section contents.
-    data class Category(val id: String, val label: String, val icon: ImageVector, val tint: Color)
+    data class Category(val id: String, val label: String, val subtitle: String, val icon: ImageVector, val tint: Color)
     val categories = listOf(
-        Category("ai", tr("AI & providers"), Icons.Filled.Psychology, MaterialTheme.colorScheme.primary),
-        Category("memory", tr("Memory"), Icons.Filled.MemoryIcon, MaterialTheme.colorScheme.secondary),
-        Category("workspace", tr("Workspace & build"), Icons.Filled.Terminal, MaterialTheme.colorScheme.tertiary),
-        Category("appearance", tr("Appearance"), Icons.Filled.Language, MaterialTheme.colorScheme.primary),
-        Category("data", tr("Data & security"), Icons.Filled.Security, MaterialTheme.colorScheme.error),
-        Category("developer", tr("Developer & about"), Icons.Filled.DeveloperMode, MaterialTheme.colorScheme.onSurfaceVariant),
+        Category("ai", tr("AI & providers"), tr("Providers, usage, tools and standing instructions"), Icons.Filled.Psychology, MaterialTheme.colorScheme.primary),
+        Category("memory", tr("Memory"), tr("Long-term memory across chats"), Icons.Filled.MemoryIcon, MaterialTheme.colorScheme.secondary),
+        Category("workspace", tr("Workspace & build"), tr("Terminal, Node.js runtime and the agent"), Icons.Filled.Terminal, MaterialTheme.colorScheme.tertiary),
+        Category("appearance", tr("Appearance"), tr("Make the workspace comfortable on your device"), Icons.Filled.Language, MaterialTheme.colorScheme.primary),
+        Category("data", tr("Data & security"), tr("Local data stays on the device"), Icons.Filled.Security, MaterialTheme.colorScheme.error),
+        Category("developer", tr("Developer & about"), tr("Diagnostics, recovery and credits"), Icons.Filled.DeveloperMode, MaterialTheme.colorScheme.onSurfaceVariant),
     )
+    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val notificationsGranted = if (android.os.Build.VERSION.SDK_INT >= 33) {
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            appContext, android.Manifest.permission.POST_NOTIFICATIONS,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    } else {
+        true
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -151,62 +164,80 @@ fun SettingsScreen(
                     onUpdateTap = { showUpdateDialog = true },
                 )
             }
-            // ---- category chips (web-prototype port: accent-coded, horizontally scrollable)
-            LazyRow(
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(categories) { c ->
-                    FilterChip(
-                        selected = category == c.id,
-                        onClick = { category = c.id },
-                        label = { Text(c.label) },
-                        leadingIcon = { androidx.compose.material3.Icon(c.icon, null, Modifier.size(16.dp), tint = c.tint) },
-                    )
+            // ---- accordion sections (2026-11-04, owner request): every
+            // category is an expandable section in this one list; the
+            // category contents below are unchanged.
+            categories.forEach { c ->
+                SettingsAccordionSection(
+                    icon = c.icon,
+                    tint = c.tint,
+                    title = c.label,
+                    subtitle = c.subtitle,
+                    expanded = expandedSection == c.id,
+                    onToggle = { expandedSection = if (expandedSection == c.id) "" else c.id },
+                ) {
+                    when (c.id) {
+                        "ai" -> AiCategory(
+                            settings = settings,
+                            nav = nav,
+                            instructions = instructions,
+                            onInstructions = { instructions = it },
+                            onSaveInstructions = { scope.launch { graph.settings.setCustomInstructions(instructions) } },
+                            onWebTools = { v -> scope.launch { graph.settings.setWebToolsEnabled(v) } },
+                        )
+                        "memory" -> MemoryCategory(
+                            settings = settings,
+                            nav = nav,
+                            onMemory = { v -> scope.launch { graph.settings.setMemoryEnabled(v) } },
+                        )
+                        "workspace" -> WorkspaceCategory(
+                            settings = settings,
+                            projects = projects,
+                            onTerminal = { showTerminalPicker = true },
+                            onNodeBackend = { b -> scope.launch { graph.settings.setNodeBackend(b) } },
+                            onTermuxBridge = { v -> scope.launch { graph.settings.setTermuxBridgeEnabled(v) } },
+                            nav = nav,
+                        )
+                        "appearance" -> AppearanceCategory(
+                            settings = settings,
+                            vm = vm,
+                            showLanguageDialog = { showLanguageDialog = true },
+                            onAccent = { accent -> scope.launch { graph.settings.setAtelierAccent(accent) } },
+                        )
+                        "data" -> DataCategory(
+                            cacheBytes = cacheBytes,
+                            nav = nav,
+                            onClearCache = { showClearCacheDialog = true },
+                            onDeleteHistory = { showDeleteHistoryDialog = true },
+                            autoBackupEnabled = settings?.autoBackupEnabled ?: true,
+                            onAutoBackup = { v ->
+                                scope.launch { graph.settings.setAutoBackupEnabled(v) }
+                                if (v) {
+                                    com.anvex.app.runtime.BackupScheduler.schedule(appContext)
+                                } else {
+                                    com.anvex.app.runtime.BackupScheduler.cancel(appContext)
+                                }
+                            },
+                            notificationsGranted = notificationsGranted,
+                            onOpenNotificationSettings = {
+                                runCatching {
+                                    appContext.startActivity(
+                                        android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, appContext.packageName)
+                                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                }
+                            },
+                        )
+                        "developer" -> DeveloperCategory(
+                            nav = nav,
+                            updateController = updateController,
+                            onShowUpdateDialog = { showUpdateDialog = true },
+                            autoUpdateCheck = settings?.autoUpdateCheck ?: true,
+                            onAutoUpdateCheck = { v -> scope.launch { graph.settings.setAutoUpdateCheck(v) } },
+                        )
+                    }
                 }
-            }
-
-            when (category) {
-                "ai" -> AiCategory(
-                    settings = settings,
-                    nav = nav,
-                    instructions = instructions,
-                    onInstructions = { instructions = it },
-                    onSaveInstructions = { scope.launch { graph.settings.setCustomInstructions(instructions) } },
-                    onWebTools = { v -> scope.launch { graph.settings.setWebToolsEnabled(v) } },
-                )
-                "memory" -> MemoryCategory(
-                    settings = settings,
-                    nav = nav,
-                    onMemory = { v -> scope.launch { graph.settings.setMemoryEnabled(v) } },
-                )
-                "workspace" -> WorkspaceCategory(
-                    settings = settings,
-                    projects = projects,
-                    onTerminal = { showTerminalPicker = true },
-                    onNodeBackend = { b -> scope.launch { graph.settings.setNodeBackend(b) } },
-                    onTermuxBridge = { v -> scope.launch { graph.settings.setTermuxBridgeEnabled(v) } },
-                    nav = nav,
-                )
-                "appearance" -> AppearanceCategory(
-                    settings = settings,
-                    vm = vm,
-                    showLanguageDialog = { showLanguageDialog = true },
-                    onAccent = { accent -> scope.launch { graph.settings.setAtelierAccent(accent) } },
-                )
-                "data" -> DataCategory(
-                    cacheBytes = cacheBytes,
-                    nav = nav,
-                    onClearCache = { showClearCacheDialog = true },
-                    onDeleteHistory = { showDeleteHistoryDialog = true },
-                )
-                "developer" -> DeveloperCategory(
-                    nav = nav,
-                    updateController = updateController,
-                    onShowUpdateDialog = { showUpdateDialog = true },
-                    autoUpdateCheck = settings?.autoUpdateCheck ?: true,
-                    onAutoUpdateCheck = { v -> scope.launch { graph.settings.setAutoUpdateCheck(v) } },
-                )
             }
             androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
         }
@@ -331,7 +362,6 @@ private fun AiCategory(
     onSaveInstructions: () -> Unit,
     onWebTools: (Boolean) -> Unit,
 ) {
-    AnvexSectionHeader(tr("AI & providers"), tr("Providers, usage, tools and standing instructions"))
     SettingsRow(Icons.Filled.Key, tr("AI providers"), tr("OpenAI, Anthropic, Gemini, Z.ai (GLM Coding Plan), OpenCode, OpenRouter, DeepSeek, Mistral, Groq and custom cloud endpoints"), nav = nav, route = Routes.PROVIDERS)
     SettingsRow(Icons.Filled.DataUsage, tr("AI usage & tokens"), tr("Review token usage by model and provider"), nav = nav, route = Routes.USAGE)
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -366,7 +396,7 @@ private fun MemoryCategory(
     nav: NavController,
     onMemory: (Boolean) -> Unit,
 ) {
-    AnvexSectionHeader(tr("Memory"), tr("Long-term memory across chats"))
+    // (Section title/subtitle live in the accordion header since 2026-11-04.)
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
             ListItem(
@@ -392,7 +422,7 @@ private fun WorkspaceCategory(
     onTermuxBridge: (Boolean) -> Unit,
     nav: NavController,
 ) {
-    AnvexSectionHeader(tr("Workspace & build"), tr("Terminal, Node.js runtime and the agent"))
+    // (Section title/subtitle live in the accordion header since 2026-11-04.)
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), onClick = { nav.navigate(Routes.AGENT_CENTER) }) {
         Row(Modifier.padding(16.dp)) {
             AnvexIconTile(Icons.Filled.AutoAwesome)
@@ -452,7 +482,7 @@ private fun AppearanceCategory(
     showLanguageDialog: () -> Unit,
     onAccent: (AtelierAccent) -> Unit,
 ) {
-    AnvexSectionHeader(tr("Appearance"), tr("Make the workspace comfortable on your device"))
+    // (Section title/subtitle live in the accordion header since 2026-11-04.)
     if (settings?.uiThemeStyle == UiThemeStyle.ATELIER) {
         // The Atelier mode cards + accent dots live here, in their own
         // section (moved off the Settings main page, user request 2026-11-02).
@@ -616,8 +646,12 @@ private fun DataCategory(
     nav: NavController,
     onClearCache: () -> Unit,
     onDeleteHistory: () -> Unit,
+    autoBackupEnabled: Boolean,
+    onAutoBackup: (Boolean) -> Unit,
+    notificationsGranted: Boolean,
+    onOpenNotificationSettings: () -> Unit,
 ) {
-    AnvexSectionHeader(tr("Data & security"), tr("Local data stays on the device"))
+    // (Section title/subtitle live in the accordion header since 2026-11-04.)
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         ListItem(
             headlineContent = { Text(tr("Preview cache")) },
@@ -633,6 +667,28 @@ private fun DataCategory(
             headlineContent = { Text(tr("Encrypted backup")) },
             supportingContent = { Text(tr("Transfer settings and provider credentials between devices")) },
             trailingContent = { TextButton(onClick = { nav.navigate(Routes.BACKUP) }) { Text(tr("Open")) } },
+        )
+        // 2026-11-04 (external-audit wave): the periodic snapshot used
+        // to run with no user-facing switch, and a denied notification
+        // permission had no recovery path inside the app.
+        ListItem(
+            headlineContent = { Text(tr("Automatic backups")) },
+            supportingContent = { Text(tr("Encrypted snapshot of settings and memories every few hours, stored only on this device")) },
+            trailingContent = { Switch(checked = autoBackupEnabled, onCheckedChange = onAutoBackup) },
+        )
+        ListItem(
+            headlineContent = { Text(tr("Agent notifications")) },
+            supportingContent = {
+                Text(
+                    if (notificationsGranted) tr("Enabled")
+                    else tr("Not enabled — the agent progress notification stays hidden")
+                )
+            },
+            trailingContent = {
+                if (!notificationsGranted) {
+                    TextButton(onClick = onOpenNotificationSettings) { Text(tr("Open settings")) }
+                }
+            },
         )
     }
     AnvexCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -655,7 +711,7 @@ private fun DeveloperCategory(
     autoUpdateCheck: Boolean,
     onAutoUpdateCheck: (Boolean) -> Unit,
 ) {
-    AnvexSectionHeader(tr("Developer & about"), tr("Diagnostics, recovery and credits"))
+    // (Section title/subtitle live in the accordion header since 2026-11-04.)
     SettingsRow(Icons.Filled.BugReport, tr("Debug panel"), tr("Runtime status, memory, logs and provider tests"), nav = nav, route = Routes.DEBUG)
     SettingsRow(Icons.Filled.DeveloperMode, tr("Developer Center"), tr("Health, recovery, tasks, snapshots, skills and LAN access"), nav = nav, route = Routes.DEVELOPER)
     SettingsRow(Icons.Filled.SettingsSuggest, tr("Agent Center"), tr("Launch and monitor real durable agent tasks"), nav = nav, route = Routes.AGENT_CENTER)
@@ -729,6 +785,58 @@ private fun DeveloperCategory(
                 Text(tr("API keys use Android Keystore-backed encryption and are sent only to the provider endpoint you configure."))
             },
         )
+    }
+}
+
+/** Accordion section header + animated body (2026-11-04, owner request). */
+@Composable
+private fun SettingsAccordionSection(
+    icon: ImageVector,
+    tint: Color,
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    AnvexCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        onClick = onToggle,
+    ) {
+        Row(
+            Modifier.padding(12.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            AnvexIconTile(
+                icon,
+                modifier = Modifier.size(40.dp),
+                containerColor = tint.copy(alpha = 0.16f),
+                contentColor = tint,
+            )
+            Column(
+                Modifier.weight(1f).padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        visible = expanded,
+        enter = androidx.compose.animation.expandVertically(),
+        exit = androidx.compose.animation.shrinkVertically(),
+    ) {
+        Column { content() }
     }
 }
 

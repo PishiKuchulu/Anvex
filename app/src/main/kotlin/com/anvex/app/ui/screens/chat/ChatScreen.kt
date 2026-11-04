@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import com.anvex.app.share.IncomingShare
 import com.anvex.app.ui.components.ReadAloud
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Mic
 import androidx.activity.result.ActivityResultLauncher
 import android.speech.RecognizerIntent
@@ -258,6 +259,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
     LaunchedEffect(showKnowledge) { if (showKnowledge) vm.refreshKnowledge() }
     val webOn by vm.webSearchOn.collectAsState()
     val providerChoices by vm.providerChoices.collectAsState()
+    val modelChoices by vm.modelChoices.collectAsState()
     // v4.10: Pi gateway approvals surface here as a dialog (the engine is
     // blocked on this decision; dismissing denies — fail-closed).
     val pendingPiApproval by vm.pendingPiApproval.collectAsState()
@@ -450,9 +452,10 @@ fun ChatScreen(nav: NavController, projectId: String) {
             shapes = MaterialTheme.shapes,
         ) {
         Column(modifier.fillMaxSize().imePadding()) {
+          Box(Modifier.weight(1f)) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxSize(),
                 // v4.10.5: bottom breathing room so the last line never
                 // ends flush against the composer.
                 contentPadding = PaddingValues(start = AnvexDimens.page, end = AnvexDimens.page, top = 4.dp, bottom = 12.dp),
@@ -595,6 +598,29 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     }
                 }
             }
+            // 2026-11-04 (user request): jump-to-latest button — reading a
+            // long answer used to mean scrolling by hand to reach the end.
+            // Shown only while the list is not pinned to the bottom (the
+            // same check the auto-follow logic uses, so the two agree).
+            val showJumpToBottom by produceState(initialValue = false, listState) {
+                snapshotFlow { !listState.isPinnedToBottom() }.collect { value = it }
+            }
+            var jumpSignal by remember { mutableStateOf(0) }
+            LaunchedEffect(jumpSignal) {
+                if (jumpSignal > 0) {
+                    val count = listState.layoutInfo.totalItemsCount
+                    if (count > 0) listState.animateScrollToItem(count - 1)
+                }
+            }
+            if (showJumpToBottom) {
+                androidx.compose.material3.SmallFloatingActionButton(
+                    onClick = { jumpSignal++ },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                ) {
+                    Icon(Icons.Filled.ArrowDownward, contentDescription = tr("Scroll to bottom"))
+                }
+            }
+          }
             Composer(
                 atelier = atelierStyle,
                 value = input,
@@ -629,9 +655,9 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     }
                 },
                 modelLabel = activeModel,
-                modelChoices = providerChoices,
+                modelChoices = modelChoices,
                 activeProviderId = activeProviderId,
-                onSwitchModel = vm::switchProvider,
+                onSwitchModel = vm::switchProviderModel,
                 webAvailable = webAvail,
                 webOn = webOn,
                 onProject = { showKnowledge = true },
@@ -698,6 +724,9 @@ fun ChatScreen(nav: NavController, projectId: String) {
                     value = editText,
                     onValueChange = { editText = it.take(8_000) },
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        textDirection = androidx.compose.ui.text.style.TextDirection.Content,
+                    ),
                     minLines = 3,
                     maxLines = 10,
                     label = { Text(tr("Your message (edited)")) },
@@ -912,9 +941,9 @@ private fun Composer(
     // "Generate image" option prefixes the draft with the /image command.
     onGenerateImage: () -> Unit = {},
     modelLabel: String? = null,
-    modelChoices: List<ProviderConfig> = emptyList(),
+    modelChoices: List<com.anvex.app.vm.ChatViewModel.ModelChoice> = emptyList(),
     activeProviderId: String? = null,
-    onSwitchModel: (String) -> Unit = {},
+    onSwitchModel: (String, String) -> Unit = { _, _ -> },
     webAvailable: Boolean = false,
     webOn: Boolean = false,
     onToggleWeb: (Boolean) -> Unit = {},
@@ -936,16 +965,20 @@ private fun Composer(
         tonalElevation = 0.dp,
     ) {
         Column(Modifier.padding(8.dp)) {
-            // v4.4.4 (smoothness): O(n) bidi scan cached per input value.
-            val rtl = remember(value) { isRtlText(value) }
-            CompositionLocalProvider(
-                LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
-            ) {
-                OutlinedTextField(
+            // 2026-11-04 (user report): the old whole-value bidi scan picked
+            // ONE direction from the first strong character of the ENTIRE
+            // input and flipped the whole field (chrome included) with it —
+            // a Persian prompt starting with a Latin word wrapped as LTR
+            // text and read scrambled. TextDirection.Content instead gives
+            // every paragraph its own content-based direction while the
+            // field chrome (prompt glyph, padding) stays put.
+            OutlinedTextField(
                     value = value,
                     onValueChange = onValueChange,
                     modifier = Modifier.fillMaxWidth(),
-                    textStyle = directionalTextStyle(MaterialTheme.typography.bodyLarge, value),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        textDirection = androidx.compose.ui.text.style.TextDirection.Content,
+                    ),
                     placeholder = { Text(tr("Ask anything, or describe what to build…")) },
                     // Command-deck signature: the mono prompt glyph.
                     leadingIcon = {
@@ -969,7 +1002,6 @@ private fun Composer(
                         disabledBorderColor = Color.Transparent,
                     ),
                 )
-            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // v4.4.5 (UX): one "+" entry point instead of five undifferentiated
                 // icon buttons — the sheet groups them with labels, the
@@ -1023,13 +1055,14 @@ private fun Composer(
                             onDismissRequest = { modelMenuOpen = false },
                         ) {
                             modelChoices.forEach { choice ->
+                                val isActive = choice.providerId == activeProviderId && choice.model == modelLabel
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text(
-                                                choice.name,
+                                                choice.providerName,
                                                 style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = if (choice.id == activeProviderId) FontWeight.SemiBold else FontWeight.Normal,
+                                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
                                             )
                                             Text(
                                                 choice.model,
@@ -1038,14 +1071,14 @@ private fun Composer(
                                             )
                                         }
                                     },
-                                    trailingIcon = if (choice.id == activeProviderId) {
+                                    trailingIcon = if (isActive) {
                                         { Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) }
                                     } else {
                                         null
                                     },
                                     onClick = {
                                         modelMenuOpen = false
-                                        if (choice.id != activeProviderId) onSwitchModel(choice.id)
+                                        if (!isActive) onSwitchModel(choice.providerId, choice.model)
                                     },
                                 )
                             }

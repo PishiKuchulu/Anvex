@@ -71,6 +71,20 @@ class ProvidersViewModel : ViewModel() {
     val modelTestProgress = MutableStateFlow(0 to 0)
     val modelTestingId = MutableStateFlow<String?>(null)
     private var modelTestJob: kotlinx.coroutines.Job? = null
+    /**
+     * Multi-model selection (2026-11-04, user request): the models ticked
+     * for the provider being edited. Persisted per provider id in
+     * settings on save; the chat model switcher offers each ticked model
+     * as its own choice under the same provider.
+     */
+    val selectedModels = MutableStateFlow<List<String>>(emptyList())
+
+    fun toggleModel(id: String) {
+        selectedModels.value =
+            if (id in selectedModels.value) selectedModels.value - id
+            else selectedModels.value + id
+    }
+
     val saveMessage = MutableStateFlow<String?>(null)
     val credentialWarning = MutableStateFlow<String?>(null)
 
@@ -80,6 +94,7 @@ class ProvidersViewModel : ViewModel() {
             val kind = runCatching { ProviderKind.valueOf(initialKind) }.getOrNull()
                 ?: ProviderKind.CUSTOM_OPENAI
             edit.value = EditUi(id = "new", kind = kind)
+            selectedModels.value = emptyList()
             return
         }
         viewModelScope.launch {
@@ -100,6 +115,7 @@ class ProvidersViewModel : ViewModel() {
                 maxTokens = config.maxTokens?.toString() ?: "",
                 isDefault = config.isDefault,
             )
+            selectedModels.value = graph.settings.providerModelSets.first()[config.id] ?: emptyList()
         }
     }
 
@@ -242,6 +258,7 @@ class ProvidersViewModel : ViewModel() {
             val result = graph.providers.save(config, ui.apiKey.takeIf { it.isNotBlank() })
             when (result) {
                 is RepoResult.Ok -> {
+                    graph.settings.setProviderModelSet(config.id, selectedModels.value)
                     saveMessage.value = "Saved"
                     onDone()
                 }

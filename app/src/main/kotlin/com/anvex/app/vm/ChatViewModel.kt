@@ -58,6 +58,19 @@ private const val MAX_PDF_PAGES = 6
 private const val MAX_KNOWLEDGE_BYTES = 200L * 1024
 private const val MAX_PDF_PAGE_WIDTH_PX = 1200
 
+/** Expands providers into switcher choices using each provider's ticked
+ * model set (always including its active model). Shared by the project
+ * chat and quick chat view models so both switchers behave identically. */
+internal fun expandModelChoices(
+    providers: List<ProviderConfig>,
+    sets: Map<String, List<String>>,
+): List<ChatViewModel.ModelChoice> = providers.flatMap { p ->
+    ((sets[p.id] ?: emptyList()) + p.model)
+        .filter { it.isNotBlank() }
+        .distinct()
+        .map { m -> ChatViewModel.ModelChoice(p.id, p.name, m) }
+}
+
 class ChatViewModel(
     val projectId: String,
 ) : ViewModel() {
@@ -234,6 +247,37 @@ class ChatViewModel(
      */
     fun switchProvider(id: String) {
         viewModelScope.launch { graph.providers.setDefault(id) }
+    }
+
+    /** One entry of the composer model switcher: a provider + one model. */
+    data class ModelChoice(val providerId: String, val providerName: String, val model: String)
+
+    /**
+     * Multi-model switcher (2026-11-04, user request): providers expand
+     * into one choice per model — the models ticked for that provider in
+     * its editor, always including its active model. With nothing ticked
+     * this is exactly the old one-choice-per-provider list.
+     */
+    val modelChoices: StateFlow<List<ModelChoice>> =
+        combine(graph.providers.observeAll(), graph.settings.providerModelSets) { providers, sets ->
+            expandModelChoices(providers, sets)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Switch to a specific model of a provider: the provider becomes the
+     * default, and the picked model becomes its active model (persisted
+     * through the repository's save, which rebinds the stored key to the
+     * new model). The init collector compares `model`, so the session
+     * rebuilds on the pick.
+     */
+    fun switchProviderModel(id: String, model: String) {
+        viewModelScope.launch {
+            graph.providers.setDefault(id)
+            val config = graph.providers.get(id) ?: return@launch
+            if (config.model != model) {
+                graph.providers.save(config.copy(model = model), null)
+            }
+        }
     }
 
     val noProviderConfigured: StateFlow<Boolean> = graph.providers.observeAll()

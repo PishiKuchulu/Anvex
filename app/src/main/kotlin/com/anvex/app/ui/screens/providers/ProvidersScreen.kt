@@ -316,6 +316,7 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
     val testingModels by vm.testingModels.collectAsState()
     val modelTestProgress by vm.modelTestProgress.collectAsState()
     val modelTestingId by vm.modelTestingId.collectAsState()
+    val selectedModels by vm.selectedModels.collectAsState()
     val saveMessage by vm.saveMessage.collectAsState()
     val credentialWarning by vm.credentialWarning.collectAsState()
     var showKey by remember { mutableStateOf(false) }
@@ -466,6 +467,8 @@ fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "")
                 ModelPicker(
                     models = models,
                     current = ui.model,
+                    selectedModels = selectedModels,
+                    onToggleModel = vm::toggleModel,
                     testResults = modelTestResults,
                     testingModels = testingModels,
                     testProgress = modelTestProgress,
@@ -651,6 +654,8 @@ private fun KindSelector(current: ProviderKind, onSelect: (ProviderKind) -> Unit
 private fun ModelPicker(
     models: List<com.anvex.core.model.ModelInfo>,
     current: String,
+    selectedModels: List<String> = emptyList(),
+    onToggleModel: (String) -> Unit = {},
     testResults: Map<String, Boolean> = emptyMap(),
     testingModels: Boolean = false,
     testProgress: Pair<Int, Int> = 0 to 0,
@@ -674,6 +679,13 @@ private fun ModelPicker(
             androidx.compose.material3.TextButton(onClick = onTestModels) {
                 Text(if (testingModels) tr("Cancel test") else tr("Test models"))
             }
+        }
+        if (selectedModels.isNotEmpty()) {
+            Text(
+                "${selectedModels.size} ${tr("models selected")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
         if (testingModels) {
             Text(
@@ -750,6 +762,13 @@ private fun ModelPicker(
                             androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
                         }
                     }
+                    // Multi-select (2026-11-04): ticking adds the model to
+                    // this provider's switcher choices in chat; the row tap
+                    // still sets the one active model.
+                    androidx.compose.material3.Checkbox(
+                        checked = model.id in selectedModels,
+                        onCheckedChange = { onToggleModel(model.id) },
+                    )
                 }
             }
         }

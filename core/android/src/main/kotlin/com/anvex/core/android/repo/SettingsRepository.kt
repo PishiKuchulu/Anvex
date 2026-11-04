@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.map
 import com.anvex.core.model.ThinkingLevel
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val Context.dataStore by preferencesDataStore(name = "anvex_settings")
@@ -98,6 +99,11 @@ data class AppSettings(
     /** Review A8: the on-launch update check can be turned off; the
      * manual Settings check always remains available. */
     val autoUpdateCheck: Boolean = true,
+    /** 2026-11-04 (external-audit wave): the periodic encrypted snapshot
+     * (BackupScheduler, every ~6h) used to run unconditionally with no
+     * user-facing switch. Default stays ON to preserve behavior; the
+     * Settings toggle cancels the alarm when turned off. */
+    val autoBackupEnabled: Boolean = true,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -124,6 +130,37 @@ class SettingsRepository(private val context: Context) {
         val AGENT_ENGINE = stringPreferencesKey("agent_engine")
         val ATELIER_ACCENT = stringPreferencesKey("atelier_accent")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
+        val AUTO_BACKUP = booleanPreferencesKey("auto_backup_enabled")
+        val PROVIDER_MODELS = stringPreferencesKey("provider_model_sets_json")
+    }
+
+    /**
+     * Per-provider multi-model selection (2026-11-04, user request):
+     * providerId → the model ids ticked in the provider editor. Kept as
+     * JSON in preferences, deliberately NOT a Room column (no schema
+     * bump); the provider's own `model` remains its one active model and
+     * is always part of its effective choice list.
+     */
+    val providerModelSets: Flow<Map<String, List<String>>> = context.dataStore.data
+        .catch { e ->
+            if (e is java.io.IOException) emit(emptyPreferences()) else throw e
+        }
+        .map { prefs ->
+            val raw = prefs[Keys.PROVIDER_MODELS] ?: return@map emptyMap()
+            runCatching {
+                Json.decodeFromString<Map<String, List<String>>>(raw)
+            }.getOrDefault(emptyMap())
+        }
+
+    suspend fun setProviderModelSet(providerId: String, models: List<String>) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.PROVIDER_MODELS]?.let {
+                runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrDefault(emptyMap())
+            } ?: emptyMap()
+            val next = if (models.isEmpty()) current - providerId
+                else current + (providerId to models.distinct())
+            prefs[Keys.PROVIDER_MODELS] = Json.encodeToString(next)
+        }
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data
@@ -158,6 +195,7 @@ class SettingsRepository(private val context: Context) {
             agentEngine = p[Keys.AGENT_ENGINE]?.let { runCatching { AgentEngine.valueOf(it) }.getOrNull() } ?: AgentEngine.NATIVE,
             atelierAccent = p[Keys.ATELIER_ACCENT]?.let { runCatching { AtelierAccent.valueOf(it) }.getOrNull() } ?: AtelierAccent.ORANGE,
             autoUpdateCheck = p[Keys.AUTO_UPDATE_CHECK] ?: true,
+            autoBackupEnabled = p[Keys.AUTO_BACKUP] ?: true,
         )
     }
 
@@ -181,6 +219,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setAgentEngine(v: AgentEngine) = context.dataStore.edit { it[Keys.AGENT_ENGINE] = v.name }
     suspend fun setAtelierAccent(v: AtelierAccent) = context.dataStore.edit { it[Keys.ATELIER_ACCENT] = v.name }
     suspend fun setAutoUpdateCheck(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_UPDATE_CHECK] = v }
+    suspend fun setAutoBackupEnabled(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_BACKUP] = v }
     suspend fun setTermuxBridgeEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TERMUX_BRIDGE] = v }
 
     suspend fun restoreFromBackup(encoded: String) {
@@ -199,6 +238,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.MEMORY_ENABLED] = s.memoryEnabled; p[Keys.CUSTOM_INSTRUCTIONS] = s.customInstructions.take(4_000)
             p[Keys.NODE_BACKEND] = s.nodeBackend.name; p[Keys.ATELIER_ACCENT] = s.atelierAccent.name
             p[Keys.AUTO_UPDATE_CHECK] = s.autoUpdateCheck
+            p[Keys.AUTO_BACKUP] = s.autoBackupEnabled
         }
     }
 }

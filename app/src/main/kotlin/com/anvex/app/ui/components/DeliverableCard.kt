@@ -66,6 +66,7 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
     // click handlers below run in coroutine lambdas where tr() (a
     // @Composable) can never be called.
     val savedLabel = tr("Saved")
+    val savedProjectLabel = tr("Saved to project folder")
     val saveFailedLabel = tr("Save failed")
     val openFailedLabel = tr("Open failed")
     val shareFailedLabel = tr("Share failed")
@@ -104,27 +105,54 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                 }
             }
             if (!failed) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GradientButton(
-                        text = tr("Save"),
-                        icon = Icons.Filled.Download,
+                // 2026-11-04 (user report): the old row used full-size
+                // buttons with no width sharing — on a card-width row the
+                // Share label wrapped mid-word. All three actions are now
+                // compact, equal-weight, single-line.
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    androidx.compose.material3.Button(
                         onClick = {
                             scope.launch {
                                 val result = runCatching {
                                     withContext(Dispatchers.IO) {
                                         val a = manager.find(projectId, stored) ?: error(removedText)
-                                        manager.saveToDownloads(a)
+                                        // 2026-11-04 (user request): Save
+                                        // writes into the PROJECT's folder
+                                        // first — Downloads/Anvex is only
+                                        // the fallback when the project
+                                        // storage is unavailable.
+                                        val inProject = runCatching {
+                                            val fs = AppGraph.get().androidRuntime.fileSystem(projectId)
+                                                ?: error("Project storage unavailable")
+                                            fs.writeFileBytes(displayName, a.file.readBytes())
+                                        }.isSuccess
+                                        if (inProject) true to displayName
+                                        else false to manager.saveToDownloads(a)
                                     }
                                 }
                                 statusIsError = result.isFailure
                                 status = result.fold(
-                                    { "$savedLabel: $it" },
+                                    { (inProject, loc) ->
+                                        if (inProject) "$savedProjectLabel: $loc" else "$savedLabel: $loc"
+                                    },
                                     { "$saveFailedLabel: ${it.message}" },
                                 )
                             }
                         },
-                    )
-                    OutlinedButton(onClick = {
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    ) {
+                        Icon(Icons.Filled.Download, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(tr("Save"), maxLines = 1, softWrap = false)
+                    }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        onClick = {
                         scope.launch {
                             runCatching {
                                 val a = withContext(Dispatchers.IO) {
@@ -161,11 +189,14 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                             }
                         }
                     }) {
-                        Icon(Icons.Filled.Visibility, null, Modifier.size(18.dp))
+                        Icon(Icons.Filled.Visibility, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(tr("Open"))
+                        Text(tr("Open"), maxLines = 1, softWrap = false)
                     }
-                    OutlinedButton(onClick = {
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        onClick = {
                         runCatching {
                             val a = manager.find(projectId, stored) ?: error(removedText)
                             val send = Intent(Intent.ACTION_SEND).apply {
@@ -179,9 +210,9 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                             status = "$shareFailedLabel: ${it.message}"
                         }
                     }) {
-                        Icon(Icons.Filled.Share, null, Modifier.size(18.dp))
+                        Icon(Icons.Filled.Share, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(tr("Share"))
+                        Text(tr("Share"), maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -200,7 +231,11 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
             onDismissRequest = { viewerText = null },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Surface(
+                Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+                contentColor = MaterialTheme.colorScheme.onBackground,
+            ) {
                 Column {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -221,12 +256,13 @@ fun DeliverableCard(projectId: String, record: ActionRecord, modifier: Modifier 
                         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
                     ) {
                         if (viewerMarkdown) {
-                            MarkdownText(text)
+                            MarkdownText(text, textColor = MaterialTheme.colorScheme.onBackground)
                         } else {
                             Text(
                                 text,
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontFamily = if (viewerMono) FontFamily.Monospace else FontFamily.Default,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 ),
                             )
                         }

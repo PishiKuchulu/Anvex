@@ -1,5 +1,6 @@
 package com.anvex.app.ui.screens.editor
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -98,6 +100,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
 
     // P9 (F2c): LSP diagnostics + hover.
     val lspDiagnostics by vm.lspDiagnostics.collectAsState()
+    val lspState by vm.lspState.collectAsState()
     var hoverText by remember { mutableStateOf<String?>(null) }
     var showHover by remember { mutableStateOf(false) }
     var showProblems by remember { mutableStateOf(false) }
@@ -274,6 +277,39 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                         }
+                    }
+                }
+                // 2026-11-04 (audit wave): LSP status strip — the
+                // Tree-sitter fallback used to be invisible.
+                if (lspState != com.anvex.app.vm.EditorViewModel.LspUiState.OFF) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.foundation.layout.Box(
+                            Modifier
+                                .size(7.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(
+                                    when (lspState) {
+                                        com.anvex.app.vm.EditorViewModel.LspUiState.ACTIVE ->
+                                            MaterialTheme.colorScheme.tertiary
+                                        com.anvex.app.vm.EditorViewModel.LspUiState.STARTING ->
+                                            MaterialTheme.colorScheme.secondary
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                ),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            when (lspState) {
+                                com.anvex.app.vm.EditorViewModel.LspUiState.ACTIVE -> tr("Language server active")
+                                com.anvex.app.vm.EditorViewModel.LspUiState.STARTING -> tr("Starting language server…")
+                                else -> tr("No language server — syntax highlighting only")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 CodeEditorField(

@@ -158,6 +158,7 @@ fun DirectChatScreen(nav: NavController) {
     val visibleArchived by vm.visibleArchivedConversations.collectAsState()
     val chatQuery by vm.chatQuery.collectAsState()
     val providerChoices by vm.providerChoices.collectAsState()
+    val modelChoices by vm.modelChoices.collectAsState()
     val activeProviderId by vm.activeProviderId.collectAsState()
     val activeId by vm.activeId.collectAsState()
     val messages by vm.messages.collectAsState()
@@ -487,11 +488,10 @@ fun DirectChatScreen(nav: NavController) {
                         }
                     }
                 } else {
+                  Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
+                        modifier = Modifier.fillMaxSize(),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
                             horizontal = 16.dp, vertical = 8.dp
                         ),
@@ -651,6 +651,28 @@ fun DirectChatScreen(nav: NavController) {
                             }
                         }
                     }
+                    // 2026-11-04 (user request): jump-to-latest, same as the
+                    // project chat — shown only while not pinned to bottom.
+                    val showJumpToBottom by androidx.compose.runtime.produceState(initialValue = false, listState) {
+                        snapshotFlow { !listState.isPinnedToBottom() }.collect { value = it }
+                    }
+                    if (showJumpToBottom) {
+                        androidx.compose.material3.SmallFloatingActionButton(
+                            onClick = {
+                                scope.launch {
+                                    val count = listState.layoutInfo.totalItemsCount
+                                    if (count > 0) listState.animateScrollToItem(count - 1)
+                                }
+                            },
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                        ) {
+                            Icon(
+                                androidx.compose.material.icons.filled.ArrowDownward,
+                                contentDescription = tr("Scroll to bottom"),
+                            )
+                        }
+                    }
+                  }
 
                     // v4.6: reply quote bar (set from the long-press sheet).
                     replyTo?.let { target ->
@@ -703,7 +725,7 @@ fun DirectChatScreen(nav: NavController) {
                                 .padding(horizontal = 16.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (providerChoices.size > 1) {
+                            if (modelChoices.size > 1) {
                                 var modelMenuOpen by remember { mutableStateOf(false) }
                                 Box {
                                     Row(
@@ -731,14 +753,15 @@ fun DirectChatScreen(nav: NavController) {
                                         expanded = modelMenuOpen,
                                         onDismissRequest = { modelMenuOpen = false },
                                     ) {
-                                        providerChoices.forEach { choice ->
+                                        modelChoices.forEach { choice ->
+                                            val isActive = choice.providerId == activeProviderId && choice.model == activeModel
                                             DropdownMenuItem(
                                                 text = {
                                                     Column {
                                                         Text(
-                                                            choice.name,
+                                                            choice.providerName,
                                                             style = MaterialTheme.typography.bodyMedium,
-                                                            fontWeight = if (choice.id == activeProviderId) {
+                                                            fontWeight = if (isActive) {
                                                                 androidx.compose.ui.text.font.FontWeight.SemiBold
                                                             } else {
                                                                 androidx.compose.ui.text.font.FontWeight.Normal
@@ -751,14 +774,14 @@ fun DirectChatScreen(nav: NavController) {
                                                         )
                                                     }
                                                 },
-                                                trailingIcon = if (choice.id == activeProviderId) {
+                                                trailingIcon = if (isActive) {
                                                     { Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) }
                                                 } else {
                                                     null
                                                 },
                                                 onClick = {
                                                     modelMenuOpen = false
-                                                    if (choice.id != activeProviderId) vm.switchProvider(choice.id)
+                                                    if (!isActive) vm.switchProviderModel(choice.providerId, choice.model)
                                                 },
                                             )
                                         }
@@ -797,21 +820,21 @@ fun DirectChatScreen(nav: NavController) {
                         // direction, like the project chat composer already did.
                         // (Box carries the Row weight — weight is a RowScope
                         // member and cannot be used inside the provider lambda.)
-                        val composerRtl = remember(input) { isRtlText(input) }
+                        // 2026-11-04: same fix as the project chat composer —
+                        // per-paragraph TextDirection.Content instead of one
+                        // whole-value direction flip (see ChatScreen).
                         Box(Modifier.weight(1f)) {
-                            CompositionLocalProvider(
-                                LocalLayoutDirection provides if (composerRtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
-                            ) {
-                                OutlinedTextField(
-                                    value = input,
-                                    onValueChange = { input = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textStyle = directionalTextStyle(MaterialTheme.typography.bodyLarge, input),
-                                    placeholder = { Text(tr("Message")) },
-                                    shape = RoundedCornerShape(24.dp),
-                                    maxLines = 5,
-                                )
-                            }
+                            OutlinedTextField(
+                                value = input,
+                                onValueChange = { input = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                    textDirection = androidx.compose.ui.text.style.TextDirection.Content,
+                                ),
+                                placeholder = { Text(tr("Message")) },
+                                shape = RoundedCornerShape(24.dp),
+                                maxLines = 5,
+                            )
                         }
                         Spacer(Modifier.width(8.dp))
                         if (uiStreaming) {

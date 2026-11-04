@@ -1,5 +1,73 @@
 # Changelog
 
+## 4.15.2 — Device-QA fixes, accordion Settings, and the external-audit wave
+
+Two fix streams in one release: the seven defects reported from
+on-device use of 4.15.1, and every actionable item from verifying four
+external source audits line-by-line (most headline security claims in
+those audits did not survive verification — the updater already
+verifies the published SHA-256 and the APK signer, the WebViews
+already block file access, and both zip paths already enforce
+canonical containment; the items below are what was actually real).
+
+- **Persian text direction.** The chat composer no longer flips the
+  whole field from a single whole-text scan: direction is per
+  paragraph (`TextDirection.Content`) in both composers and the
+  edit-message dialog, and rendered Markdown now detects each block's
+  direction after stripping code spans and links, so a Persian
+  paragraph starting with a Latin file name no longer misrenders.
+- **Markdown viewer contrast.** `MarkdownText` defaulted to
+  `Color.Unspecified`, which rendered near-black on the dark theme in
+  the deliverable viewer (and in quick chat). It now defaults to the
+  theme's `onSurface`, and the viewer passes its colors explicitly.
+- **Jump to latest.** Both chats get a scroll-to-bottom button that
+  appears whenever the list is not pinned to the end.
+- **Multi-model providers.** A provider's model list now has
+  checkboxes: tick several models, and the chat model switcher (both
+  chats) offers each ticked model as its own choice. The set is stored
+  in settings (no database schema change); the active model is always
+  included.
+- **Deliverables land in the project.** The Save button on a
+  deliverable card writes into the project's own folder first and
+  only falls back to Downloads/Anvex when project storage is
+  unavailable; the status line says which. The card's Save/Open/Share
+  actions are now compact, equal-width, single-line buttons (Share
+  used to wrap mid-word).
+- **Settings is an accordion.** The category chip selector is gone;
+  all six categories are expandable sections in one scrolling list
+  (one open at a time), contents unchanged.
+- **Cold start without blocking the main thread.** The persisted
+  settings used to be read with `runBlocking` inside composition
+  (M-11's first-frame fix). The splash screen now stays up until the
+  first real settings value arrives — same correct first frame, no
+  blocked UI thread, with a 3 s safety release.
+- **Share hardening.** A single share now has an aggregate 100 MB cap
+  across all its files (the 20 MB per-file cap remains), empty
+  payloads are no longer offered, share copies in the cache are swept
+  after 7 days, and `onNewIntent` now calls `setIntent` so a later
+  recreation cannot re-offer a stale share.
+- **Notification permission stops nagging.** The POST_NOTIFICATIONS
+  ask happens only while a first ask would still show; after a denial
+  the recovery path is a new Settings row that deep-links to the
+  app's notification settings.
+- **Automatic backups are now optional.** The periodic encrypted
+  snapshot gains a Settings switch (default on); turning it off
+  cancels the alarm, including after reboot.
+- **GitHub pull survives process death.** Pull before-images are
+  mirrored to a durable journal inside the project
+  (`.anvex/pull-journal/`); a crashed pull is rolled back
+  automatically at the start of the next pull or push instead of
+  leaving a half-written tree.
+- **The editor shows its language-server state.** A status strip now
+  distinguishes "Language server active", "Starting…", and "No
+  language server — syntax highlighting only", instead of silently
+  falling back to Tree-sitter.
+
+Deferred with reasons (recorded in the verification report): the
+`(projectId, createdAt)` message index needs a Room schema snapshot
+that only a connected KSP build can generate, and a Baseline Profile
+needs a generator module plus device runs.
+
 ## 4.15.1 — Hotfix: launch crash in the typography initializer
 
 - **Fixed a crash on launch** (also present in 4.14.9): in

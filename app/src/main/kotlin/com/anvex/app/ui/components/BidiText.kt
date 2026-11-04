@@ -42,18 +42,39 @@ fun isRtlText(text: String): Boolean {
     return false
 }
 
-fun directionalTextStyle(base: TextStyle, text: String): TextStyle {
-    val rtl = isRtlText(text)
-    return base.copy(
+/**
+ * Direction of agent/user PROSE that may carry inline markdown. The raw
+ * string is a bad detection source: a Persian paragraph whose first token
+ * is a Latin filename or a `code` span reads as LTR and the whole
+ * paragraph then wraps with the wrong base direction (user report,
+ * 2026-11-04). Code spans are dropped entirely (their content is code,
+ * never prose), emphasis/link syntax is unwrapped, and the first strong
+ * character of what remains decides.
+ */
+fun isRtlContent(text: String): Boolean = isRtlText(stripInlineMarkdown(text))
+
+private val CODE_SPAN_RE = Regex("`{1,3}[^`]*`{1,3}")
+private val LINK_RE = Regex("\\[([^]]*)]\\([^)]*\\)")
+private val EMPHASIS_RE = Regex("[*_~]+")
+
+fun stripInlineMarkdown(text: String): String =
+    text.replace(CODE_SPAN_RE, " ")
+        .replace(LINK_RE, "$1")
+        .replace(EMPHASIS_RE, " ")
+
+fun directionalTextStyle(base: TextStyle, rtl: Boolean): TextStyle =
+    base.copy(
         textDirection = if (rtl) TextDirection.Rtl else TextDirection.Ltr,
-        // v4.6 (RTL fix): ABSOLUTE alignment. The old Start/End mapping flipped
-        // under the RTL LayoutDirection that BidiText itself installs: in an RTL
-        // layout, End is the LEFT edge — so every Persian paragraph rendered
-        // left-aligned instead of right-aligned (the user's report). Absolute
-        // Right/Left means the same thing in both layout directions.
         textAlign = if (rtl) TextAlign.Right else TextAlign.Left,
     )
-}
+
+fun directionalTextStyle(base: TextStyle, text: String): TextStyle =
+    // v4.6 (RTL fix): the Boolean overload uses ABSOLUTE alignment. The old
+    // Start/End mapping flipped under the RTL LayoutDirection that BidiText
+    // itself installs: in an RTL layout, End is the LEFT edge — so every
+    // Persian paragraph rendered left-aligned instead of right-aligned (the
+    // user's report). Absolute Right/Left means the same in both directions.
+    directionalTextStyle(base, isRtlText(text))
 
 @Composable
 fun BidiText(

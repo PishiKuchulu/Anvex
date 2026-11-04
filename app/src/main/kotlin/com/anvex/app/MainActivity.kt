@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.LocaleList
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
@@ -28,6 +29,9 @@ import com.anvex.core.android.repo.ThemeMode
 import com.anvex.core.android.repo.AppLanguage
 
 private const val MAX_SHARE_BYTES = 20L * 1024 * 1024
+
+/** 2026-11-04 (external-audit wave): aggregate cap across one whole share. */
+private const val MAX_TOTAL_SHARE_BYTES = 100L * 1024 * 1024
 
 /**
  * Single-activity Compose shell.
@@ -48,6 +52,11 @@ class MainActivity : ComponentActivity() {
     /** The language actually applied to the platform for this instance (null = not yet). */
     private var lastAppliedLanguage: AppLanguage? = null
 
+    /** 2026-11-04 (audit wave): splash stays up until the first real
+     * settings value lands, replacing the main-thread runBlocking read. */
+    @Volatile
+    private var settingsReady = false
+
     // M-11: the deprecated requestPermissions(int) path is replaced by the
     // Activity Result API. The grant is best-effort (a denied notification
     // permission only hides the agent notification), so no result handling.
@@ -56,6 +65,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // 2026-11-04 (audit wave): keep the activity's intent current —
+        // without setIntent, a later recreation re-read the FIRST
+        // intent (and could re-offer a stale share).
+        setIntent(intent)
         handleShare(intent)
     }
 
@@ -73,12 +86,35 @@ class MainActivity : ComponentActivity() {
             listOfNotNull(single)
         }
         lifecycleScope.launch(Dispatchers.IO) {
-            val copied = streams.mapNotNull { copyToCache(it) }
-            IncomingShare.offer(IncomingShare.Payload(text, copied))
+            // 2026-11-04 (external-audit wave): three fixes —
+            //  (a) an AGGREGATE cap across the whole share: the old code
+            //      capped each file at 20 MB but a SEND_MULTIPLE with
+            //      many files could still fill the cache unbounded;
+            //  (b) a payload with no text and no copied file is no
+            //      longer offered (it surfaced as an empty share chip);
+            //  (c) URI creation failures delete the orphan copy.
+            val copied = ArrayList<Uri>()
+            var totalBytes = 0L
+            for (stream in streams) {
+                if (totalBytes >= MAX_TOTAL_SHARE_BYTES) break
+                val file = copyToCache(stream) ?: continue
+                totalBytes += file.length()
+                if (totalBytes > MAX_TOTAL_SHARE_BYTES) {
+                    file.delete()
+                    break
+                }
+                val uri = runCatching {
+                    FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", file)
+                }.getOrNull()
+                if (uri != null) copied += uri else file.delete()
+            }
+            if (text != null || copied.isNotEmpty()) {
+                IncomingShare.offer(IncomingShare.Payload(text, copied))
+            }
         }
     }
 
-    private fun copyToCache(source: Uri): Uri? = runCatching {
+    private fun copyToCache(source: Uri): java.io.File? = runCatching {
         val dir = java.io.File(cacheDir, "shared").apply { mkdirs() }
         val displayName = contentResolver.query(source, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
@@ -110,34 +146,66 @@ class MainActivity : ComponentActivity() {
             target.delete()
             return@runCatching null
         }
-        FileProvider.getUriForFile(this, "$packageName.fileprovider", target)
+        // 2026-11-04: returns the copied File; the caller enforces the
+        // aggregate cap and mints the FileProvider URI (so an over-cap or
+        // unsharable copy can be deleted rather than orphaned).
+        target
     }.getOrNull()
 
     private class ShareTooLargeException : Exception()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 2026-11-04 (external-audit wave): M-11's first-frame fix read the
+        // persisted settings with runBlocking on the main thread inside
+        // composition — correct frame, wrong mechanism. The splash screen
+        // now covers the wait: it is held until the first real settings
+        // value arrives (settingsReady), so composition never blocks and
+        // frame one is still the persisted theme/language. A 3 s safety
+        // releases the splash even if the settings store fails.
+        val splash = installSplashScreen()
+        splash.setKeepOnScreenCondition { !settingsReady }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // Recreations (rotation, locale) must not re-offer the same share.
         if (savedInstanceState == null) handleShare(intent)
         // v4.4 (architect review item 12): Android 13+ needs an explicit
         // POST_NOTIFICATIONS grant for the agent notification to be visible.
+        // 2026-11-04 (audit wave): ask only while the system would still
+        // show the dialog for a first ask — once the user has denied,
+        // shouldShowRequestPermissionRationale turns true and re-asking
+        // on every start was pure nagging (the system silently denies).
+        // The recovery path lives in Settings (app notification settings).
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
+            android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)
         ) {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
         val graph = AppGraph.get()
-        setContent {
-            // M-11: starting from `null` painted the first frame with the SYSTEM
-            // theme/language and then flipped to the saved values (visible flash,
-            // RTL direction flip). Read the persisted value once, synchronously,
-            // so frame one is already correct.
-            val initialSettings = androidx.compose.runtime.remember {
-                runCatching { kotlinx.coroutines.runBlocking { graph.settings.settings.first() } }.getOrNull()
+        lifecycleScope.launch {
+            runCatching { graph.settings.settings.first() }
+            settingsReady = true
+        }
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(3_000)
+            settingsReady = true
+        }
+        // 2026-11-04 (audit wave): share copies in cache/shared used to
+        // live forever (the update controller sweeps only its own
+        // anvex-update-* files). Sweep share copies older than 7 days;
+        // anything still pending consumption is fresh by definition.
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                val dir = java.io.File(cacheDir, "shared")
+                val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+                dir.listFiles()?.forEach { f ->
+                    if (!f.name.startsWith("anvex-update-") && f.lastModified() < cutoff) f.delete()
+                }
             }
-            val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = initialSettings)
+        }
+        setContent {
+            val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = null)
             androidx.compose.runtime.LaunchedEffect(settings?.language) {
                 // Wait for the REAL settings value — the null initial emission must not
                 // consume the apply (that was the round-2 bug).

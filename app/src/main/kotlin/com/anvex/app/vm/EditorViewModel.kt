@@ -130,6 +130,13 @@ class EditorViewModel(
     /** Diagnostics published for the active file (empty when no LSP). */
     val lspDiagnostics = MutableStateFlow<List<com.anvex.core.android.runtime.lsp.LspDiagnostic>>(emptyList())
 
+    /** 2026-11-04 (external-audit wave): the editor used to fall back to
+     * Tree-sitter silently when no language server was available, so the
+     * user could not tell whether diagnostics/hover were live. The state
+     * is now surfaced in the editor's status strip. */
+    enum class LspUiState { OFF, STARTING, ACTIVE, UNAVAILABLE }
+    val lspState = MutableStateFlow(LspUiState.OFF)
+
     private fun lspLanguageFor(path: String): String? =
         com.anvex.core.android.runtime.symbols.SymbolIndexManager.grammarFor(path)
             ?: when (path.substringAfterLast('.', "").lowercase()) {
@@ -145,21 +152,41 @@ class EditorViewModel(
      * or a failed start simply leaves the editor on Tree-sitter alone.
      */
     private fun scheduleLspSync(path: String, text: String) {
-        val language = lspLanguageFor(path) ?: return
-        val manager = lspManager ?: return
+        val language = lspLanguageFor(path)
+        if (language == null) {
+            lspState.value = LspUiState.OFF
+            return
+        }
+        val manager = lspManager
+        if (manager == null) {
+            lspState.value = LspUiState.UNAVAILABLE
+            return
+        }
+        if (manager.isReady()) lspState.value = LspUiState.ACTIVE
         lspJobs.remove(path)?.cancel()
         lspJobs[path] = viewModelScope.launch {
             delay(500)
             if (tabs.value.firstOrNull { it.path == path }?.text?.text != text) return@launch
             if (!manager.isReady()) {
-                if (lspStartAttempted) return@launch
+                if (lspStartAttempted) {
+                    lspState.value = LspUiState.UNAVAILABLE
+                    return@launch
+                }
                 lspStartAttempted = true
                 val serverKey = when (language) {
                     "typescript", "tsx", "javascript", "json", "python" -> language
-                    else -> return@launch
+                    else -> {
+                        lspState.value = LspUiState.UNAVAILABLE
+                        return@launch
+                    }
                 }
+                lspState.value = LspUiState.STARTING
                 runCatching { manager.startFor(projectId, serverKey) }
-                if (!manager.isReady()) return@launch
+                if (!manager.isReady()) {
+                    lspState.value = LspUiState.UNAVAILABLE
+                    return@launch
+                }
+                lspState.value = LspUiState.ACTIVE
                 collectLspDiagnostics()
             }
             if (path !in lspOpenDocs) {

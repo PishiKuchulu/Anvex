@@ -168,6 +168,9 @@ class GitHubRepository(private val context: android.content.Context) {
     suspend fun push(fs: ProjectFileSystem, owner: String, repo: String, branch: String = "main", message: String = "Sync from Anvex"): Result<SyncOutcome> = withContext(Dispatchers.IO) {
         runCatching {
             validateRepo(owner, repo, branch, message)
+            // 2026-11-04 (audit wave): never push a tree a crashed pull
+            // left half-written — roll any stale pull journal back first.
+            PullJournal.recoverIfPresent(fs)
             val auth = authToken()
             val api = "https://api.github.com/repos/$owner/$repo"
             val allLocal = fs.walk().filter { !it.startsWith(".anvex/") }
@@ -280,6 +283,9 @@ class GitHubRepository(private val context: android.content.Context) {
     suspend fun pull(fs: ProjectFileSystem, owner: String, repo: String, branch: String = "main"): Result<SyncOutcome> = withContext(Dispatchers.IO) {
         runCatching {
             validateRepo(owner, repo, branch, "pull")
+            // 2026-11-04 (audit wave): self-heal a previously crashed
+            // pull before touching the tree (see PullJournal).
+            PullJournal.recoverIfPresent(fs)
             val auth = authToken()
             val root = "https://api.github.com/repos/$owner/$repo/git/trees/${java.net.URLEncoder.encode(branch, Charsets.UTF_8.name())}?recursive=1"
             val tree = requestJson(root, auth, "GET")
@@ -316,6 +322,10 @@ class GitHubRepository(private val context: android.content.Context) {
             val backups = ArrayList<Pair<String, ByteArray?>>()
             var backupBytes = 0L
             var written = 0
+            // 2026-11-04 (audit wave): the same before-images are ALSO
+            // mirrored to the durable PullJournal, so a process death
+            // mid-pull no longer strands a half-written tree.
+            val journal = PullJournal(fs)
             try {
                 for (entry in pending) {
                     val blob = requestJson(entry.blobUrl, auth, "GET")
@@ -331,16 +341,23 @@ class GitHubRepository(private val context: android.content.Context) {
                         backups += entry.path to before
                         backupBytes += before?.size ?: 0
                     }
+                    journal.record(entry.path, before)
                     PathSanitizer.parent(entry.path)?.let { if (it.isNotBlank()) fs.mkdirs(it) }
                     fs.writeFileBytes(entry.path, bytes)
                     written++
                 }
+                journal.discard()
             } catch (e: Exception) {
+                var rollbackOk = true
                 for ((path, before) in backups.asReversed()) {
                     runCatching {
                         if (before != null) fs.writeFileBytes(path, before) else fs.delete(path, recursive = false)
-                    }
+                    }.onFailure { rollbackOk = false }
                 }
+                // The journal is dropped only when the in-process
+                // rollback fully succeeded; otherwise it stays so the
+                // next sync's recovery pass can retry the restore.
+                if (rollbackOk) journal.discard()
                 throw e
             }
             SyncOutcome(written, skipped)
@@ -393,6 +410,94 @@ class GitHubRepository(private val context: android.content.Context) {
         require(message.isNotBlank() && message.length <= 200) { "Invalid commit message." }
     }
     private fun contentsUrl(owner: String, repo: String, path: String) = "https://api.github.com/repos/$owner/$repo/contents/${path.split('/').joinToString("/") { java.net.URLEncoder.encode(it, Charsets.UTF_8.name()).replace("+", "%20") }}"
+
+    /**
+     * 2026-11-04 (external-audit wave): durable pull journal.
+     *
+     * Before-images used to live only in memory (the audit-02 rollback):
+     * a process death mid-pull left a half-written tree with no way
+     * back. Images are now mirrored into `.anvex/pull-journal/` inside
+     * the project — a subtree sync itself never reads or writes — with
+     * a TSV manifest (url-encoded path, existed flag, image name). The
+     * journal entry for a file is written BEFORE that file is
+     * overwritten; a crash therefore always leaves a complete journal
+     * for everything already touched. [recoverIfPresent] rolls a stale
+     * journal back and is called at the start of pull and push.
+     * Restores are idempotent (re-applying one is a no-op).
+     */
+    private class PullJournal(private val fs: ProjectFileSystem) {
+        private var count = 0
+        private var bytes = 0L
+        private val lines = StringBuilder()
+
+        fun record(path: String, before: ByteArray?) {
+            var imageName = "-"
+            if (before != null && bytes + before.size <= MAX_PULL_BACKUP_BYTES) {
+                val candidate = "img-$count.bin"
+                val ok = runCatching {
+                    fs.mkdirs(DIR)
+                    fs.writeFileBytes("$DIR/$candidate", before)
+                }.isSuccess
+                if (!ok) return // unjournaled entry: same as over-cap today
+                imageName = candidate
+                bytes += before.size
+            }
+            lines.append(enc(path)).append('\t')
+                .append(if (before != null) '1' else '0').append('\t')
+                .append(imageName).append('\n')
+            count++
+            runCatching {
+                fs.mkdirs(DIR)
+                fs.writeFile(MANIFEST, lines.toString())
+            }
+        }
+
+        /** Rolls the manifest back (newest first) and clears the journal. */
+        fun rollbackFromManifest(): Boolean {
+            val text = runCatching { fs.readFile(MANIFEST) }.getOrNull() ?: return false
+            val entries = text.lineSequence().filter { it.isNotBlank() }.map { line ->
+                val parts = line.split('\t')
+                Triple(
+                    runCatching { dec(parts[0]) }.getOrDefault(parts[0]),
+                    parts.getOrNull(1) == "1",
+                    parts.getOrNull(2) ?: "-",
+                )
+            }.toList()
+            for ((path, existed, image) in entries.asReversed()) {
+                runCatching {
+                    if (existed && image != "-") {
+                        fs.readFileBytes("$DIR/$image")?.let { fs.writeFileBytes(path, it) }
+                    } else if (!existed) {
+                        fs.delete(path, recursive = false)
+                    }
+                }
+            }
+            discard()
+            return true
+        }
+
+        fun discard() {
+            runCatching {
+                if (fs.exists(DIR)) {
+                    fs.list(DIR).forEach { entry ->
+                        runCatching { fs.delete("$DIR/${entry.name}", recursive = false) }
+                    }
+                    fs.delete(DIR, recursive = false)
+                }
+            }
+        }
+
+        companion object {
+            const val DIR = ".anvex/pull-journal"
+            const val MANIFEST = "$DIR/manifest.tsv"
+
+            private fun enc(s: String): String = java.net.URLEncoder.encode(s, Charsets.UTF_8.name())
+            private fun dec(s: String): String = java.net.URLDecoder.decode(s, Charsets.UTF_8.name())
+
+            fun recoverIfPresent(fs: ProjectFileSystem): Boolean =
+                PullJournal(fs).rollbackFromManifest()
+        }
+    }
 
     companion object {
         const val MAX_FILES = 2_000
