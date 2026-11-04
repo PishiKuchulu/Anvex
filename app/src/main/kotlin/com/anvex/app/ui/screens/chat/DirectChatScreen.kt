@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachFile
@@ -667,7 +668,7 @@ fun DirectChatScreen(nav: NavController) {
                             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
                         ) {
                             Icon(
-                                androidx.compose.material.icons.filled.ArrowDownward,
+                                Icons.Filled.ArrowDownward,
                                 contentDescription = tr("Scroll to bottom"),
                             )
                         }
