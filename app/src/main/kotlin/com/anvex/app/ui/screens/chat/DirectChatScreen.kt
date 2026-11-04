@@ -654,8 +654,9 @@ fun DirectChatScreen(nav: NavController) {
                     }
                     // 2026-11-04 (user request): jump-to-latest, same as the
                     // project chat — shown only while not pinned to bottom.
-                    val showJumpToBottom by androidx.compose.runtime.produceState(initialValue = false, listState) {
-                        snapshotFlow { !listState.isPinnedToBottom() }.collect { value = it }
+                    var showJumpToBottom by remember { mutableStateOf(false) }
+                    LaunchedEffect(listState) {
+                        snapshotFlow { !listState.isPinnedToBottom() }.collect { showJumpToBottom = it }
                     }
                     if (showJumpToBottom) {
                         androidx.compose.material3.SmallFloatingActionButton(

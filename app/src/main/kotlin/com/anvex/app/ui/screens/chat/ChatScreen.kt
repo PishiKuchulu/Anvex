@@ -602,8 +602,12 @@ fun ChatScreen(nav: NavController, projectId: String) {
             // long answer used to mean scrolling by hand to reach the end.
             // Shown only while the list is not pinned to the bottom (the
             // same check the auto-follow logic uses, so the two agree).
-            val showJumpToBottom by produceState(initialValue = false, listState) {
-                snapshotFlow { !listState.isPinnedToBottom() }.collect { value = it }
+            // (remember + LaunchedEffect rather than produceState: the
+            // Compose lint check ProduceStateDoesNotAssignValue does not
+            // see through the collect{} lambda and failed CI lint.)
+            var showJumpToBottom by remember { mutableStateOf(false) }
+            LaunchedEffect(listState) {
+                snapshotFlow { !listState.isPinnedToBottom() }.collect { showJumpToBottom = it }
             }
             var jumpSignal by remember { mutableStateOf(0) }
             LaunchedEffect(jumpSignal) {
