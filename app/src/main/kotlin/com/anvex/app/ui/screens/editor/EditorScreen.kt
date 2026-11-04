@@ -17,7 +17,9 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Save
@@ -94,6 +96,14 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
     val noteRenamed = tr("Symbol renamed.")
     val labelDefinition = tr("definition")
 
+    // P9 (F2c): LSP diagnostics + hover.
+    val lspDiagnostics by vm.lspDiagnostics.collectAsState()
+    var hoverText by remember { mutableStateOf<String?>(null) }
+    var showHover by remember { mutableStateOf(false) }
+    var showProblems by remember { mutableStateOf(false) }
+    val labelHover = tr("Hover info")
+    val noteNoHover = tr("No hover information available.")
+
     LaunchedEffect(initialFile) {
         if (initialFile != null) vm.openFile(initialFile)
     }
@@ -140,6 +150,14 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                 }
             }) {
                 Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = labelRenameSymbol)
+            }
+            IconButton(onClick = {
+                editorScope.launch {
+                    hoverText = vm.lspHoverAtCursor()
+                    showHover = true
+                }
+            }) {
+                Icon(Icons.Filled.Info, contentDescription = labelHover)
             }
         },
     ) { modifier ->
@@ -230,6 +248,30 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                                 tr("Read-only view: this file is larger than 1 MB. Editing is disabled to keep the app responsive; use Export or the AI to modify it."),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
+                }
+                if (lspDiagnostics.isNotEmpty()) {
+                    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { showProblems = true }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                tr("%1\$d problems").format(lspDiagnostics.size),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                         }
                     }
@@ -327,7 +369,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
     if (showReferences) {
         AlertDialog(
             onDismissRequest = { showReferences = false },
-            title = { Text(tr("References: %1\$s", symbolWord ?: "")) },
+            title = { Text(tr("References: %1\$s").format(symbolWord ?: "")) },
             text = {
                 if (references.isEmpty()) {
                     Text(tr("No occurrences found."))
@@ -373,7 +415,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
             text = {
                 Column {
                     Text(
-                        tr("Rename %1\$s everywhere it occurs in this project. Every changed file is journaled and can be reverted from Review changes.", word),
+                        tr("Rename %1\$s everywhere it occurs in this project. Every changed file is journaled and can be reverted from Review changes.").format(word),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.size(8.dp))
@@ -388,7 +430,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                     if (renameInput.isNotBlank() && renameInput != word) {
                         Text(
                             if (plan != null) {
-                                tr("%1\$d occurrences in %2\$d files", plan.occurrenceCount, plan.edits.size)
+                                tr("%1\$d occurrences in %2\$d files").format(plan.occurrenceCount, plan.edits.size)
                             } else {
                                 tr("No occurrences, or the new name is not a valid identifier.")
                             },
@@ -424,6 +466,45 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
             text = { Text(note) },
             confirmButton = {
                 TextButton(onClick = { symbolNote = null }) { Text(tr("OK")) }
+            },
+        )
+    }
+
+    if (showProblems) {
+        AlertDialog(
+            onDismissRequest = { showProblems = false },
+            title = { Text(tr("Problems")) },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(lspDiagnostics) { diagnostic ->
+                        Text(
+                            "${diagnostic.line + 1}: ${diagnostic.message}" +
+                                (diagnostic.source?.let { " ($it)" } ?: ""),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showProblems = false }) { Text(tr("Close")) }
+            },
+        )
+    }
+
+    if (showHover) {
+        AlertDialog(
+            onDismissRequest = { showHover = false },
+            title = { Text(tr("Hover info")) },
+            text = {
+                Text(
+                    hoverText ?: noteNoHover,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showHover = false }) { Text(tr("Close")) }
             },
         )
     }

@@ -117,6 +117,100 @@ class EditorViewModel(
             tsParsedSource[path] = text
             tsStates.value = tsStates.value + (path to TsUiState(text, doc))
         }
+        scheduleLspSync(path, text)
+    }
+
+    // ------------------------------------------------- P9 (F2c): LSP
+
+    private val lspManager by lazy { graph.androidRuntime.lspManager() }
+    private val lspJobs = mutableMapOf<String, Job>()
+    private val lspOpenDocs = HashSet<String>()
+    private var lspStartAttempted = false
+
+    /** Diagnostics published for the active file (empty when no LSP). */
+    val lspDiagnostics = MutableStateFlow<List<com.anvex.core.android.runtime.lsp.LspDiagnostic>>(emptyList())
+
+    private fun lspLanguageFor(path: String): String? =
+        com.anvex.core.android.runtime.symbols.SymbolIndexManager.grammarFor(path)
+            ?: when (path.substringAfterLast('.', "").lowercase()) {
+                "json" -> "json"
+                "js", "mjs", "cjs" -> "javascript"
+                else -> null
+            }
+
+    /**
+     * Starts the project's language server on first use and keeps the
+     * server's copy of [path] in sync (didOpen once, didChange
+     * debounced). Entirely best-effort: no server installed, no host,
+     * or a failed start simply leaves the editor on Tree-sitter alone.
+     */
+    private fun scheduleLspSync(path: String, text: String) {
+        val language = lspLanguageFor(path) ?: return
+        val manager = lspManager ?: return
+        lspJobs.remove(path)?.cancel()
+        lspJobs[path] = viewModelScope.launch {
+            delay(500)
+            if (tabs.value.firstOrNull { it.path == path }?.text?.text != text) return@launch
+            if (!manager.isReady()) {
+                if (lspStartAttempted) return@launch
+                lspStartAttempted = true
+                val serverKey = when (language) {
+                    "typescript", "tsx", "javascript", "json", "python" -> language
+                    else -> return@launch
+                }
+                runCatching { manager.startFor(projectId, serverKey) }
+                if (!manager.isReady()) return@launch
+                collectLspDiagnostics()
+            }
+            if (path !in lspOpenDocs) {
+                lspOpenDocs += path
+                runCatching { manager.openDocument(path, language, text) }
+            } else {
+                runCatching { manager.changeDocument(path, text) }
+            }
+        }
+    }
+
+    private fun collectLspDiagnostics() {
+        val manager = lspManager ?: return
+        viewModelScope.launch {
+            manager.diagnostics.collect { refreshLspDiagnostics() }
+        }
+        viewModelScope.launch {
+            activePath.collect { refreshLspDiagnostics() }
+        }
+    }
+
+    private fun refreshLspDiagnostics() {
+        val manager = lspManager ?: return
+        val path = activePath.value
+        lspDiagnostics.value = if (path == null) {
+            emptyList()
+        } else {
+            manager.diagnostics.value.entries
+                .firstOrNull { it.key.endsWith("/$path") }?.value ?: emptyList()
+        }
+    }
+
+    /** Hover text at the active tab's cursor, via the language server. */
+    suspend fun lspHoverAtCursor(): String? {
+        val manager = lspManager?.takeIf { it.isReady() } ?: return null
+        val tab = tabs.value.firstOrNull { it.path == activePath.value } ?: return null
+        val text = tab.text.text
+        val cursor = tab.text.selection.min.coerceIn(0, text.length)
+        var line = 0
+        var lineStart = 0
+        var i = 0
+        while (i < cursor) {
+            if (text[i] == '\n') {
+                line++
+                lineStart = i + 1
+            }
+            i++
+        }
+        return runCatching {
+            manager.hover(tab.path, line, cursor - lineStart)
+        }.getOrNull()
     }
     val activePath = MutableStateFlow<String?>(null)
 

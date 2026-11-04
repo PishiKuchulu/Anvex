@@ -15,5 +15,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:process=":devserver" />
+        <!-- F2c: persistent language-server host; own process for the
+             same libnode reason, foreground while in use. -->
+        <service
+            android:name="com.anvex.core.android.runtime.lsp.LspService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:process=":lsp" />
     </application>
 </manifest>

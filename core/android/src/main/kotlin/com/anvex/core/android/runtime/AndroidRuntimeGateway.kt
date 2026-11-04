@@ -105,6 +105,10 @@ class AndroidRuntimeGateway(
             )
         }
 
+    /** P9 (F2c): LSP client manager, or null without a context. */
+    fun lspManager(): com.anvex.core.android.runtime.lsp.LspManager? =
+        context?.let { com.anvex.core.android.runtime.lsp.LspManager(it, this) }
+
     private suspend fun realRoot(projectId: String): File? {
         if (projectId == HOME_PROJECT_ID) return homeDir?.also { it.mkdirs() }
         val fs = projects.fileSystemForAsync(projectId)
