@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.15.1 — Hotfix: launch crash in the typography initializer
+
+- **Fixed a crash on launch** (also present in 4.14.9): in
+  `Typography.kt`, the `AnvexTypography` type scale reads the Vazirmatn
+  font family through a getter while it initializes, but the
+  `VazirmatnFont` `by lazy` delegate was declared *below* the type
+  scale — top-level initializers run in file order, so the scale read
+  a lazy delegate that was still null and the class died with
+  `ExceptionInInitializerError` on first composition. `VazirmatnFont`
+  now sits above both type scales (with a comment pinning the order).
+  Introduced by the 4.14.9 audit wave ("FA font in all themes");
+  verified against the shipped 4.15.0 APK's dex and reproduced on the
+  JVM with the same declaration-order pattern.
+
 ## 4.15.0 — The desktop-grade release: real Git, a PTY terminal, Tree-sitter intelligence, dev servers, local RAG, symbol rename, and LSP
 
 Six desktop-class capabilities land in one release, each built on a

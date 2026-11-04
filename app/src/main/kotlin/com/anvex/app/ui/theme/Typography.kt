@@ -29,6 +29,27 @@ val AnvexMono: FontFamily by lazy {
 private val UiFont: FontFamily get() = VazirmatnFont
 val CodeFont: FontFamily by lazy { AnvexMono }
 
+/**
+ * Vazirmatn (SIL OFL 1.1), bundled in assets/fonts — the one UI font for
+ * every theme style (Persian + Latin coverage). Lazy: needs AppGraph.
+ *
+ * ORDER MATTERS: this delegate must be declared BEFORE [AnvexTypography]
+ * and [AtelierTypography]. Top-level initializers run in file order, and
+ * both type scales read this property (via [UiFont]/[AtelierFont]) while
+ * they initialize — reading a `by lazy` delegate whose field is assigned
+ * later in the same <clinit> is an NPE (the v4.14.9/v4.15.0 launch crash:
+ * ExceptionInInitializerError in TypographyKt). Keep it above them.
+ */
+val VazirmatnFont: FontFamily by lazy {
+    val assets = AppGraph.get().context.assets
+    FontFamily(
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Regular.ttf", assets, FontWeight.Normal),
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Medium.ttf", assets, FontWeight.Medium),
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Bold.ttf", assets, FontWeight.Bold),
+        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-ExtraBold.ttf", assets, FontWeight.ExtraBold),
+    )
+}
+
 /** Material 3 type scale tuned for a compact IDE without sacrificing readability. */
 val AnvexTypography = Typography(
     displayLarge = TextStyle(fontFamily = UiFont, fontWeight = FontWeight.SemiBold, fontSize = 44.sp, lineHeight = 52.sp),
@@ -50,18 +71,6 @@ val AnvexTypography = Typography(
 
 /** Convenience style for monospace inline content (paths, commands, file names). */
 val AnvexCodeStyle = TextStyle(fontFamily = AnvexMono, fontSize = 12.sp, lineHeight = 18.sp)
-
-/** Vazirmatn (SIL OFL 1.1), bundled in assets/fonts — the one UI font for
- * every theme style (Persian + Latin coverage). Lazy: needs AppGraph. */
-val VazirmatnFont: FontFamily by lazy {
-    val assets = AppGraph.get().context.assets
-    FontFamily(
-        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Regular.ttf", assets, FontWeight.Normal),
-        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Medium.ttf", assets, FontWeight.Medium),
-        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-Bold.ttf", assets, FontWeight.Bold),
-        androidx.compose.ui.text.font.Font("fonts/Vazirmatn-ExtraBold.ttf", assets, FontWeight.ExtraBold),
-    )
-}
 
 /** Kept name for the Atelier scale below; same bundled family as [VazirmatnFont]. */
 val AtelierFont: FontFamily get() = VazirmatnFont
