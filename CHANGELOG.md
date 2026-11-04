@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.15.0 — The desktop-grade release: real Git, a PTY terminal, Tree-sitter intelligence, dev servers, local RAG, symbol rename, and LSP
+
+Six desktop-class capabilities land in one release, each built on a
+native or Node foundation that runs entirely on-device:
+
+- **Git with libgit2 (local operations).** A bundled libgit2 powers a
+  real Git screen (status, stage, commit, branches, history) and a
+  merge-conflict resolver for folder-backed projects. Network
+  transports are compiled out by design — clone/fetch/push keep using
+  the existing GitHub paths.
+- **A real terminal.** The terminal is now a forkpty-backed PTY with a
+  VT emulator: interactive prompts (confirmations, choices, passwords)
+  are detected and answered from a bottom sheet, with the legacy pipe
+  mode kept as a fallback.
+- **Batch review for agent edits.** Multi-file agent changes open in a
+  Review Changes composer with per-file and per-hunk-style keep/revert
+  over the mutation journal.
+- **Tree-sitter code intelligence.** Five grammars (Kotlin, Java,
+  TypeScript, TSX, Python) drive syntax highlighting, code folding,
+  and the new symbol index: **Find References** and **Rename Symbol**
+  in the editor, with renames journaled like any other edit.
+- **Dev servers.** A persistent Node host (its own process, visible
+  foreground service, 30-minute watchdog) runs project dev servers
+  and feeds the preview, with start/stop and a live log tail.
+- **Local RAG code search.** Per-project semantic search over the
+  codebase: tree-sitter-aware chunking, sqlite-vec storage, and a
+  small embedding model downloaded on first enable (~23 MB, never
+  bundled). The agent gains a `search_code` tool and grounded context
+  injection; indexing runs under WorkManager constraints.
+- **LSP, where a project brings its own server.** TypeScript, JSON,
+  and Python language servers installed in a project's node_modules
+  run in a dedicated Node host: live diagnostics in the editor and
+  hover information, with a 60-second idle stop. Nothing is
+  downloaded; without a local server the editor stays on Tree-sitter.
+
 ## 4.14.9 — The granular-audit release: approvals work, chat history is windowed, Persian is complete
 
 A full four-layer audit of 4.14.8 (~229 findings) was fixed, then the same
