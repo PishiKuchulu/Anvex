@@ -1141,6 +1141,14 @@ class ChatSession(
                     }.onFailure {
                         if (it is CancellationException) throw it
                         val reason = it.message ?: "Artifact generation failed."
+                        // Artifact failures are app/device problems
+                        // (storage, fsync, rendering), not model errors —
+                        // exactly what the in-app Logs exists to track.
+                        extras.diagnostics(
+                            "artifact", "ERROR",
+                            "Artifact generation failed: $reason",
+                            "format=${action.format.lowercase()} output=${action.outputName}",
+                        )
                         generatedRecords.add(
                             ActionRecord("gen${generatedRecords.size}", "artifact", action.outputName, action.format.lowercase(), ActionStatus.FAILED.name, reason, 0)
                         )
@@ -1295,6 +1303,18 @@ class ChatSession(
                 if (input == null && output == null) u
                 else u.copy(costUsd = (u.promptTokens * (input ?: 0.0) + u.completionTokens * (output ?: 0.0)) / 1_000_000.0)
             }
+        }
+
+        // One diagnostic event per failed turn (2026-11-06, in-app
+        // Logs): the same title+message the user sees, plus the
+        // provider kind and model — never the key or the prompt.
+        val turnFailure = failure
+        if (turnFailure != null) {
+            extras.diagnostics(
+                "session", "ERROR",
+                "${turnFailure.userTitle}: ${turnFailure.message}",
+                "provider=${provider.kind.name} model=${provider.model}",
+            )
         }
 
         val assistantMessage = ChatMessage(
@@ -1479,8 +1499,14 @@ class ChatSession(
         /** Bounded wait for a user action approval; deny on timeout. */
         const val APPROVAL_TIMEOUT_MS = 45_000L
         const val HISTORY_TURNS = 16
-        /** Extra model calls after the first one when the agent asked for tool results. */
-        const val MAX_TOOL_ROUNDS = 4
+        /**
+         * Extra model calls after the first one when the agent asked for tool results.
+         * Raised 4 → 12 (2026-11-06): 4 stopped legitimate multi-file work (a
+         * full project review) mid-task on every turn. The user watches the
+         * turn live and can stop it, and the markup/intent/empty continuation
+         * caps still bound degenerate loops.
+         */
+        const val MAX_TOOL_ROUNDS = 12
 
         const val UI_EMIT_INTERVAL_MS = 80L
 
@@ -1539,6 +1565,13 @@ class SessionExtras(
     val customInstructions: suspend () -> String = { "" },
     val webTools: suspend () -> Boolean = { false },
     val tools: AgentToolExecutor? = null,
+    /**
+     * Diagnostic sink for the in-app Logs (2026-11-06): (category,
+     * level, message, details). Fire-and-forget and secret-free by
+     * contract — callers pass exception titles/messages and safe
+     * metadata only, never keys, headers or prompt content.
+     */
+    val diagnostics: (String, String, String, String?) -> Unit = { _, _, _, _ -> },
 )
 
 /** Small indirection so :core:android call sites stay tidy. */

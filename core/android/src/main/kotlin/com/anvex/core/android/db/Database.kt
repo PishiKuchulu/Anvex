@@ -404,6 +404,8 @@ interface DiagnosticDao {
     suspend fun recent(limit: Int): List<DiagnosticEventEntity>
     @Query("DELETE FROM diagnostic_events WHERE id NOT IN (SELECT id FROM diagnostic_events ORDER BY createdAt DESC LIMIT :keep)")
     suspend fun trim(keep: Int)
+    @Query("DELETE FROM diagnostic_events")
+    suspend fun clear()
 }
 
 @Dao

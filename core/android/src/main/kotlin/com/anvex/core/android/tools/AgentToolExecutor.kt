@@ -45,7 +45,7 @@ class AgentToolExecutor(
         withContext(Dispatchers.IO) {
             try {
                 when (action.name) {
-                    "read" -> read(action.argument, fs)
+                    "read" -> read(action.argument, fs, action.offset, action.limit)
                     "list" -> list(action.argument, fs)
                     "fetch" -> if (webAllowed) fetch(action.argument) else ToolResult(false, "Web tools are disabled in Settings.")
                     "search" -> if (webAllowed) search(action.argument) else ToolResult(false, "Web tools are disabled in Settings.")
@@ -60,7 +60,7 @@ class AgentToolExecutor(
 
     // ------------------------------------------------------------------ project tools
 
-    private fun read(rawPath: String, fs: ProjectFileSystem): ToolResult {
+    private fun read(rawPath: String, fs: ProjectFileSystem, offset: Int = 0, limit: Int = 0): ToolResult {
         val path = PathSanitizer.sanitizeOrNull(rawPath.trim()) ?: return ToolResult(false, "Invalid path.")
         // v4.10.1 (SEC-02): the shell runtime already refused to surface
         // secret files, but this tool did not — a prompt-injected page could
@@ -75,8 +75,25 @@ class AgentToolExecutor(
             return ToolResult(false, "Refused: '$path' is a protected file (secrets/app metadata are never exposed to tools).")
         }
         val text = fs.readFile(path) ?: return ToolResult(false, "File not found: $path")
-        val clipped = if (text.length > MAX_READ_CHARS) text.take(MAX_READ_CHARS) + "\n…[truncated at $MAX_READ_CHARS chars]" else text
-        return ToolResult(true, clipped)
+        // Paged reads (2026-11-06): before this, a file longer than one
+        // window could never be read past its first MAX_READ_CHARS — every
+        // re-read returned the same head, so reviews of large files silently
+        // covered only their beginning. offset/limit walk the file; the
+        // window footer always states exactly which chars were returned and
+        // where to continue, so a partial read can never pass as a full one.
+        val start = offset.coerceAtLeast(0)
+        if (start > 0 && start >= text.length) {
+            return ToolResult(false, "Offset $start is at or past the end of '$path' (${text.length} chars) — there is nothing to read there.")
+        }
+        val cap = if (limit in 1 until MAX_READ_CHARS) limit else MAX_READ_CHARS
+        val end = minOf(text.length, start + cap)
+        val window = text.substring(start, end)
+        return if (start == 0 && end == text.length) {
+            ToolResult(true, window)
+        } else {
+            val remaining = if (end < text.length) "; ${text.length - end} chars remain — read again with offset=$end to continue]" else "]"
+            ToolResult(true, window + "\n…[read window: chars $start–$end of ${text.length} in '$path'$remaining")
+        }
     }
 
     private fun list(rawPath: String, fs: ProjectFileSystem): ToolResult {

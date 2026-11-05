@@ -3,6 +3,7 @@ package com.anvex.app.ui.screens.developer
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,7 +13,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.anvex.core.android.AppGraph
@@ -31,7 +34,7 @@ private const val APPROVAL_SESSION = "developer-center"
 fun DeveloperCenterScreen(nav: NavController) {
     val graph = AppGraph.get()
     val scope = rememberCoroutineScope()
-    val events by graph.reliability.observeEvents().collectAsState(initial = emptyList())
+    val events by graph.reliability.observeEvents(500).collectAsState(initial = emptyList())
     val tasks by graph.reliability.observeTaskItems().collectAsState(initial = emptyList())
     val backups by graph.reliability.observeBackups().collectAsState(initial = emptyList())
     val plugins by graph.reliability.observePlugins().collectAsState(initial = emptyList())
@@ -46,7 +49,18 @@ fun DeveloperCenterScreen(nav: NavController) {
     var approvalGranted by remember { mutableStateOf(false) }
     var exposeLan by remember { mutableStateOf(false) }
 
-    val tabs = listOf("Health", "Repair", "Tasks", "Backups", "Skills", "Activity", "Safety", "LAN")
+    val tabs = listOf("Health", "Repair", "Tasks", "Backups", "Skills", "Logs", "Safety", "LAN")
+    var pendingLogExport by remember { mutableStateOf<String?>(null) }
+    val exportLogs = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        val text = pendingLogExport
+        pendingLogExport = null
+        if (uri != null && text != null) scope.launch(Dispatchers.IO) {
+            runCatching {
+                graph.context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                    ?: error("Could not open destination.")
+            }.onSuccess { status = "Logs exported." }.onFailure { status = "Export failed: ${it.message}" }
+        }
+    }
     val importPlugins = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch(Dispatchers.IO) {
             val text = graph.context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
@@ -101,7 +115,7 @@ fun DeveloperCenterScreen(nav: NavController) {
                 "Tasks" -> TaskManagerTab(tasks, { id -> scope.launch { status = if (graph.reliability.resumeTask(id)) "Task resumed." else "Task cannot be resumed." } }, { id -> scope.launch { status = if (graph.reliability.cancelTask(id)) "Cancellation requested." else "Task cannot be cancelled." } }, { id -> scope.launch { graph.reliability.pauseTask(id) } })
                 "Backups" -> BackupTab(backups, graph.reliability.automaticBackupDirectory().absolutePath, { scope.launch(Dispatchers.IO) { graph.reliability.createAutomaticSnapshot("manual recovery snapshot"); status = "Encrypted recovery snapshot created." } }, { scope.launch(Dispatchers.IO) { graph.reliability.rotateAutomaticBackups(3); status = "Newest 3 automatic backups retained." } })
                 "Skills" -> SkillsTab(plugins, { importPlugins.launch(arrayOf("application/json", "text/plain")) }, { exportPlugins.launch("anvex-skills.json") }, { id, enabled -> scope.launch { graph.reliability.setPluginEnabled(id, enabled) } }, { id -> scope.launch { status = if (graph.reliability.removePlugin(id)) "Skill removed." else "Built-in skill cannot be removed." } })
-                "Activity" -> ActivityTab(events)
+                "Logs" -> LogsTab(events, onExport = { text -> pendingLogExport = text; exportLogs.launch("anvex-logs.txt") }, onClear = { scope.launch { graph.reliability.clearEvents(); status = "Log events cleared." } })
                 "Safety" -> ApprovalTab(command, { command = it }, approvalCapability, { approvalCapability = it }, approvalTtl, { approvalTtl = it }, approvalGranted, onGrant = {
                     scope.launch { runCatching { graph.approvals.grant(APPROVAL_SESSION, null, setOf(approvalCapability), approvalTtl); approvalGranted = true }.onSuccess { status = "Approved ${approvalCapability.name} for ${approvalTtl / 60_000} minutes." }.onFailure { status = "Approval failed: ${it.message}" } }
                 }, onRevoke = { scope.launch { graph.approvals.revoke(APPROVAL_SESSION); approvalGranted = false; status = "Approval revoked." } })
@@ -109,7 +123,7 @@ fun DeveloperCenterScreen(nav: NavController) {
                     runCatching { lan = graph.lanAccess.start(
                         { "runningTasks=${tasks.count { it.state == "RUNNING" }}" },
                         exposeOnLan = exposeLan,
-                    ) }.onSuccess { status = "LAN status endpoint started. Authentication token remains protected." }.onFailure { status = "LAN start failed: ${it.message}" }
+                    ) }.onSuccess { status = "LAN status endpoint started. Authentication token remains protected." }.onFailure { graph.reliability.record("lan", "WARN", "LAN start failed: ${it.message}", null); status = "LAN start failed: ${it.message}" }
                 }, onStop = { graph.lanAccess.stop(); lan = graph.lanAccess.status(); status = "LAN status endpoint stopped." })
             }
         }
@@ -200,4 +214,66 @@ private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capa
 
 @Composable private fun BackupTab(backups: List<com.anvex.core.android.db.BackupRecordEntity>, path: String, onSnapshot: () -> Unit, onRotate: () -> Unit) { LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { Text(tr("Recovery snapshots"), style = MaterialTheme.typography.headlineSmall); Text(tr("Automatic snapshots are Keystore-encrypted and credential-free."), style = MaterialTheme.typography.bodySmall); Text(path, style = MaterialTheme.typography.labelSmall); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = onSnapshot) { Text(tr("Create snapshot")) }; OutlinedButton(onClick = onRotate) { Text(tr("Keep newest 3")) } } }; items(backups, key = { it.id }) { b -> ListItem(headlineContent = { Text("${b.kind} • ${b.reason ?: "snapshot"}") }, supportingContent = { Text("${b.sizeBytes / 1024} KB • encrypted=${b.encrypted} • ${java.util.Date(b.createdAt)}") }) } } }
 @Composable private fun SkillsTab(plugins: List<com.anvex.core.android.db.PluginEntity>, onImport: () -> Unit, onExport: () -> Unit, onToggle: (String, Boolean) -> Unit, onRemove: (String) -> Unit) { LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { item { Text(tr("Skills & plugins"), style = MaterialTheme.typography.headlineSmall); Text(tr("Declarative plugin packages and skills are capability-gated; arbitrary plugin code is never executed in the app process."), style = MaterialTheme.typography.bodySmall); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = onImport) { Text(tr("Import")) }; OutlinedButton(onClick = onExport) { Text(tr("Export")) } } }; items(plugins, key = { it.id }) { p -> ListItem(leadingContent = { Icon(Icons.Default.Extension, null) }, headlineContent = { Text(p.name) }, supportingContent = { Text("${p.version} • ${p.source}\n${p.description}") }, trailingContent = { Row { Switch(p.enabled, { onToggle(p.id, it) }, enabled = !p.builtIn); if (!p.builtIn) TextButton({ onRemove(p.id) }) { Text(tr("Remove")) } } }) } } }
-@Composable private fun ActivityTab(events: List<com.anvex.core.android.db.DiagnosticEventEntity>) { LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { items(events, key = { it.id }) { e -> ListItem(headlineContent = { Text("${e.level} • ${e.category}") }, supportingContent = { Text("${e.message}\n${e.details ?: ""}") }) } } }
+/**
+ * In-app Logs (2026-11-06): the diagnostic event store, browsable.
+ * Replaces the old read-only Activity list — same data, but with the
+ * tools a tracking surface needs: level filter, text search,
+ * timestamps, tap-to-expand full details (stack traces included),
+ * export of the filtered view to a text file, and a clear action.
+ * Events are written by ReliabilityRepository.record/log call sites
+ * across the app (crashes arrive via CrashReporter on the next launch).
+ */
+@Composable private fun LogsTab(events: List<com.anvex.core.android.db.DiagnosticEventEntity>, onExport: (String) -> Unit, onClear: () -> Unit) {
+    var level by remember { mutableStateOf("ALL") }
+    var query by remember { mutableStateOf("") }
+    var expandedId by remember { mutableStateOf<Long?>(null) }
+    val levels = listOf("ALL", "ERROR", "WARN", "INFO")
+    val shown = events.filter { e ->
+        (level == "ALL" || e.level.equals(level, ignoreCase = true)) &&
+            (query.isBlank() || e.message.contains(query, ignoreCase = true) || e.category.contains(query, ignoreCase = true) || (e.details?.contains(query, ignoreCase = true) == true))
+    }
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("${shown.size} / ${events.size}", style = MaterialTheme.typography.bodyMedium)
+            Row {
+                TextButton(onClick = {
+                    val text = shown.joinToString("\n\n") { e ->
+                        "${logStamp(e.createdAt)}  ${e.level}  ${e.category}\n${e.message}" + (e.details?.let { "\n$it" } ?: "")
+                    }
+                    onExport(text)
+                }) { Text(tr("Export logs")) }
+                TextButton(onClick = onClear) { Text(tr("Clear logs")) }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            levels.forEach { l -> FilterChip(selected = level == l, onClick = { level = l }, label = { Text(l) }) }
+        }
+        OutlinedTextField(value = query, onValueChange = { query = it }, placeholder = { Text(tr("Search logs")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        if (shown.isEmpty()) {
+            Text(tr("No log events to show"), style = MaterialTheme.typography.bodyMedium)
+        } else {
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(shown, key = { it.id }) { e ->
+                    val expanded = expandedId == e.id
+                    ListItem(
+                        modifier = Modifier.clickable { expandedId = if (expanded) null else e.id },
+                        headlineContent = { Text("${e.level} • ${e.category}") },
+                        supportingContent = {
+                            Column {
+                                Text(logStamp(e.createdAt), style = MaterialTheme.typography.labelSmall)
+                                Text(e.message, maxLines = if (expanded) Int.MAX_VALUE else 3)
+                                if (expanded && !e.details.isNullOrBlank()) {
+                                    Text(e.details, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        },
+                        trailingContent = { Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun logStamp(epochMs: Long): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(epochMs))

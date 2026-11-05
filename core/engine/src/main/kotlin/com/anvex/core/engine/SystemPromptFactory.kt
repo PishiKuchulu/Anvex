@@ -224,7 +224,7 @@ For project-mutation requests, think first and reply with the artifact that cont
         val memoryBlock: String = "",
         val customInstructions: String = "",
         val webTools: Boolean = false,
-        val maxToolRounds: Int = 4,
+        val maxToolRounds: Int = 12,
     )
 
     /**
@@ -284,7 +284,7 @@ MEDIA CONTRACT FOR THIS TURN:
 
 <agent_tools>
   You can gather information before answering by emitting read-only tool actions inside a <boltArtifact id="research" title="Research"> block:
-    <boltAction type="read" path="src/App.jsx"></boltAction>     — read a project file (full content)
+    <boltAction type="read" path="src/App.jsx"></boltAction>     — read a project file. A file longer than 60000 chars returns a window whose footer states exactly which chars you got and how many remain; continue with <boltAction type="read" path="src/App.jsx" offset="60000"></boltAction> (offset = chars already seen; optional limit = window size). Never draw conclusions about the unseen rest of a file.
     <boltAction type="list" path="src"></boltAction>             — list project files under a folder ("." for everything)
     <boltAction type="search_code" query="where tokens are refreshed"></boltAction>  — semantic search over this project's code; returns the most relevant chunks (only works when the user has enabled Code search for this project)
     <boltAction type="extract_archive" path="libs/source.zip"></boltAction>  — extract a .zip stored in the project into .anvex/attachments/<name>-extracted/ so its text files can be listed and read. REQUIRED before inspecting an archive that is a project file: reading a .zip directly returns binary, and without extraction you have NOT seen the archive's contents — never write a report about an archive you have not extracted and read.

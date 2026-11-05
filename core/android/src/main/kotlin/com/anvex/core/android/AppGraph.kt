@@ -110,6 +110,7 @@ class AppGraph private constructor(private val app: Application) {
             customInstructions = { settings.settings.first().customInstructions },
             webTools = { settings.settings.first().webToolsEnabled },
             tools = agentTools,
+            diagnostics = { category, level, message, details -> reliability.record(category, level, message, details) },
         )
     /** Provider-backed planner connects the durable Agent task path to the configured AI layer. */
     val agentTaskBridge: com.anvex.core.android.reliability.AgentTaskBridge =
@@ -125,7 +126,10 @@ class AppGraph private constructor(private val app: Application) {
 
     /** v4.9: Pi coding agent as experimental Engine #2 (see runtime/pi). */
     val piEngine: com.anvex.core.android.runtime.pi.PiEngine =
-        com.anvex.core.android.runtime.pi.PiEngine(app, commandApproval)
+        com.anvex.core.android.runtime.pi.PiEngine(
+            app, commandApproval,
+            diagnostics = { category, level, message, details -> reliability.record(category, level, message, details) },
+        )
     /** v4.9: durable `pi-agent` task type (checkpoints carry the Pi session file). */
     val piTaskBridge: com.anvex.core.android.runtime.pi.PiTaskBridge =
         com.anvex.core.android.runtime.pi.PiTaskBridge(taskEngine, piEngine, providers, projects, settings)

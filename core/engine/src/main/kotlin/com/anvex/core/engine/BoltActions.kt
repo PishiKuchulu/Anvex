@@ -44,6 +44,10 @@ sealed class BoltAction {
         val name: String,
         val argument: String,
         override val content: String = "",
+        /** Paged-read window for `read` (2026-11-06): char offset into the file; 0 = start. */
+        val offset: Int = 0,
+        /** Paged-read window size for `read`; 0 = the executor's default cap. */
+        val limit: Int = 0,
     ) : BoltAction()
 
     /** Unknown / unsupported action types are preserved with their declared type. */

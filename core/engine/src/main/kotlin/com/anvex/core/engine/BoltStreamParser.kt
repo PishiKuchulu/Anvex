@@ -289,7 +289,19 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                 type,
                 McpToolTarget.pack(extractAttribute(tag, "server") ?: "", extractAttribute(tag, "tool") ?: ""),
             )
-            "fetch", "search", "read", "list", "search_code", "extract_archive" -> {
+            "read" -> {
+                // Paged reads (2026-11-06): offset/limit let the model walk a
+                // file larger than one read window instead of re-getting the
+                // same head forever. Invalid values fall back to 0 (= start /
+                // default window), never to a failed parse.
+                val argument = extractAttribute(tag, "path")
+                    ?: extractAttribute(tag, "filePath")
+                    ?: ""
+                val offset = extractAttribute(tag, "offset")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                val limit = extractAttribute(tag, "limit")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                BoltAction.ToolAction(type, argument, offset = offset, limit = limit)
+            }
+            "fetch", "search", "list", "search_code", "extract_archive" -> {
                 val argument = extractAttribute(tag, "url")
                     ?: extractAttribute(tag, "query")
                     ?: extractAttribute(tag, "path")

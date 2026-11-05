@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.15.5 — In-app Logs + agent long-task fixes
+
+- **In-app Logs.** Crashes and failures now leave a trace inside the
+  app: a crash handler records every uncaught exception (stack trace,
+  app version, device) and imports it into the diagnostic store on the
+  next launch; failed chat turns, artifact failures, Pi engine failures,
+  update check/download failures, foreign-signer refusals and LAN start
+  failures are logged with secret-free metadata. The Developer Center's
+  Activity view is now a Logs tab with level filters, search,
+  expandable details, export of the filtered view and a clear button.
+- **Agent turns no longer stop mid-task on long jobs.** The per-turn
+  tool-round budget is raised from 4 to 12 extra model calls: 4 rounds
+  stopped legitimate multi-file work (e.g. a full project review) on
+  every turn. The system prompt reports the same budget to the model.
+- **Paged file reads.** The `read` tool takes `offset`/`limit` and
+  walks a file in windows of up to 60,000 chars; each window's footer
+  states exactly which chars were returned and where to continue.
+  Before this, a file longer than one window could never be read past
+  its first 60,000 chars — re-reading returned the same head, so large
+  files were silently reviewed only at their beginning.
+
 ## 4.15.4 — Fifth external audit: verified fix wave
 
 Fixes for the findings of the fifth external audit (of 4.15.2) that

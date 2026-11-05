@@ -7,9 +7,12 @@ import com.anvex.core.android.KeystoreCrypto
 import com.anvex.core.android.build.ToolchainManager
 import com.anvex.core.android.db.*
 import com.anvex.core.android.repo.SettingsRepository
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -78,6 +81,26 @@ class ReliabilityRepository(
         val safeDetails = details?.take(MAX_DIAGNOSTIC_DETAILS)
         db.diagnosticDao().insert(DiagnosticEventEntity(category = safeCategory, level = safeLevel, message = safeMessage, details = safeDetails))
         db.diagnosticDao().trim(5000)
+    }
+
+    private val recordScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Fire-and-forget form of [log] for the many failure sites that do
+     * not own a coroutine (catch blocks, callbacks, engine funnels).
+     * Added 2026-11-06 with the in-app Logs section: until then only
+     * three call sites in the whole tree wrote diagnostic events, so
+     * the store — and the Developer Center's activity view — sat
+     * effectively empty. A failed write is swallowed on purpose: the
+     * log must never become a new failure source.
+     */
+    fun record(category: String, level: String, message: String, details: String? = null) {
+        recordScope.launch { runCatching { log(category, level, message, details) } }
+    }
+
+    /** Empties the diagnostic event store (Logs tab's Clear action). */
+    suspend fun clearEvents() {
+        db.diagnosticDao().clear()
     }
 
     /** Compatibility entry point for existing callers. New work must use the durable queue. */

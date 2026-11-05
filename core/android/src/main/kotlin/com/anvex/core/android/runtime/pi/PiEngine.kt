@@ -41,6 +41,12 @@ import org.json.JSONObject
 class PiEngine(
     private val context: Context,
     private val approvals: CommandApprovalService,
+    /**
+     * Diagnostic sink for the in-app Logs (2026-11-06): (category,
+     * level, message, details), fire-and-forget. Defaults to a no-op
+     * so tests and other embedders need no wiring.
+     */
+    private val diagnostics: (String, String, String, String?) -> Unit = { _, _, _, _ -> },
 ) {
 
     /** Asks the user about one tool call. Must answer false on dismissal/timeout. */
@@ -276,6 +282,9 @@ class PiEngine(
     }
 
     private suspend fun fail(runJob: kotlinx.coroutines.Deferred<*>, message: String): RunResult {
+        // Every Pi run failure funnels through here — one diagnostic
+        // event per failed run for the in-app Logs (2026-11-06).
+        diagnostics("pi", "ERROR", message, null)
         runJob.cancel()
         return RunResult(false, error = message)
     }

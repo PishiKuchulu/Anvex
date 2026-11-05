@@ -57,6 +57,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.anvex.app.i18n.tr
 import com.anvex.app.ui.screens.home.formatSize
+import com.anvex.core.android.AppGraph
 import com.anvex.core.android.update.AppUpdateChecker
 import com.anvex.core.android.update.AppUpdateInfo
 import kotlinx.coroutines.CancellationException
@@ -135,6 +136,9 @@ class AppUpdateController(private val context: Context) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // In-app Logs (2026-11-06): update failures used to
+                // exist only as this transient dialog text.
+                AppGraph.get().reliability.record("update", "WARN", "Update check failed: ${e.message ?: e::class.simpleName}", null)
                 State.Failed(e.message ?: "Update check failed")
             }
         }
@@ -155,6 +159,7 @@ class AppUpdateController(private val context: Context) {
                 state = State.Available(info)
             } catch (e: Exception) {
                 File(dest.parentFile, dest.name + ".part").delete()
+                AppGraph.get().reliability.record("update", "ERROR", "Update download failed: ${e.message ?: e::class.simpleName}", "version=${info.version}")
                 state = State.Failed(e.message ?: "Download failed")
             }
         }
@@ -170,6 +175,8 @@ class AppUpdateController(private val context: Context) {
         // key than the running app (the debug-key `latest` builds are the
         // reason this check exists).
         if (!AppUpdateChecker.verifySameSigner(context, file)) {
+            // Security-relevant: a foreign-signed APK reached install.
+            AppGraph.get().reliability.record("update", "ERROR", "Refused to install an APK signed with a different key.", "file=${file.name}")
             state = State.Failed("The downloaded APK is not signed with this app's key — refusing to install.")
             return
         }

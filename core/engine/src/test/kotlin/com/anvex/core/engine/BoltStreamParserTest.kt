@@ -14,6 +14,7 @@ class BoltStreamParserTest {
     private class Recorder : ParserCallbacks {
         val events = ArrayList<String>()
         var lastFileAction: BoltAction.FileAction? = null
+        var lastToolAction: BoltAction.ToolAction? = null
         var quickActions: List<QuickAction> = emptyList()
         var openedArtifact: AnvexArtifactData? = null
         var closedArtifact: AnvexArtifactData? = null
@@ -37,6 +38,7 @@ class BoltStreamParserTest {
         override fun onActionClose(data: ActionCallbackData) {
             events.add("actionClose:${data.actionId}")
             if (data.action is BoltAction.FileAction) lastFileAction = data.action
+            if (data.action is BoltAction.ToolAction) lastToolAction = data.action
         }
 
         override fun onQuickActions(actions: List<QuickAction>) {
@@ -253,6 +255,40 @@ class BoltStreamParserTest {
         val parser = BoltStreamParser(rec)
         parser.parse("m11", "plain text without artifact")
         assertEquals(false, parser.flush("m11", applyIncomplete = false))
+    }
+
+    @Test
+    fun `read action carries paging attributes`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        val input = """
+            <boltArtifact id="research" title="Research">
+            <boltAction type="read" path="src/Big.kt" offset="60000" limit="5000"></boltAction>
+            </boltArtifact>
+        """.trimIndent().replace("            ", "")
+        parser.parse("m12", input)
+        val action = rec.lastToolAction
+        assertTrue(action != null)
+        assertEquals("read", action!!.name)
+        assertEquals("src/Big.kt", action.argument)
+        assertEquals(60000, action.offset)
+        assertEquals(5000, action.limit)
+    }
+
+    @Test
+    fun `read action defaults paging and ignores invalid values`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        val input = """
+            <boltArtifact id="research" title="Research">
+            <boltAction type="read" path="src/A.kt" offset="abc" limit="-3"></boltAction>
+            </boltArtifact>
+        """.trimIndent().replace("            ", "")
+        parser.parse("m13", input)
+        val action = rec.lastToolAction
+        assertTrue(action != null)
+        assertEquals(0, action!!.offset)
+        assertEquals(0, action.limit)
     }
 }
 

@@ -151,6 +151,60 @@ class AgentToolExecutorTest {
         assertTrue(text.contains("Path not found in this workspace"))
     }
 
+    // ---- read tool: paged windows over large files ----
+    // (2026-11-06: reads used to return only the first 60,000 chars of a
+    // file, so a review of a 64K ViewModel silently never saw its tail —
+    // and re-reading returned the same head. Windows fix that.)
+
+    private fun readResult(fs: ProjectFileSystem, action: BoltAction.ToolAction): AgentToolExecutor.ToolResult = runBlocking {
+        AgentToolExecutor(resolver = { listOf(InetAddress.getByName("93.184.216.34")) })
+            .run(action, fs, webAllowed = false)
+    }
+
+    @Test fun smallFileReadIsReturnedWholeWithoutFooter() {
+        val r = readResult(ListFs(mapOf("a.txt" to "hello world")), BoltAction.ToolAction("read", "a.txt"))
+        assertTrue(r.ok)
+        assertEquals("hello world", r.text)
+    }
+
+    @Test fun firstWindowOfLargeFileNamesItsRangeAndContinuation() {
+        val content = "x".repeat(65_000) + "THE-END"
+        val r = readResult(ListFs(mapOf("big.kt" to content)), BoltAction.ToolAction("read", "big.kt"))
+        assertTrue(r.ok)
+        assertTrue(r.text.startsWith("x".repeat(1_000)))
+        assertTrue(r.text.contains("chars 0–60000 of 65007"))
+        assertTrue(r.text.contains("5007 chars remain — read again with offset=60000"))
+        assertFalse(r.text.contains("THE-END"))
+    }
+
+    @Test fun secondWindowReachesTheTail() {
+        val content = "x".repeat(65_000) + "THE-END"
+        val r = readResult(ListFs(mapOf("big.kt" to content)), BoltAction.ToolAction("read", "big.kt", offset = 60_000))
+        assertTrue(r.ok)
+        assertTrue(r.text.contains("THE-END"))
+        assertTrue(r.text.contains("chars 60000–65007 of 65007"))
+        assertFalse(r.text.contains("chars remain"))
+    }
+
+    @Test fun explicitLimitShrinksTheWindow() {
+        val r = readResult(ListFs(mapOf("a.txt" to "y".repeat(500))), BoltAction.ToolAction("read", "a.txt", limit = 100))
+        assertTrue(r.ok)
+        assertTrue(r.text.contains("chars 0–100 of 500"))
+        assertTrue(r.text.contains("offset=100"))
+    }
+
+    @Test fun offsetPastEndIsAnErrorNotAnEmptySuccess() {
+        val r = readResult(ListFs(mapOf("a.txt" to "short")), BoltAction.ToolAction("read", "a.txt", offset = 1_000))
+        assertFalse(r.ok)
+        assertTrue(r.text.contains("past the end"))
+    }
+
+    @Test fun protectedFileStaysRefusedForPagedReads() {
+        val r = readResult(ListFs(mapOf(".env" to "SECRET=1")), BoltAction.ToolAction("read", ".env", offset = 2))
+        assertFalse(r.ok)
+        assertTrue(r.text.contains("protected file"))
+    }
+
     @Test fun singleHugeFolderStaysFlatButMarkedPartial() {
         val files = buildMap { repeat(400) { put("docs/D%03d.md".format(it), "x") } }
         val text = listTool(ListFs(files), ".")
