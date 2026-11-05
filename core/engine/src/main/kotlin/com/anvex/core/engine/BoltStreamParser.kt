@@ -289,7 +289,7 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                 type,
                 McpToolTarget.pack(extractAttribute(tag, "server") ?: "", extractAttribute(tag, "tool") ?: ""),
             )
-            "fetch", "search", "read", "list", "search_code" -> {
+            "fetch", "search", "read", "list", "search_code", "extract_archive" -> {
                 val argument = extractAttribute(tag, "url")
                     ?: extractAttribute(tag, "query")
                     ?: extractAttribute(tag, "path")

@@ -289,13 +289,31 @@ class ArtifactManager(private val context: Context) {
 
 
 
+    /**
+     * fsync is durability hardening, not a correctness gate: the bytes are
+     * fully written and the stream closed either way. Some devices /
+     * filesystems throw [java.io.SyncFailedException] (whose message is a
+     * bare "sync failed") for the flush of a complete file — treating that
+     * as fatal deleted good artifacts and surfaced the cryptic exception
+     * text on the deliverable card (user report, 2026-11-05). A failed
+     * sync is therefore swallowed here; real write failures still
+     * propagate from the writer itself.
+     */
+    private fun syncBestEffort(out: FileOutputStream) {
+        try {
+            out.fd.sync()
+        } catch (_: java.io.SyncFailedException) {
+            // Best-effort only — see above.
+        }
+    }
+
     /** Write through a sibling temp file and atomically publish when possible. */
     private fun atomicWrite(target: File, writer: (FileOutputStream) -> Unit) {
         val temp = File(target.parentFile, ".${target.name}.tmp-${UUID.randomUUID()}")
         try {
             FileOutputStream(temp).use { out ->
                 writer(out)
-                out.fd.sync()
+                syncBestEffort(out)
             }
             try {
                 Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
@@ -306,7 +324,9 @@ class ArtifactManager(private val context: Context) {
                 Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
             }
             if (target.isFile) {
-                FileOutputStream(target, true).use { it.fd.sync() }
+                // Redundant post-move durability sync — best-effort like
+                // the temp-file sync; its failure must never fail the write.
+                runCatching { FileOutputStream(target, true).use { syncBestEffort(it) } }
             }
         } catch (t: Throwable) {
             temp.delete()

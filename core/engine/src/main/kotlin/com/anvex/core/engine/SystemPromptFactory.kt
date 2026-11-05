@@ -287,6 +287,7 @@ MEDIA CONTRACT FOR THIS TURN:
     <boltAction type="read" path="src/App.jsx"></boltAction>     — read a project file (full content)
     <boltAction type="list" path="src"></boltAction>             — list project files under a folder ("." for everything)
     <boltAction type="search_code" query="where tokens are refreshed"></boltAction>  — semantic search over this project's code; returns the most relevant chunks (only works when the user has enabled Code search for this project)
+    <boltAction type="extract_archive" path="libs/source.zip"></boltAction>  — extract a .zip stored in the project into .anvex/attachments/<name>-extracted/ so its text files can be listed and read. REQUIRED before inspecting an archive that is a project file: reading a .zip directly returns binary, and without extraction you have NOT seen the archive's contents — never write a report about an archive you have not extracted and read.
 """)
         if (o.webTools) {
             append("""    <boltAction type="fetch" url="https://example.com/page"></boltAction>  — download a web page as plain text (https only)

@@ -758,6 +758,24 @@ class ChatSession(
                     rawAll.append(roundText).append('\n')
 
                     val gathered = synchronized(observations) { observations.toList() }
+                    // Scrub alien tool scaffolding from THIS round's prose
+                    // segment unconditionally. The retry/finalize scrubs
+                    // below gate on "no action executed in the whole turn",
+                    // so a round that mixed gateway-dialect debris
+                    // (<|sep|> … call tool="boltArtifact") with valid
+                    // actions kept the raw scaffolding in the persisted
+                    // message (user report, 2026-11-05). The markers are
+                    // exotic by design, and the strip is confined to this
+                    // round's own segment, so other rounds' prose — earlier
+                    // or later — is never cut by it.
+                    if (containsUnparsedToolMarkup(prose.substring(proseStart))) {
+                        val cleanedSegment = stripUnparsedToolMarkup(prose.substring(proseStart))
+                        prose.setLength(proseStart)
+                        if (cleanedSegment.isNotBlank()) prose.append(cleanedSegment)
+                        _state.value = _state.value.copy(
+                            streamText = MemoryTags.stripForDisplay(prose.toString()),
+                        )
+                    }
                     // 15.1: length-continuation runs before the export/media
                     // corrections (those are once-only and still apply on
                     // the next round if the file is still missing).
@@ -969,6 +987,47 @@ class ChatSession(
      * opt-in per project and the model downloads on first enable, so
      * each unavailable state names its remedy instead of failing mute.
      */
+    /**
+     * extract_archive tool: a .zip that is a plain PROJECT file was opaque
+     * to the agent — chat attachments get extracted on arrival
+     * (ChatViewModel), but a project archive could not be opened at all:
+     * reading it returns binary and the shell whitelist has no unzip, so a
+     * model asked to audit an in-project source zip reported it could not
+     * read the contents and then produced a report anyway (user report,
+     * 2026-11-05). This runs the same bounded extractor the attachment
+     * path uses and lands the text entries under .anvex/attachments/,
+     * where the normal list/read tools can work on them.
+     */
+    private suspend fun runExtractArchive(rawPath: String): AgentToolExecutor.ToolResult {
+        val path = try {
+            com.anvex.core.engine.PathSanitizer.sanitize(rawPath.trim())
+        } catch (e: Exception) {
+            return AgentToolExecutor.ToolResult(false, "Invalid archive path: ${e.message}")
+        }
+        if (!path.endsWith(".zip", ignoreCase = true)) {
+            return AgentToolExecutor.ToolResult(false, "extract_archive only supports .zip files: $path")
+        }
+        val bytes = fs.readFileBytes(path)
+            ?: return AgentToolExecutor.ToolResult(false, "Archive not found in the project: $path")
+        val base = path.substringAfterLast('/').dropLast(4)
+            .replace(Regex("[^A-Za-z0-9._-]"), "-").ifBlank { "archive" }
+        val dir = ".anvex/attachments/$base-extracted"
+        val outcome = try {
+            withContext(Dispatchers.IO) {
+                com.anvex.core.engine.ArchiveTextExtractor.extract(fs, bytes, dir)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return AgentToolExecutor.ToolResult(false, "Extraction failed for $path: ${e.message}")
+        }
+        return AgentToolExecutor.ToolResult(
+            true,
+            "Extracted '$path' into $dir. ${outcome.summaryLine()} " +
+                "List and read the extracted files with your normal tools before drawing any conclusion about the archive's contents.",
+        )
+    }
+
     private suspend fun runCodeSearch(query: String): AgentToolExecutor.ToolResult {
         val manager = runCatching {
             com.anvex.core.android.AppGraph.get().androidRuntime.ragManager()
@@ -1096,12 +1155,15 @@ class ChatSession(
                         "fetch" -> "Reading ${action.argument.take(60)}…"
                         "search" -> "Searching the web…"
                         "search_code" -> "Searching the code…"
+                        "extract_archive" -> "Extracting the archive…"
                         "read" -> "Reading ${action.argument.take(60)}…"
                         "mcp" -> "Calling a tool…"
                         else -> "Listing files…"
                     }
                 )
-                val result = if (action.name == "search_code") {
+                val result = if (action.name == "extract_archive") {
+                    runExtractArchive(action.argument)
+                } else if (action.name == "search_code") {
                     runCodeSearch(action.argument)
                 } else if (action.name == "mcp") {
                     val (server, tool) = com.anvex.core.engine.McpToolTarget.unpack(action.argument)

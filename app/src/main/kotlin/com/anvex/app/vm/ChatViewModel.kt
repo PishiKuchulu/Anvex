@@ -680,7 +680,7 @@ class ChatViewModel(
      * excerpts — and the agent's shell whitelist has no `unzip` or `find`,
      * so it could never actually open the archive (it reported exactly
      * that). Extract the text entries into the project so ls/cat work.
-     * The walk itself lives in [com.anvex.app.project.ArchiveTextExtractor],
+     * The walk itself lives in [com.anvex.core.engine.ArchiveTextExtractor],
      * which reports completeness explicitly: the original inline version
      * silently stopped at 200 entries / 2 MB, amputating an 899-entry
      * review archive (its res/ tree and Gradle root files never reached
@@ -691,10 +691,10 @@ class ChatViewModel(
         fs: com.anvex.core.engine.ProjectFileSystem,
         bytes: ByteArray,
         safeName: String,
-    ): com.anvex.app.project.ArchiveTextExtractor.Outcome? {
+    ): com.anvex.core.engine.ArchiveTextExtractor.Outcome? {
         val dir = ".anvex/attachments/${attachmentDigest(bytes)}-extracted"
         return runCatching {
-            com.anvex.app.project.ArchiveTextExtractor.extract(fs, bytes, dir)
+            com.anvex.core.engine.ArchiveTextExtractor.extract(fs, bytes, dir)
         }.getOrNull()
     }
 
