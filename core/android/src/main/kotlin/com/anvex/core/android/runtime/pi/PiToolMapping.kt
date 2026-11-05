@@ -67,7 +67,12 @@ object PiToolMapping {
      *  - find: a sensitive pattern (`.env`, `*.pem`, …);
      *  - write/edit: a workspace-escaping path (sensitive NAMES are
      *    still writable — editing your own `.env` is legitimate work;
-     *    only exfiltration reads are hard-denied);
+     *    only exfiltration reads are hard-denied), or a PROTECTED path:
+     *    the native dispatcher refuses agent writes to `.git`, `.anvex`,
+     *    `.anvex-pi` and any `.github/workflows` subtree outright, and
+     *    Pi must not silently offer the same writes just because it runs
+     *    its own tools (external audit M-01, 2026-11-05). The user can
+     *    still edit those files manually in the editor UI;
      *  - bash: a command that references a sensitive file, or an
      *    absolute file argument outside the project (Pi works inside
      *    the project; `cat /etc/hosts` from Pi is not project work).
@@ -86,10 +91,24 @@ object PiToolMapping {
                 val pattern = input.optString("pattern")
                 pattern.isNotBlank() && ((SensitivePaths.isSensitive(pattern) && !SensitivePaths.isReadableExtractedAttachment(pattern)) || pathDenied(pattern, projectRoot, sensitiveDenied = false))
             }
-            "write", "edit" -> pathDenied(input.optString("path"), projectRoot, sensitiveDenied = false)
+            "write", "edit" -> protectedPath(input.optString("path")) ||
+                pathDenied(input.optString("path"), projectRoot, sensitiveDenied = false)
             "bash" -> bashDenied(input.optString("command"), projectRoot)
             else -> false
         }
+    }
+
+    /**
+     * The native dispatcher's protected set (ActionDispatcher.isProtectedPath):
+     * app/VCS metadata segments at any depth, plus any `.github/workflows`
+     * subtree (those files run with repository secrets). Blank paths are
+     * not protected here — pathDenied/Pi itself handles those.
+     */
+    private fun protectedPath(path: String): Boolean {
+        if (path.isBlank()) return false
+        val parts = path.replace('\\', '/').split('/')
+        if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" }) return true
+        return SensitivePaths.isWorkflowPath(path)
     }
 
     /** True when [path] must not be touched: blank is not denied (Pi fails itself), otherwise sensitive or escaping. */

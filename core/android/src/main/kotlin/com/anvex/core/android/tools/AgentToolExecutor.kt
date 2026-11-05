@@ -161,6 +161,7 @@ class AgentToolExecutor(
     // ------------------------------------------------------------------ web tools
 
     private fun fetch(rawUrl: String): ToolResult {
+        if (rawUrl.length > MAX_URL_CHARS) return ToolResult(false, "URL too long (${rawUrl.length} chars, limit $MAX_URL_CHARS).")
         var url = rawUrl.trim().toHttpUrlOrNull() ?: return ToolResult(false, "Invalid URL.")
         var hops = 0
         while (true) {
@@ -192,6 +193,7 @@ class AgentToolExecutor(
     private fun search(query: String): ToolResult {
         val q = query.trim()
         if (q.isEmpty()) return ToolResult(false, "Empty query.")
+        if (q.length > MAX_QUERY_CHARS) return ToolResult(false, "Query too long (${q.length} chars, limit $MAX_QUERY_CHARS).")
         val url = HttpUrl.Builder().scheme("https").host("html.duckduckgo.com").addPathSegments("html/")
             .addQueryParameter("q", q).build()
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
@@ -269,6 +271,14 @@ class AgentToolExecutor(
     companion object {
         const val MAX_REDIRECTS = 4
         const val MAX_FETCH_BYTES = 1_500_000
+        // H-02 (external audit, 2026-11-05): fetch/search stay ungated by
+        // approval (web access is an explicit, default-off user setting
+        // with SSRF + redirect guards), but the request itself is now
+        // size-bounded: an over-long URL or query is overwhelmingly a
+        // data-exfiltration shape, not a research request, and servers
+        // reject such URLs anyway.
+        const val MAX_URL_CHARS = 2048
+        const val MAX_QUERY_CHARS = 512
         const val MAX_FETCH_CHARS = 40_000
         const val MAX_READ_CHARS = 60_000
         const val MAX_LIST_ENTRIES = 300

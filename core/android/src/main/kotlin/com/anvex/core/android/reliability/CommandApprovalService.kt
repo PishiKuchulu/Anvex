@@ -37,13 +37,19 @@ class CommandApprovalService(private val grants: DurableApprovalRepository) {
         is BoltAction.UnknownAction -> ToolCapability.DESTRUCTIVE
     }
     fun fingerprintFor(action: BoltAction): String {
+        // M-02 (external audit, 2026-11-05): the material used to be cut
+        // at 1,000,000 chars BEFORE hashing, so two different actions
+        // sharing a 1M-char prefix produced the SAME fingerprint and a
+        // scoped grant for the first silently covered the second. The
+        // content is already fully in memory at this point — hash all
+        // of it.
         val material = when (action) {
-            is BoltAction.FileAction -> "FILE:${action.filePath}:${action.content}".take(1_000_000)
-            is BoltAction.ShellAction -> "SHELL:${action.content}".take(1_000_000)
-            is BoltAction.StartAction -> "START:${action.content}".take(1_000_000)
-            is BoltAction.ArtifactAction -> "ARTIFACT:${action.format}:${action.outputName}:${action.title}:${action.paths.joinToString("|")}:${action.content}".take(1_000_000)
-            is BoltAction.ToolAction -> "TOOL:${action.name}:${action.argument}".take(1_000_000)
-            is BoltAction.UnknownAction -> "UNKNOWN:${action.type}:${action.content}".take(1_000_000)
+            is BoltAction.FileAction -> "FILE:${action.filePath}:${action.content}"
+            is BoltAction.ShellAction -> "SHELL:${action.content}"
+            is BoltAction.StartAction -> "START:${action.content}"
+            is BoltAction.ArtifactAction -> "ARTIFACT:${action.format}:${action.outputName}:${action.title}:${action.paths.joinToString("|")}:${action.content}"
+            is BoltAction.ToolAction -> "TOOL:${action.name}:${action.argument}"
+            is BoltAction.UnknownAction -> "UNKNOWN:${action.type}:${action.content}"
         }
         return MessageDigest.getInstance("SHA-256").digest(material.toByteArray()).joinToString("") { "%02x".format(it) }
     }

@@ -107,6 +107,13 @@ class PiMappingsTest {
         assertTrue(denied("bash", """{"command":"cp .env backup.txt"}"""))
         assertTrue(denied("write", """{"path":"../escape.txt","content":"x"}"""))
         assertTrue(denied("write", """{"path":"/etc/escape.txt","content":"x"}"""))
+        // M-01 (external audit, 2026-11-05): protected subtrees the native
+        // dispatcher refuses are hard-denied for Pi write/edit too.
+        assertTrue(denied("write", """{"path":".github/workflows/ci.yml","content":"x"}"""))
+        assertTrue(denied("edit", """{"path":"sub/.github/workflows/release.yml","edits":[]}"""))
+        assertTrue(denied("write", """{"path":".git/config","content":"x"}"""))
+        assertTrue(denied("write", """{"path":".anvex/settings.json","content":"x"}"""))
+        assertTrue(allowed("write", """{"path":".github/ISSUE_TEMPLATE/bug.md","content":"x"}"""))
         assertTrue(allowed("read", """{"path":"src/app.txt"}"""))
         assertTrue(allowed("read", """{"path":"${root.absolutePath}/src/app.txt"}"""))
         assertTrue(allowed("bash", """{"command":"ls src"}"""))

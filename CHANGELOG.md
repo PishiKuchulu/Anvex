@@ -1,5 +1,46 @@
 # Changelog
 
+## 4.15.4 — Fifth external audit: verified fix wave
+
+Fixes for the findings of the fifth external audit (of 4.15.2) that
+survived line-by-line verification — 10 of 13 verified claim-groups
+confirmed, 2 partial, 1 refuted; the rest were not verified and are
+not touched here:
+
+- **Pi write/edit can no longer touch protected paths (M-01).** The
+  native dispatcher refuses agent writes to `.git`, `.anvex`,
+  `.anvex-pi` and any `.github/workflows` subtree, but the Pi engine —
+  which runs its own tools — only blocked workspace escapes, so the
+  same writes went through silently. Pi now hard-denies them with the
+  same protected set; manual editing in the editor is unaffected.
+- **Direct network commands need approval (H-01).** The shell policy
+  only gated curl/wget *uploads*; a plain GET could carry project data
+  out in its query string or headers with no prompt (on the Pi
+  engine's general bash — the native shell's allowlist never had these
+  tools). curl/wget in any form, plus nc/ncat/ssh/scp/sftp/ftp, now
+  require approval; uploads stay in the stronger exfiltration class.
+  Package-manager traffic (npm install) stays ungated.
+- **Approvals show the actual payload (H-03).** The approval detail
+  was capped at 400 characters and 6 rendered lines, and a >2 MB file
+  write showed only its path and size. The policy preview cap is now
+  4000 chars, large file writes include the head of the content, the
+  dialog body scrolls instead of clipping at 6 lines, and Pi asks —
+  which previously showed only a 300-char summary — now carry the full
+  command/content as the scrollable detail.
+- **Approval fingerprints cover the full content (M-02).** The grant
+  fingerprint truncated its material at 1M chars before hashing, so
+  two actions sharing a 1M-char prefix shared a fingerprint and one
+  scoped grant could cover the other. The full material is hashed.
+- **Web requests are size-bounded (H-02, partial).** fetch/search
+  stay approval-free by design — web access is an explicit,
+  default-off setting with SSRF and redirect guards — but fetch URLs
+  are now capped at 2048 chars and search queries at 512: beyond that
+  a "request" is an exfiltration shape, not research.
+
+Not changed: the audit's claim that the editor lacks an LSP status
+indicator was refuted (the strip shipped in 4.15.2 itself); the
+composer's streaming lock is the deliberate interaction model.
+
 ## 4.15.3 — Artifact durability, markup scrub, and archive inspection
 
 Three defects from on-device use of 4.15.2, all in the agent's

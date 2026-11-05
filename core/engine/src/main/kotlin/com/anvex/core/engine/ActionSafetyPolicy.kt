@@ -15,7 +15,7 @@ object ActionSafetyPolicy {
         val requiresApproval: Boolean get() = risk == Risk.REQUIRES_APPROVAL
     }
 
-    private const val MAX_DETAIL_CHARS = 400
+    private const val MAX_DETAIL_CHARS = 4000
 
     /** Human byte count for approval details (e.g. "2.4 MB"). */
     private fun humanBytes(bytes: Int): String = when {
@@ -251,13 +251,24 @@ object ActionSafetyPolicy {
             }
             "curl", "wget" -> if (isUpload(args)) {
                 destructive("Uploading a local file to a remote host can exfiltrate project data.")
-            } else null
-            // Deliberately NOT gated here: package installs and downloads
-            // (npm install, curl -o). They are core agent workflow, the
-            // artifact pipeline has designed PARTIAL semantics for them,
-            // and the terminal surface gates network execution separately.
-            // This policy gates irreversible DATA destruction and uploads
-            // of local files; plain downloads stay ungated.
+            } else Assessment(
+                Risk.REQUIRES_APPROVAL,
+                "Network request (curl/wget) needs approval: the URL, query string and headers can carry project data off the device.",
+            )
+            // Other direct network tools: the same egress channel as curl.
+            "nc", "ncat", "ssh", "scp", "sftp", "ftp" -> Assessment(
+                Risk.REQUIRES_APPROVAL,
+                "Network command needs approval: it can move project data off the device.",
+            )
+            // Deliberately NOT gated here: package installs (npm install)
+            // and package-manager downloads, which resolve through
+            // configured registries. Direct network commands ARE gated
+            // since the 2026-11-05 external audit (H-01): a plain GET can
+            // carry data out in its query string or headers, so curl/wget
+            // "download" forms are no longer treated as harmless. (The
+            // native agent shell is unaffected either way — its allowlist
+            // never included these tools; this gate bites on the Pi
+            // engine's general bash and on AI-originated terminal use.)
             else -> null
         }
     }
@@ -323,7 +334,11 @@ object ActionSafetyPolicy {
                 Assessment(
                     Risk.REQUIRES_APPROVAL,
                     "Large AI file mutation requires explicit approval.",
-                    detail = "${action.filePath} · ${humanBytes(size)}",
+                    // H-03 (external audit, 2026-11-05): path + size alone
+                    // is not an informed approval — include the head of
+                    // the actual content (preview-capped) so the user can
+                    // see what is about to be written.
+                    detail = "${action.filePath} · ${humanBytes(size)}\n" + preview(action.content),
                 )
             else Assessment(Risk.SAFE, "File mutation is within the safe size budget.")
         }
