@@ -262,8 +262,9 @@ private fun ApprovalTab(command: String, onCommandChange: (String) -> Unit, capa
                             Column {
                                 Text(logStamp(e.createdAt), style = MaterialTheme.typography.labelSmall)
                                 Text(e.message, maxLines = if (expanded) Int.MAX_VALUE else 3)
-                                if (expanded && !e.details.isNullOrBlank()) {
-                                    Text(e.details, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                                val details = e.details
+                                if (expanded && !details.isNullOrBlank()) {
+                                    Text(details, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         },
