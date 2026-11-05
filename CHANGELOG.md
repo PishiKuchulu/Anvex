@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.15.3 — Artifact durability, markup scrub, and archive inspection
+
+Three defects from on-device use of 4.15.2, all in the agent's
+deliverable/inspection path:
+
+- **Artifacts no longer die on fsync.** `ArtifactManager` fsynced every
+  artifact twice and treated a failed sync as a failed write: on
+  devices whose filesystem throws `SyncFailedException` for a complete
+  file, the finished artifact was deleted and its card showed a bare
+  "sync failed". Both syncs are now best-effort durability hardening;
+  real write failures still fail the artifact.
+- **No more leaked tool-call scaffolding.** When a gateway model emits
+  a tool call in its own special-token dialect (`<|sep|>` …
+  `call tool="boltArtifact"`), the cleanup scrubbed it only when the
+  whole turn executed zero actions — a turn that mixed the debris with
+  valid actions kept the raw scaffolding in the persisted message.
+  Each round's prose segment is now scrubbed as the round ends,
+  regardless of what else the turn executed.
+- **The agent can open project archives.** A `.zip` stored as a plain
+  project file was opaque to the agent (reading it returns binary; the
+  shell has no unzip), so an audit request over an in-project source
+  zip produced a report about contents never read. The new
+  `extract_archive` tool action extracts the archive's text entries
+  into `.anvex/attachments/<name>-extracted/` — the same bounded,
+  completeness-reporting extractor chat attachments already used (now
+  in `core:engine`) — and the system prompt forbids reporting on an
+  archive that was not extracted and read.
+
 ## 4.15.2 — Device-QA fixes, accordion Settings, and the external-audit wave
 
 Two fix streams in one release: the seven defects reported from
