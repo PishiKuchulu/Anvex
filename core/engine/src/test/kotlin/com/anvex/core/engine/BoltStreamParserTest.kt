@@ -290,6 +290,78 @@ class BoltStreamParserTest {
         assertEquals(0, action!!.offset)
         assertEquals(0, action.limit)
     }
+
+    @Test
+    fun `file action parses the append attribute`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        val input = """
+            <boltArtifact id="w" title="Write">
+            <boltAction type="file" filePath="big.md" append="true">
+            next part
+            </boltAction>
+            </boltArtifact>
+        """.trimIndent().replace("            ", "")
+        parser.parse("m20", input)
+        assertEquals("big.md", rec.lastFileAction?.filePath)
+        assertEquals(true, rec.lastFileAction?.append)
+    }
+
+    @Test
+    fun `file action without append attribute defaults to replace`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        val input = """
+            <boltArtifact id="w" title="Write">
+            <boltAction type="file" filePath="small.md">
+            whole file
+            </boltAction>
+            </boltArtifact>
+        """.trimIndent().replace("            ", "")
+        parser.parse("m21", input)
+        assertEquals(false, rec.lastFileAction?.append)
+    }
+
+    @Test
+    fun `takeOpenActionData returns ids and the partial action`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        // Stream cut mid-file: no closing tags at all.
+        val input = """
+            Working.
+            <boltArtifact id="audit" title="Audit">
+            <boltAction type="file" filePath="AUDIT.md" append="true">
+            ## Findings
+            partial body
+        """.trimIndent().replace("            ", "")
+        parser.parse("m22", input)
+        val data = parser.takeOpenActionData("m22", input)
+        assertTrue(data != null)
+        assertEquals("audit", data!!.artifactId)
+        val action = data.action as? BoltAction.FileAction
+        assertTrue(action != null)
+        assertEquals("AUDIT.md", action!!.filePath)
+        assertEquals(true, action.append)
+        assertTrue(action.content.contains("partial body"))
+        // The open action was consumed: a second take returns nothing.
+        assertNull(parser.takeOpenActionData("m22", input))
+    }
+
+    @Test
+    fun `flush with the full text recovers an unclosed file action`() {
+        val rec = Recorder()
+        val parser = BoltStreamParser(rec)
+        // The model ended cleanly but omitted the closing tags.
+        val input = """
+            <boltArtifact id="w" title="Write">
+            <boltAction type="file" filePath="whole.txt">
+            complete body
+        """.trimIndent().replace("            ", "")
+        parser.parse("m23", input)
+        assertTrue(parser.flush("m23", input))
+        assertEquals("whole.txt", rec.lastFileAction?.filePath)
+        assertEquals("complete body\n", rec.lastFileAction?.content)
+    }
 }
 
 private fun BoltAction.typeName(): String = when (this) {

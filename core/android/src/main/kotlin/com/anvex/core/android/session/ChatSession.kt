@@ -548,6 +548,13 @@ class ChatSession(
                 // Length-truncated FILE actions: auto-resume by full rewrite,
                 // capped per turn (see the branch below the prose one).
                 var fileContinuations = 0
+                // Chunked-write state: a file being assembled across several
+                // length cuts (prefix salvage + append continuations, see the
+                // salvage block below). appendSavedChars is the file's durable
+                // length, read back after every salvaged chunk.
+                var appendPath: String? = null
+                var appendSavedChars = 0
+                var appendContinuations = 0
                 // Intent-without-action continuations (see the branch below the
                 // media contract): the model narrated a plan and stopped with a
                 // normal finish reason before executing anything.
@@ -622,6 +629,10 @@ class ChatSession(
                     var roundFinishReason: String? = null
                     var lengthCutProse = false
                     var lengthCutFilePath: String? = null
+                    // A length-cut file action whose line-complete prefix the
+                    // salvage block (after the action drain) tries to save.
+                    var salvageFile: BoltAction.FileAction? = null
+                    var salvageIsAppend = false
                     val roundText = StringBuilder()
                     val roundReasoning = StringBuilder()
                     // Visible-prose length before this round: a markup-only
@@ -712,23 +723,43 @@ class ChatSession(
                         val truncated = failure != null ||
                             (roundFinishReason != null && roundFinishReason != "stop")
                         if (truncated) {
-                            val open = streamParser.takeOpenAction(roundId)
+                            val open = streamParser.takeOpenActionData(roundId, roundText.toString())?.action
                             if (open != null) {
                                 // A FILE action cut purely by the output limit
-                                // auto-resumes in a fresh round that rewrites
-                                // the file in full (below). Byte-level resume
-                                // is impossible — the beginning was never
-                                // written — but a whole-file rewrite is safe:
-                                // file writes are atomic and journaled. Only
-                                // when the resume cap is spent (or the stream
-                                // FAILED instead of ending on the limit) does
-                                // the H-06 note end the turn.
-                                val cutPath = (open as? BoltAction.FileAction)?.filePath
-                                if (cutPath != null && failure == null &&
-                                    roundFinishReason?.lowercase() in setOf("length", "max_tokens") &&
+                                // is salvaged chunk-wise (below, after the
+                                // action drain): the line-complete prefix of
+                                // what the model already produced is saved,
+                                // and the model APPENDS the remainder in the
+                                // next round. A full rewrite (the 4.15.6
+                                // strategy, still the fallback) can never land
+                                // a file larger than one response's budget.
+                                // Only a non-length cut, a spent cap, or a
+                                // failed salvage ends the turn with a note.
+                                val openFile = open as? BoltAction.FileAction
+                                val lengthClass = failure == null &&
+                                    roundFinishReason?.lowercase() in setOf("length", "max_tokens")
+                                if (openFile != null && lengthClass && openFile.append &&
+                                    appendPath == openFile.filePath &&
+                                    appendContinuations < MAX_APPEND_CONTINUATIONS
+                                ) {
+                                    salvageFile = openFile
+                                    salvageIsAppend = true
+                                } else if (openFile != null && lengthClass && !openFile.append &&
                                     fileContinuations < MAX_FILE_CONTINUATIONS
                                 ) {
-                                    lengthCutFilePath = cutPath
+                                    salvageFile = openFile
+                                    salvageIsAppend = false
+                                } else if (openFile != null && appendPath == openFile.filePath) {
+                                    // The file being assembled chunk-wise was
+                                    // cut in a way that cannot resume — but
+                                    // part of it DOES exist on disk, so the
+                                    // note must say PARTIAL, not "not written".
+                                    prose.append(
+                                        partialFileNote(
+                                            openFile.filePath, appendSavedChars,
+                                            failure?.message ?: "finish_reason=$roundFinishReason",
+                                        )
+                                    )
                                 } else {
                                     incompleteFileNote(open, failure?.message ?: "finish_reason=$roundFinishReason")
                                         ?.let { prose.append(it) }
@@ -742,11 +773,11 @@ class ChatSession(
                                 lengthCutProse = true
                             }
                         } else {
-                            streamParser.flush(roundId)
+                            streamParser.flush(roundId, roundText.toString())
                         }
                     } catch (e: CancellationException) {
                         canceled = true
-                        streamParser.flush(roundId)
+                        streamParser.flush(roundId, roundText.toString())
                         // The consumer is a child of this coroutineScope — cancel it now so remaining
                         // queued actions stop; already-applied mutations stay journaled (revertible).
                         consumer.cancel()
@@ -758,10 +789,19 @@ class ChatSession(
                             message = e.message?.take(500).orEmpty().ifBlank { "Unexpected provider failure" },
                         )
                         // H-06: same rule as the normal path — a failed turn
-                        // never applies its still-open action.
+                        // never applies its still-open action. A file being
+                        // assembled chunk-wise already exists PARTIALLY, so
+                        // its note says so.
                         streamParser.takeOpenAction(roundId)?.let { open ->
-                            incompleteFileNote(open, e.message?.take(200) ?: "provider failure")
-                                ?.let { prose.append(it) }
+                            val openPath = (open as? BoltAction.FileAction)?.filePath
+                            if (openPath != null && openPath == appendPath) {
+                                prose.append(
+                                    partialFileNote(openPath, appendSavedChars, e.message?.take(200) ?: "provider failure")
+                                )
+                            } else {
+                                incompleteFileNote(open, e.message?.take(200) ?: "provider failure")
+                                    ?.let { prose.append(it) }
+                            }
                         }
                     }
 
@@ -793,6 +833,70 @@ class ChatSession(
                         _state.value = _state.value.copy(
                             streamText = MemoryTags.stripForDisplay(prose.toString()),
                         )
+                    }
+                    // Chunked-write salvage: the line-complete prefix of a
+                    // length-cut file action is real progress — save it via
+                    // the normal journaled runner, then have the model APPEND
+                    // the remainder (fileAppendPrompt) instead of rewriting
+                    // the file from scratch. Runs before the other
+                    // continuations: it supersedes the full-rewrite branch
+                    // for this path, and falls back to it when the prefix is
+                    // too small to keep or the save does not land verbatim.
+                    val salvage = salvageFile
+                    if (salvage != null && round < MAX_TOOL_ROUNDS) {
+                        val prefix = lineCompletePrefix(salvage.content)
+                        var resumed = false
+                        if (prefix.length >= MIN_SALVAGE_CHARS) {
+                            val record = runner.applyFileAction(
+                                BoltAction.FileAction(prefix, salvage.filePath, append = salvageIsAppend),
+                                messageId = assistantId,
+                            )
+                            val stored = if (record.status == ActionStatus.COMPLETE.name) {
+                                fs.readFile(salvage.filePath)
+                            } else null
+                            // A fresh-write salvage must have stored the
+                            // prefix VERBATIM — if the content was routed
+                            // elsewhere (e.g. parsed as a SEARCH/REPLACE
+                            // patch), appending after it would corrupt the
+                            // seam, so the salvage counts as failed.
+                            if (stored != null && (salvageIsAppend || stored == prefix)) {
+                                if (salvageIsAppend) {
+                                    appendContinuations++
+                                } else {
+                                    fileContinuations++
+                                    appendPath = salvage.filePath
+                                    appendContinuations = 0
+                                }
+                                appendSavedChars = stored.length
+                                turns.add(ChatTurn(MessageRole.ASSISTANT, roundText.toString()))
+                                turns.add(
+                                    ChatTurn(
+                                        MessageRole.USER,
+                                        fileAppendPrompt(
+                                            salvage.filePath,
+                                            stored.takeLast(APPEND_TAIL_CHARS),
+                                            stored.length,
+                                        ),
+                                    )
+                                )
+                                round++
+                                _state.value = _state.value.copy(
+                                    statusLine = "Output was cut off mid-file — saved the completed part, continuing the file…"
+                                )
+                                resumed = true
+                            }
+                        }
+                        if (!resumed) {
+                            if (salvageIsAppend) {
+                                prose.append(
+                                    partialFileNote(salvage.filePath, appendSavedChars, "finish_reason=$roundFinishReason")
+                                )
+                            } else {
+                                // Legacy fallback (the 4.15.6 behavior):
+                                // re-emit the whole file in a fresh round.
+                                lengthCutFilePath = salvage.filePath
+                            }
+                        }
                     }
                     // 15.1: length-continuation runs before the export/media
                     // corrections (those are once-only and still apply on
@@ -1005,6 +1109,16 @@ class ChatSession(
         val path = (action as? BoltAction.FileAction)?.filePath ?: return null
         return "\n\n[Output stopped early ($reason): file '$path' was NOT written because the model output was cut off. Send the message again to continue it.]"
     }
+
+    /**
+     * Note appended when a file being assembled chunk-wise (prefix salvage +
+     * appends) is left incomplete: unlike [incompleteFileNote], part of the
+     * file DOES exist on disk, and the note must say so truthfully.
+     */
+    private fun partialFileNote(path: String, savedChars: Int, reason: String): String =
+        "\n\n[Output stopped early ($reason): file '$path' was PARTIALLY written " +
+            "($savedChars characters saved) because the model output was cut off. " +
+            "The file is incomplete — send \"continue\" to finish it.]"
 
     /**
      * 15.2: file paths named in the user's message. Backtick spans first
@@ -1577,6 +1691,44 @@ class ChatSession(
             "Your previous reply was cut off by the output limit. Continue exactly where you stopped. " +
             "Do not repeat anything already written and do not summarize — output only the remaining part."
         const val MAX_FILE_CONTINUATIONS = 2
+
+        /**
+         * Chunked-write caps: append continuations make monotone progress
+         * (the file grows every round), so they get a larger budget than
+         * full rewrites — still bounded, and MAX_TOOL_ROUNDS caps the turn
+         * as a whole. A salvaged prefix below [MIN_SALVAGE_CHARS] is not
+         * worth an append round; the full-rewrite fallback serves it.
+         */
+        const val MAX_APPEND_CONTINUATIONS = 6
+        const val MIN_SALVAGE_CHARS = 200
+        const val APPEND_TAIL_CHARS = 160
+
+        /**
+         * The part of a truncated file action that ends at a line boundary —
+         * the only part safe to save as a finished prefix. The trailing
+         * partial line is dropped: the model re-emits it in the append.
+         */
+        fun lineCompletePrefix(content: String): String {
+            val idx = content.lastIndexOf('\n')
+            return if (idx < 0) "" else content.substring(0, idx + 1)
+        }
+
+        /**
+         * Auto-resume prompt for the chunked-write path: the line-complete
+         * prefix of the cut file action HAS been saved; the model appends
+         * ONLY the remainder, anchored on the saved tail so the seam is
+         * exact. The whole output budget goes to new content, and a file of
+         * any size can finish across enough appends.
+         */
+        fun fileAppendPrompt(filePath: String, tail: String, savedChars: Int): String =
+            "Your previous reply was cut off by the output limit while writing the file '$filePath'. " +
+            "The completed part HAS been saved ($savedChars characters). The saved text ends with:\n" +
+            "---\n$tail\n---\n" +
+            "Continue the SAME file: reply with ONE file action for '$filePath' carrying the attribute " +
+            "append=\"true\" and containing ONLY the content that comes after that ending — do not repeat " +
+            "anything already saved, and write no prose and no other actions. If the remainder is still " +
+            "too long for one reply, write as much as fits and end at a line boundary; you will be asked " +
+            "to append the next part in the same way."
 
         /**
          * Auto-resume prompt for a file action cut by the output limit:

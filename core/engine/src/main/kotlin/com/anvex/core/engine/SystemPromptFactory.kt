@@ -149,6 +149,13 @@ ${RuntimeCapabilityReport.describe().prependIndent("    ").trimEnd()}
         Rules: the SEARCH text must match the current file EXACTLY (copy it verbatim); multiple
         blocks are applied in order; if a block cannot be found the whole patch fails and the
         file is NOT modified — when unsure, send the full file instead.
+        LONG FILES: a file action may carry append="true" to EXTEND an existing file instead
+        of replacing it. When a note says a file was PARTIALLY written, continue THAT file
+        with an append action (read its ending first if you are unsure where it stopped) —
+        never rewrite a long file from scratch when the remainder can be appended. When you
+        know a file will be very long, write it in parts from the start: a normal file
+        action for the first part, then append="true" actions for the following parts,
+        ending each part at a line boundary.
 
     12. When starting the preview NEVER say something like "You can now view X by opening the provided local server URL in your browser." The preview opens in the app automatically.
 

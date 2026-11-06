@@ -10,6 +10,13 @@ sealed class BoltAction {
     data class FileAction(
         override val content: String,
         val filePath: String,
+        /**
+         * Chunked-write continuation: when true, [content] is APPENDED to the
+         * existing file instead of replacing it (the dispatcher merges at a
+         * whole-line seam). Used to finish files too long for one model
+         * response: the first part is a normal write, later parts append.
+         */
+        val append: Boolean = false,
     ) : BoltAction()
 
     data class ShellAction(override val content: String) : BoltAction()

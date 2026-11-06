@@ -26,6 +26,8 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         var currentArtifact: AnvexArtifactData? = null
         var currentAction: BoltAction = BoltAction.ShellAction("")
         var actionId = 0
+        /** Absolute index into the full message text where the open action's content begins (-1 = none). */
+        var actionContentStart = -1
     }
 
     private val messages = HashMap<String, MessageState>()
@@ -75,6 +77,7 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                         )
                         st.insideAction = false
                         st.currentAction = BoltAction.ShellAction("")
+                        st.actionContentStart = -1
                         i = closeIndex + ACTION_TAG_CLOSE.length
                     } else {
                         val action = st.currentAction
@@ -103,6 +106,7 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                         if (actionEndIndex != -1) {
                             st.insideAction = true
                             st.currentAction = parseActionTag(input, actionOpenIndex, actionEndIndex)
+                            st.actionContentStart = actionEndIndex + 1
                             callbacks.onActionOpen(
                                 ActionCallbackData(messageId, artifact.id, st.actionId.toString(), st.currentAction)
                             )
@@ -212,7 +216,41 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         val action = st.currentAction
         st.insideAction = false
         st.currentAction = BoltAction.ShellAction("")
+        st.actionContentStart = -1
         return action
+    }
+
+    /**
+     * Like [takeOpenAction] but returns the full callback data (artifact id +
+     * action id) and, for a file action, the PARTIAL CONTENT recovered from
+     * [fullText] (the complete message text the caller accumulated — the
+     * parser itself retains only a cursor, never the text). The recovered
+     * content is normalized like the close path (trim; escaped-tag cleanup
+     * for non-Markdown files) EXCEPT the markdown-fence cleanout, which is
+     * only valid on a complete document. Callers salvaging a truncated file
+     * write use this to save the finished prefix instead of dropping the
+     * whole action.
+     */
+    fun takeOpenActionData(messageId: String, fullText: String): ActionCallbackData? {
+        val st = messages[messageId] ?: return null
+        if (!st.insideArtifact || !st.insideAction) return null
+        val artifact = st.currentArtifact ?: return null
+        val action = st.currentAction
+        val recovered = if (action is BoltAction.FileAction &&
+            st.actionContentStart in 0..fullText.length
+        ) {
+            var content = fullText.substring(st.actionContentStart).trim()
+            if (!action.filePath.endsWith(".md")) {
+                content = cleanEscapedTags(content)
+            }
+            withContent(action, content)
+        } else {
+            action
+        }
+        st.insideAction = false
+        st.currentAction = BoltAction.ShellAction("")
+        st.actionContentStart = -1
+        return ActionCallbackData(messageId, artifact.id, (st.actionId - 1).toString(), recovered)
     }
 
     /**
@@ -226,17 +264,34 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
      *
      * @return true when an unterminated action was pending (dropped or applied).
      */
-    fun flush(messageId: String, applyIncomplete: Boolean = true): Boolean {
+    fun flush(messageId: String, applyIncomplete: Boolean = true): Boolean =
+        flush(messageId, "", applyIncomplete)
+
+    /**
+     * [flush] with the complete message text, so a still-open FILE action's
+     * content is recovered from the text (the parser retains only a cursor;
+     * [BoltAction.content] of an unclosed action is always empty). Without
+     * the text, flushing an action whose closing tag the model omitted
+     * would apply an EMPTY file — with it, the file lands whole.
+     */
+    fun flush(messageId: String, fullText: String, applyIncomplete: Boolean = true): Boolean {
         val st = messages[messageId] ?: return false
         if (st.insideArtifact && st.insideAction) {
             if (!applyIncomplete) {
                 st.insideAction = false
                 st.currentAction = BoltAction.ShellAction("")
+                st.actionContentStart = -1
                 return true
             }
             val artifact = st.currentArtifact ?: return false
             val action = st.currentAction
-            var content = action.content.trim()
+            var content = if (action is BoltAction.FileAction && fullText.isNotEmpty() &&
+                st.actionContentStart in 0..fullText.length
+            ) {
+                fullText.substring(st.actionContentStart).trim()
+            } else {
+                action.content.trim()
+            }
             if (action is BoltAction.FileAction && !action.filePath.endsWith(".md")) {
                 content = cleanoutMarkdownSyntax(content)
                 content = cleanEscapedTags(content)
@@ -248,6 +303,7 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
             )
             st.insideAction = false
             st.currentAction = BoltAction.ShellAction("")
+            st.actionContentStart = -1
             return true
         }
         return false
@@ -268,7 +324,11 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         val tag = input.substring(open, end + 1)
         val type = extractAttribute(tag, "type") ?: ""
         return when (type) {
-            "file" -> BoltAction.FileAction("", extractAttribute(tag, "filePath") ?: "")
+            "file" -> BoltAction.FileAction(
+                "",
+                extractAttribute(tag, "filePath") ?: "",
+                append = extractAttribute(tag, "append") == "true",
+            )
             "shell" -> BoltAction.ShellAction("")
             "start" -> BoltAction.StartAction("")
             "artifact" -> {

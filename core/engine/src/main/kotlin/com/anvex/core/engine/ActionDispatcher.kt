@@ -81,6 +81,32 @@ class ActionDispatcher(
                 emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED,
             )
 
+        // Chunked-write continuation (append="true"): merge the chunk onto
+        // the current content at a whole-line seam (AppendMerge) and store
+        // it through the same journaled write path as a full write — one
+        // mutation with the true before/after, sanitizer and protected-path
+        // checks unchanged. The SEARCH/REPLACE routing below is skipped on
+        // purpose: a continuation chunk is file body, never a patch, even
+        // when it happens to start with the patch marker.
+        if (action.append) {
+            val existing = fs.readFile(path)
+                ?: return ActionResult(
+                    false, null, "Append needs the file to already exist: '${action.filePath}'",
+                    emptyList(), elapsed(t0), com.anvex.core.model.ActionStatus.FAILED,
+                )
+            val merged = AppendMerge.merge(existing, action.content)
+            val result = writeFile(path, merged, MutationSource.AI_FILE_ACTION, messageId)
+            return if (result.success) {
+                result.copy(
+                    output = "Appended ${merged.length - existing.length} characters to ${action.filePath} " +
+                        "(file now ${merged.length} characters).",
+                    durationMs = elapsed(t0),
+                )
+            } else {
+                result.copy(durationMs = elapsed(t0))
+            }
+        }
+
         // v4.4 (architect feature 2 — targeted edits): when the model emits a
         // SEARCH/REPLACE patch instead of the full file, apply it to the current
         // content. The file is left untouched when the patch does not apply.

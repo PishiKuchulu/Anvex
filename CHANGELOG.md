@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.15.8 — Chunked file writes: long files can always finish
+
+- **A file longer than one response's output budget can now be written to
+  the end.** Before: when the model's output limit cut a file action, the
+  app asked for the whole file again in a fresh response (4.15.6) — a
+  strategy that can never land a file larger than a single response, so
+  long deliverables (e.g. a comprehensive audit report) still died with
+  "[Output stopped early…] was NOT written" no matter how often the user
+  retried (user report, 2026-11-07). Now the line-complete prefix of the
+  cut action is SALVAGED — saved through the same journaled, safety-checked
+  write path as any completed file action — and the model is asked to
+  APPEND only the remainder (`append="true"` file actions), anchored on
+  the saved tail. Each append round makes durable progress, so a file of
+  any size finishes across enough rounds. Appends merge at a whole-line
+  seam (a repeated last line from the model is de-duplicated only when
+  the overlap is unambiguous), skip the SEARCH/REPLACE patch routing,
+  and honor the same protected-path and approval rules as full writes.
+  If a chunked file still cannot finish, the note now truthfully says
+  PARTIALLY written (with the saved character count) instead of claiming
+  nothing was written, and the system prompt teaches the model to
+  continue a partially written file with an append instead of rewriting
+  it. The full-rewrite resume remains as the fallback for small cuts.
+- Parser: a still-open file action's partial content is now recoverable
+  (it previously existed only as a transient stream snapshot), and
+  flushing an unclosed file action at a clean stream end recovers its
+  content from the message text instead of applying an empty file.
+- Tests: AppendMergeTest (8), DispatcherAppendTest (5) and four new
+  BoltStreamParserTest cases run in the engine suite; the ChatSession
+  salvage glue is covered by the parse-baseline diff (CI is the compile
+  gate for :core:android, as before).
+
 ## 4.15.7 — Cross-project slowdown fix (database index) + model-layer tests
 
 - **The app no longer gets slower with every finished project.** The
