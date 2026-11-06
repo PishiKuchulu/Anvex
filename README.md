@@ -153,7 +153,7 @@ Ideas and feature requests are welcome — open an issue!
 
 ## 📄 License
 
-MIT — see the [LICENSE](LICENSE) file.
+MIT — see the [LICENSE](LICENSE) file. Third-party attributions are in [NOTICE](NOTICE) and [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
 
 ## 👤 Credits
 
@@ -273,7 +273,7 @@ cd Anvex
 
 ## 📄 مجوز
 
-مجوز MIT — فایل [LICENSE](LICENSE) را ببینید.
+مجوز MIT — فایل [LICENSE](LICENSE) را ببینید. انتساب‌های شخص ثالث در فایل [NOTICE](NOTICE) و [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md) آمده است.
 
 ## 👤 سازنده
 

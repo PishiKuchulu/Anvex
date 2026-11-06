@@ -1,0 +1,15 @@
+Anvex
+Copyright (c) 2026 Anvex contributors
+
+This project is licensed under the MIT License; see the LICENSE file.
+
+Third-party attributions
+------------------------
+
+Portions of this project are derived from bolt.diy:
+Copyright (c) 2024 StackBlitz, Inc. and bolt.diy contributors
+https://github.com/stackblitz-labs/bolt.diy
+Licensed under the MIT License (see LICENSE).
+
+The full list of third-party components, their licenses, and the detailed
+upstream attribution are maintained in docs/THIRD_PARTY_NOTICES.md.
