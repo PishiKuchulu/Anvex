@@ -38,6 +38,14 @@ data class AttachmentMeta(
     val mimeType: String,
     val sizeBytes: Long = 0L,
     val kind: AttachmentKind = AttachmentKind.FILE,
+    /**
+     * Where the attachment's bytes were saved inside the project workspace
+     * (.anvex/attachments/…), so the agent can re-read the file with its
+     * tools in any round or later turn — inline payloads only ride the
+     * round that carries them. Schema-safe: persists as a JSON column, so
+     * old rows decode with "" here (same precedent as Usage.costUsd).
+     */
+    val workspacePath: String = "",
 )
 
 @Serializable

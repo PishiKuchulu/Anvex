@@ -15,8 +15,8 @@ android {
         applicationId = "com.anvex.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 104
-        versionName = "4.15.5"
+        versionCode = 105
+        versionName = "4.15.6"
         vectorDrawables { useSupportLibrary = true }
     }
 

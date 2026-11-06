@@ -80,9 +80,20 @@ class ProvidersViewModel : ViewModel() {
     val selectedModels = MutableStateFlow<List<String>>(emptyList())
 
     fun toggleModel(id: String) {
+        val adding = id !in selectedModels.value
         selectedModels.value =
-            if (id in selectedModels.value) selectedModels.value - id
-            else selectedModels.value + id
+            if (adding) selectedModels.value + id
+            else selectedModels.value - id
+        // UX fix (2026-11-06, Farzad device QA): ticking a model's checkbox
+        // only added it to the chat switcher set and never set the form's
+        // active model, so Test connection failed with the generic "enter
+        // base URL, model and API key" message and Save stayed disabled even
+        // though the user had plainly picked a model. When the Model field
+        // is still blank, a tick now also makes that model the active one
+        // (the row highlight follows ui.model, so the pick becomes visible).
+        if (adding && edit.value.model.isBlank()) {
+            edit.value = edit.value.copy(model = id)
+        }
     }
 
     val saveMessage = MutableStateFlow<String?>(null)
@@ -130,7 +141,7 @@ class ProvidersViewModel : ViewModel() {
         viewModelScope.launch {
             val runtime = buildRuntime(ui) ?: run {
                 testing.value = false
-                testResult.value = ValidationResult(false, 0, credentialWarning.value ?: "Enter base URL, model and API key first.")
+                testResult.value = ValidationResult(false, 0, credentialWarning.value ?: missingFieldMessage(ui, needsModel = true))
                 return@launch
             }
             val result = try {
@@ -151,7 +162,7 @@ class ProvidersViewModel : ViewModel() {
             // v4.4.4: discovery must work before a model is chosen (see buildRuntime).
             val runtime = buildRuntime(ui, requireModel = false) ?: run {
                 loadingModels.value = false
-                modelsError.value = credentialWarning.value ?: "Enter the base URL and API key first."
+                modelsError.value = credentialWarning.value ?: missingFieldMessage(ui, needsModel = false)
                 return@launch
             }
             try {
@@ -276,6 +287,21 @@ class ProvidersViewModel : ViewModel() {
 
     fun setDefault(id: String) {
         viewModelScope.launch { graph.providers.setDefault(id) }
+    }
+
+    /**
+     * Names the ONE field that made [buildRuntime] refuse, in the same order
+     * its gates run. The old single message ("Enter base URL, model and API
+     * key first.") blamed all three even when two were filled and verified
+     * working — e.g. only the model missing, which is exactly what the
+     * per-model test icons had already proven fine (2026-11-06 device QA).
+     */
+    private fun missingFieldMessage(ui: EditUi, needsModel: Boolean): String = when {
+        needsModel && ui.model.isBlank() ->
+            "Choose a model first: tap a model row (or tick one) in the fetched list, or type its id in the Model field."
+        (ui.kind == ProviderKind.CUSTOM_OPENAI || ui.kind == ProviderKind.CUSTOM_ANTHROPIC) && ui.baseUrl.isBlank() ->
+            "Enter the base URL first."
+        else -> "Enter the API key first."
     }
 
     private suspend fun buildRuntime(ui: EditUi, requireModel: Boolean = true): com.anvex.core.ai.ProviderRuntimeConfig? {

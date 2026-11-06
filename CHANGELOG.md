@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.15.6 — Device-QA fix wave: provider form, attachments, mid-file resume
+
+- **Provider form: ticking a model now picks it.** In Add/Edit provider,
+  ticking a fetched model's checkbox only added it to the chat model
+  switcher set and never filled the Model field, so Test connection
+  failed instantly with a generic "enter base URL, model and API key"
+  message and Save stayed disabled even though the user had picked a
+  model. A tick now also sets the active model while the field is blank,
+  and the test/fetch error messages name the one field actually missing
+  (model, base URL, or API key) instead of blaming all three.
+- **Attached files stay readable for the whole task.** Every attachment
+  (text files included) is now saved into the project workspace under
+  .anvex/attachments/, its path is stored on the message metadata, and
+  history turns point the model at that path. Before this, a text
+  attachment existed only as an inline payload on round 0 of its turn:
+  from round 1 on — and in every later turn — the model could no longer
+  see a file attached from outside the project, and had no way to
+  re-read it. The Pi engine's attachment note now carries the paths too.
+- **Composer attachment chips show real file names.** A chip for a file
+  picked from storage used to display the raw URI segment
+  ("primary:Final Deep Audit…") and could stretch past the screen edge;
+  it now resolves the picker's display name and is width-capped.
+- **A file write cut by the output limit now resumes automatically.**
+  Before this, when a response hit the output limit in the middle of a
+  file action, the partial file was discarded and the turn simply
+  stopped with a "send the message again" note — the user had to type
+  "continue" by hand, every time. (Prose cut the same way already
+  auto-continued.) Now the session spends a fresh round asking the
+  model to re-emit that one file completely, with the whole output
+  budget available to the file content, up to twice per turn; only if
+  the file still does not fit does the old explanatory note appear.
+  Note: the app sends no max_tokens unless the provider form's Max
+  tokens field is set, so the endpoint's own default output cap is
+  what cuts long responses in the first place.
+
 ## 4.15.5 — In-app Logs + agent long-task fixes
 
 - **In-app Logs.** Crashes and failures now leave a trace inside the

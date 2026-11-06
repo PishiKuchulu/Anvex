@@ -545,6 +545,9 @@ class ChatSession(
                 var mediaRetried = false
                 // 15.1: length-truncation continuations, capped per turn.
                 var lengthContinuations = 0
+                // Length-truncated FILE actions: auto-resume by full rewrite,
+                // capped per turn (see the branch below the prose one).
+                var fileContinuations = 0
                 // Intent-without-action continuations (see the branch below the
                 // media contract): the model narrated a plan and stopped with a
                 // normal finish reason before executing anything.
@@ -618,6 +621,7 @@ class ChatSession(
                     // Completed event used to be dropped, so truncation was silent).
                     var roundFinishReason: String? = null
                     var lengthCutProse = false
+                    var lengthCutFilePath: String? = null
                     val roundText = StringBuilder()
                     val roundReasoning = StringBuilder()
                     // Visible-prose length before this round: a markup-only
@@ -710,17 +714,31 @@ class ChatSession(
                         if (truncated) {
                             val open = streamParser.takeOpenAction(roundId)
                             if (open != null) {
-                                incompleteFileNote(open, failure?.message ?: "finish_reason=$roundFinishReason")
-                                    ?.let { prose.append(it) }
+                                // A FILE action cut purely by the output limit
+                                // auto-resumes in a fresh round that rewrites
+                                // the file in full (below). Byte-level resume
+                                // is impossible — the beginning was never
+                                // written — but a whole-file rewrite is safe:
+                                // file writes are atomic and journaled. Only
+                                // when the resume cap is spent (or the stream
+                                // FAILED instead of ending on the limit) does
+                                // the H-06 note end the turn.
+                                val cutPath = (open as? BoltAction.FileAction)?.filePath
+                                if (cutPath != null && failure == null &&
+                                    roundFinishReason?.lowercase() in setOf("length", "max_tokens") &&
+                                    fileContinuations < MAX_FILE_CONTINUATIONS
+                                ) {
+                                    lengthCutFilePath = cutPath
+                                } else {
+                                    incompleteFileNote(open, failure?.message ?: "finish_reason=$roundFinishReason")
+                                        ?.let { prose.append(it) }
+                                }
                             } else if (failure == null &&
                                 roundFinishReason?.lowercase() in setOf("length", "max_tokens") &&
                                 lengthContinuations < 2
                             ) {
                                 // 15.1: prose cut by the output limit, no file
                                 // action open — the next round continues it.
-                                // (A cut FILE action cannot auto-resume: its
-                                // beginning was never written, so it keeps
-                                // the H-06 note above instead.)
                                 lengthCutProse = true
                             }
                         } else {
@@ -786,6 +804,20 @@ class ChatSession(
                         turns.add(ChatTurn(MessageRole.USER, LENGTH_CONTINUE_PROMPT))
                         round++
                         _state.value = _state.value.copy(statusLine = "Output was cut off — continuing where it stopped…")
+                        continue
+                    }
+                    // Length-cut FILE action: same auto-continue idea as the
+                    // prose case above, but the resume unit is the whole
+                    // file — the next round is spent re-emitting it
+                    // completely, with the full output budget available to
+                    // the file content instead of shared with prose.
+                    val cutFilePath = lengthCutFilePath
+                    if (cutFilePath != null && round < MAX_TOOL_ROUNDS) {
+                        fileContinuations++
+                        turns.add(ChatTurn(MessageRole.ASSISTANT, roundText.toString()))
+                        turns.add(ChatTurn(MessageRole.USER, fileContinuePrompt(cutFilePath)))
+                        round++
+                        _state.value = _state.value.copy(statusLine = "Output was cut off mid-file — resuming automatically…")
                         continue
                     }
                     // Export contract: if the user asked for a file and this answer delivered none
@@ -1394,6 +1426,18 @@ class ChatSession(
                 if (isNotEmpty()) append("\n\n")
                 append("[Actions completed earlier: ").append(actions.take(600)).append("]")
             }
+            // Attachment payloads ride round 0 only; the saved workspace
+            // path is the model's durable route back to an attached file
+            // in later rounds and later turns (2026-11-06 device QA: an
+            // attached file from outside the project was invisible to the
+            // model once round 0 passed).
+            val savedAttachments = m.attachments.filter { it.workspacePath.isNotBlank() }
+            if (savedAttachments.isNotEmpty()) {
+                if (isNotEmpty()) append("\n\n")
+                append("[Attached files saved in the workspace: ")
+                    .append(savedAttachments.joinToString(", ") { "${it.name} (at ${it.workspacePath})" })
+                    .append("]")
+            }
         }
         return ChatTurn(m.role, text.ifBlank { "(no text)" })
     }
@@ -1525,13 +1569,27 @@ class ChatSession(
             "index.html preview page as the result."
 
         /**
-         * 15.1: auto-continue prompt for a length-truncated round. It is
-         * only used for PROSE truncation (no open file action): a cut file
-         * action cannot resume, because its beginning was never written.
+         * 15.1: auto-continue prompt for a length-truncated round whose
+         * tail was PROSE (no open file action). A cut FILE action resumes
+         * differently — by full rewrite, see [fileContinuePrompt].
          */
         const val LENGTH_CONTINUE_PROMPT =
             "Your previous reply was cut off by the output limit. Continue exactly where you stopped. " +
             "Do not repeat anything already written and do not summarize — output only the remaining part."
+        const val MAX_FILE_CONTINUATIONS = 2
+
+        /**
+         * Auto-resume prompt for a file action cut by the output limit:
+         * the partial write was discarded (H-06), so the model re-emits
+         * the complete file as the ONLY content of the next response —
+         * the whole output budget goes to the file instead of being
+         * shared with the prose that preceded the action.
+         */
+        fun fileContinuePrompt(filePath: String): String =
+            "Your previous reply was cut off by the output limit while you were writing the file '$filePath'. " +
+            "The incomplete file was NOT saved. Reply with the COMPLETE file '$filePath' as a single file " +
+            "action and nothing else — no prose and no other actions — so the whole output budget goes to " +
+            "the file content. Write the file in full; do not shorten or summarize it."
         const val INTENT_CONTINUE_PROMPT =
             "You described what you are about to do, but you stopped before doing it — no actions " +
             "were executed. Continue now and actually carry out those steps: emit the file and " +

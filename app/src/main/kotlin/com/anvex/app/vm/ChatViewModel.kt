@@ -551,9 +551,20 @@ class ChatViewModel(
             }
             totalBytes += bytes.size.toLong()
 
+            // v4.15.6 fix (Farzad device QA): EVERY attachment is persisted
+            // into the workspace, not just zips/binaries. Text files used to
+            // exist only as an inline payload, and the session attaches
+            // payloads to round 0 only — from round 1 on, and in every later
+            // turn, the model could no longer see a file that lived outside
+            // the project, and there was no path it could re-read. The saved
+            // path rides the persisted metadata (AttachmentMeta.workspacePath)
+            // so history turns and the Pi note can point at the real file.
+            val savedPath = persistAttachment(fs, safeName, bytes)
+
             val metadataItem = AttachmentMeta(
                 UUID.randomUUID().toString(), uri.toString(), name, mime, size,
-                if (image) AttachmentKind.IMAGE else AttachmentKind.FILE
+                if (image) AttachmentKind.IMAGE else AttachmentKind.FILE,
+                workspacePath = savedPath ?: "",
             )
 
             when {
@@ -583,15 +594,23 @@ class ChatViewModel(
                 }
                 mime.startsWith("text/") || isTextExtension(name) -> {
                     val text = bytes.toString(Charsets.UTF_8)
+                    val body = buildString {
+                        append(text.take(MAX_TEXT_CHARS))
+                        if (savedPath != null) {
+                            append("\n\n[This file was also saved in the project workspace at: ")
+                            append(savedPath)
+                            append(" — re-read it with the read tool whenever you need it again.]")
+                        }
+                    }
                     payloads += com.anvex.core.ai.ChatAttachment(
-                        name, mime, text = text.take(MAX_TEXT_CHARS), isImage = false
+                        name, mime, text = body, isImage = false
                     )
                 }
                 isZip(name, mime) -> {
                     // Providers do not all expose a portable binary-file API. Keep the
                     // original archive inside the project and send a bounded textual
                     // manifest/excerpts so the agent can reason about its contents.
-                    val workspacePath = persistAttachment(fs, safeName, bytes)
+                    val workspacePath = savedPath
                         ?: return@withContext PreparedAttachments(emptyList(), emptyList(),
                             "Cannot save $name to the project workspace.")
                     val extraction = extractZipToWorkspace(fs, bytes, safeName)
@@ -624,7 +643,7 @@ class ChatViewModel(
                     // and give the agent a deterministic path + metadata. This mirrors the
                     // useful behavior of a local coding workbench: the attachment becomes
                     // part of the project rather than a provider-specific API failure.
-                    val workspacePath = persistAttachment(fs, safeName, bytes)
+                    val workspacePath = savedPath
                         ?: return@withContext PreparedAttachments(emptyList(), emptyList(),
                             "Cannot save $name to the project workspace.")
                     payloads += com.anvex.core.ai.ChatAttachment(
@@ -870,7 +889,9 @@ class ChatViewModel(
                 ""
             } else {
                 "\n\n[Files attached to this message were saved in the workspace: " +
-                    prepared.metadata.joinToString(", ") { it.name } + "]"
+                    prepared.metadata.joinToString(", ") { m ->
+                        if (m.workspacePath.isNotBlank()) "${m.name} (at ${m.workspacePath})" else m.name
+                    } + "]"
             }
             _piUi.value = ChatSession.UiState(streaming = true, statusLine = "Pi is starting…")
             // P-17: the bridge fires a snapshot per engine event, each a

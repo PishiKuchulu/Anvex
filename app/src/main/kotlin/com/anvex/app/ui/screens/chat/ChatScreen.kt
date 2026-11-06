@@ -892,10 +892,25 @@ private fun AttachmentRow(attachments: List<Uri>, onRemove: (Uri) -> Unit, conte
     ) {
         items(attachments.size, key = { attachments[it] }) { index ->
             val uri = attachments[index]
+            // Display-name fix (2026-11-06 device QA): the chip used to show
+            // the raw URI segment — for SAF picks that is the useless
+            // "primary:Final Deep Audit…" storage path — and an uncapped
+            // chip could stretch past the screen edge. Resolve the real
+            // display name the same way prepareAttachments does, and cap
+            // the chip's width.
+            val displayName = remember(uri) {
+                runCatching {
+                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                }.getOrNull()
+                    ?: uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+                    ?: "Attachment"
+            }
             FilterChip(
                 selected = false,
                 onClick = { onRemove(uri) },
-                label = { Text(uri.lastPathSegment ?: tr("Attachment"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                modifier = Modifier.widthIn(max = 220.dp),
+                label = { Text(displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = { Icon(if (graphMimeIsImage(context, uri)) Icons.Filled.Image else Icons.Filled.AttachFile, null) },
             )
         }
