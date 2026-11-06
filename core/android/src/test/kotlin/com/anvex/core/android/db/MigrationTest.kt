@@ -367,7 +367,7 @@ class MigrationTest {
     }
 
     @Test
-    fun `migration chain declares 1 through 13`() {
+    fun `migration chain declares 1 through 14`() {
         assertEquals(1, AnvexDatabase.MIGRATION_1_2.startVersion)
         assertEquals(2, AnvexDatabase.MIGRATION_1_2.endVersion)
         assertTrue(AnvexDatabase.MIGRATION_1_2_STATEMENTS.isNotEmpty())
@@ -383,13 +383,17 @@ class MigrationTest {
         assertEquals(7, AnvexDatabase.MIGRATION_6_7.endVersion)
         // v4.0 fix: the packaged test was stale — the chain runs through v12.
         // v4.4: v13 adds the reasoning column.
-        assertEquals(12, AnvexDatabase.ALL_MIGRATIONS.size)
+        assertEquals(13, AnvexDatabase.ALL_MIGRATIONS.size)
         assertEquals(10, AnvexDatabase.MIGRATION_10_11.startVersion)
         assertEquals(11, AnvexDatabase.MIGRATION_10_11.endVersion)
         assertEquals(11, AnvexDatabase.MIGRATION_11_12.startVersion)
         assertEquals(12, AnvexDatabase.MIGRATION_11_12.endVersion)
         assertEquals(12, AnvexDatabase.MIGRATION_12_13.startVersion)
         assertEquals(13, AnvexDatabase.MIGRATION_12_13.endVersion)
+        // v14 (audit P-01): the messages (projectId, createdAt) index.
+        assertEquals(13, AnvexDatabase.MIGRATION_13_14.startVersion)
+        assertEquals(14, AnvexDatabase.MIGRATION_13_14.endVersion)
+        assertTrue(AnvexDatabase.MIGRATION_13_14_STATEMENTS.isNotEmpty())
         assertEquals(7, AnvexDatabase.MIGRATION_7_8.startVersion)
         assertEquals(8, AnvexDatabase.MIGRATION_7_8.endVersion)
         assertEquals(8, AnvexDatabase.MIGRATION_8_9.startVersion)
@@ -443,6 +447,55 @@ class MigrationTest {
                 st.execute("INSERT INTO task_runs(type,label,state,resumable,detail,createdAt,updatedAt,nextRunAt) VALUES ('repair','Retry','RETRYING',1,'waiting',1,2,500)")
                 st.executeQuery("SELECT id FROM task_runs WHERE (state = 'QUEUED' AND (nextRunAt IS NULL OR nextRunAt <= 500)) OR (state = 'RETRYING' AND (nextRunAt IS NULL OR nextRunAt <= 500)) OR (state = 'INTERRUPTED' AND resumable = 1)").use { rs ->
                     assertTrue(rs.next()); assertEquals(1, rs.getLong(1))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `migration 13 to 14 adds the messages project index and preserves data`() {
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
+            conn.createStatement().use { st ->
+                // v13 messages table exactly as Room generated it for schema 13.
+                st.execute("CREATE TABLE IF NOT EXISTS `messages` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `role` TEXT NOT NULL, `content` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `model` TEXT, `providerId` TEXT, `usageJson` TEXT, `artifactJson` TEXT, `error` TEXT, `attachmentsJson` TEXT, `thinkingLevel` TEXT, `reasoning` TEXT, PRIMARY KEY(`id`))")
+                // Two projects: one large history, one small — the cross-project
+                // shape behind audit P-01 (every project taxing all the others).
+                for (i in 1..400) {
+                    st.execute("INSERT INTO messages VALUES ('a$i', 'projA', 'ASSISTANT', 'payload $i', ${1_700_000_000_000L + i}, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)")
+                }
+                st.execute("INSERT INTO messages VALUES ('b1', 'projB', 'USER', 'hello', 1700000000001, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)")
+                st.execute("INSERT INTO messages VALUES ('b2', 'projB', 'ASSISTANT', 'world', 1700000000002, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)")
+                AnvexDatabase.MIGRATION_13_14_STATEMENTS.forEach(st::execute)
+                // Idempotent (IF NOT EXISTS): a second run must not fail.
+                AnvexDatabase.MIGRATION_13_14_STATEMENTS.forEach(st::execute)
+                // Data preserved.
+                st.executeQuery("SELECT COUNT(*) FROM messages").use { rs ->
+                    assertTrue(rs.next()); assertEquals(402, rs.getInt(1))
+                }
+                st.executeQuery("SELECT content FROM messages WHERE id = 'b2'").use { rs ->
+                    assertTrue(rs.next()); assertEquals("world", rs.getString(1))
+                }
+                // The index exists with the exact Room-expected name and columns.
+                st.executeQuery("PRAGMA index_list('messages')").use { rs ->
+                    var found = false
+                    while (rs.next()) {
+                        if (rs.getString(2) == "index_messages_projectId_createdAt") found = true
+                    }
+                    assertTrue("messages index missing after migration", found)
+                }
+                st.executeQuery("PRAGMA index_info('index_messages_projectId_createdAt')").use { rs ->
+                    val cols = mutableListOf<String>()
+                    while (rs.next()) cols.add(rs.getString(3))
+                    assertEquals(listOf("projectId", "createdAt"), cols)
+                }
+                // The windowed history query uses the index instead of a full scan.
+                st.executeQuery("EXPLAIN QUERY PLAN SELECT * FROM messages WHERE projectId = 'projB' ORDER BY createdAt DESC, id DESC LIMIT 60").use { rs ->
+                    val plan = StringBuilder()
+                    while (rs.next()) plan.append(rs.getString(4)).append('\n')
+                    assertTrue(
+                        "query plan does not use the index:\n$plan",
+                        plan.contains("USING INDEX index_messages_projectId_createdAt"),
+                    )
                 }
             }
         }

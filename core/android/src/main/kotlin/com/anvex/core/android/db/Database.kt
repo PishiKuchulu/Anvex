@@ -29,7 +29,15 @@ data class ProjectEntity(
     val workspaceOwnedByApp: Boolean,
 )
 
-@Entity(tableName = "messages")
+@Entity(
+    tableName = "messages",
+    // v14 (audit P-01, deferred since 4.15.2 under the schema lock): every
+    // project-scoped message query (windowed history, counts, last-message
+    // time, conversation list) filtered on projectId and ordered by
+    // createdAt; with no index each one full-scanned the whole table, so
+    // every finished project permanently slowed all the others.
+    indices = [Index(value = ["projectId", "createdAt"])],
+)
 data class MessageEntity(
     @PrimaryKey val id: String,
     val projectId: String,
@@ -501,7 +509,7 @@ interface QuarantineDao {
         MutationEntity::class, DiagnosticEventEntity::class, TaskRunEntity::class,
         BackupRecordEntity::class, PluginEntity::class, QuarantineEntity::class, ApprovalGrantEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class AnvexDatabase : RoomDatabase() {
@@ -651,6 +659,25 @@ abstract class AnvexDatabase : RoomDatabase() {
             }
         }
 
-        val ALL_MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+        /**
+         * v13 -> v14 statements: the (projectId, createdAt) index on messages
+         * (audit P-01). Purely additive — no table or column changes, all data
+         * preserved. The statement matches the index createSql Room generates
+         * for MessageEntity's declared index exactly (name included), so the
+         * post-migration schema validation passes. Kept as a list so JVM tests
+         * execute the exact production SQL against a real SQLite engine.
+         */
+        val MIGRATION_13_14_STATEMENTS = listOf(
+            "CREATE INDEX IF NOT EXISTS `index_messages_projectId_createdAt` ON `messages` (`projectId`, `createdAt`)",
+        )
+
+        /** v13 -> v14: messages (projectId, createdAt) index (audit P-01). */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_14_STATEMENTS.forEach(db::execSQL)
+            }
+        }
+
+        val ALL_MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
     }
 }
