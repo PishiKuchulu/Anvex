@@ -102,7 +102,7 @@ fun PreviewScreen(nav: NavController, projectId: String) {
     // now persists through SettingsRepository.setPreviewConsoleVisible
     // (the seeding below applies the persisted value once per entry;
     // in-session toggles are never overwritten by it).
-    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
+    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     var showConsole by remember { mutableStateOf(false) }
     var consoleSeeded by remember { mutableStateOf(false) }
     LaunchedEffect(appSettings.previewConsoleVisible) {
