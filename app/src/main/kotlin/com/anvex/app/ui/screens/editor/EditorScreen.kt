@@ -550,7 +550,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
 private fun rememberSettingsFontSize(): Int {
     // settings flow via AppGraph directly (kept light for the editor screen)
     val graph = com.anvex.core.android.AppGraph.get()
-    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = null)
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = null)
     return settings?.editorFontSize ?: 13
 }
 
