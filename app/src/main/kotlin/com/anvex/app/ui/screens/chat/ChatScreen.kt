@@ -242,7 +242,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
     // (gap 5) — streamUi deliberately excludes them.
     val sessionUi by vm.sessionState.collectAsStateWithLifecycle()
     // Wiring gap 6: chatFontSize scales the message typography below.
-    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
+    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     val project by vm.project.collectAsStateWithLifecycle()
     val noProvider by vm.noProviderConfigured.collectAsStateWithLifecycle()
     val attachmentError by vm.attachmentError.collectAsStateWithLifecycle()
