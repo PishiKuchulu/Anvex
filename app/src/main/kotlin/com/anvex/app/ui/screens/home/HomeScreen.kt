@@ -123,11 +123,11 @@ fun HomeScreen(nav: NavController) {
     val providers by vm.providers.collectAsStateWithLifecycle()
     val activeProviderId by vm.activeProviderId.collectAsStateWithLifecycle()
     val newUi by vm.newProjectUi.collectAsStateWithLifecycle()
-    val events by vm.events.collectAsStateWithLifecycle(initial = null as String?)
+    val events by vm.events.collectAsStateWithLifecycle(initialValue = null as String?)
     val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
         com.anvex.core.android.repo.UiThemeStyle.ATELIER
     val tasks by com.anvex.core.android.AppGraph.get().reliability.observeTaskItems(20)
-        .collectAsStateWithLifecycle(initial = emptyList())
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     var showNewDialog by remember { mutableStateOf(false) }
 
     // Phase 3.2: content shared from another app -> choose the chat that receives it.
