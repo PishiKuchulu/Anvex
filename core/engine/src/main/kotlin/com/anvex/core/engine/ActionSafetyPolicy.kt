@@ -89,8 +89,27 @@ object ActionSafetyPolicy {
                 return Assessment(Risk.REQUIRES_APPROVAL, "Redirection writes outside the workspace.")
             }
         }
+        // SEC-003 (forensic audit, 2026-11-07): shell variable expansion
+        // ($NAME / ${NAME}) can read the process environment — on the Pi
+        // engine that environment carries the provider API key — or hide
+        // a value from review entirely. It always needs a human. ($IFS was
+        // already normalized to a space above, and ECHO_REDIRECT_LIKE
+        // excludes '$', so the plain echo-redirect case is unaffected.)
+        if (VAR_EXPANSION.containsMatchIn(normalized)) {
+            return Assessment(Risk.REQUIRES_APPROVAL, "Shell variable expansion can read the process environment (including credentials) or hide values from review.")
+        }
         for (segment in segmentsOf(normalized)) {
-            val (cmd, args) = commandWord(segment) ?: continue
+            val judged = commandWord(segment)
+            if (judged == null) {
+                // No command word: the segment is only wrappers and/or
+                // assignments. A bare env-dump word there (env, set,
+                // export -p, …) prints the whole process environment —
+                // SEC-001 (forensic audit, 2026-11-07): on the Pi engine
+                // that includes the provider API key.
+                envDumpRisk(segment)?.let { return it }
+                continue
+            }
+            val (cmd, args) = judged
             segmentRisk(cmd, args)?.let { return it }
         }
         // M-01: this is a DENY-list verdict — "no known pattern matched",
@@ -101,9 +120,37 @@ object ActionSafetyPolicy {
         return Assessment(Risk.SAFE, "No high-impact pattern detected.")
     }
 
-    /** Split a command line into its command segments (;, &&, ||, |). */
+    /**
+     * Split a command line into its command segments (;, &&, ||, | and a
+     * lone & — SEC-003, forensic audit 2026-11-07: `echo hi & rm -rf .`
+     * used to read as ONE segment whose command word is `echo`, so the
+     * backgrounded destructive half was never judged).
+     */
     private fun segmentsOf(normalized: String): List<String> =
-        normalized.split(Regex("\\s*(?:;|&&|\\|\\||\\|)\\s*")).map { it.trim() }.filter { it.isNotEmpty() }
+        normalized.split(Regex("\\s*(?:;|&&|\\|\\||\\||&)\\s*")).map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** `$NAME` and `${NAME}` expansions (SEC-001/SEC-003, forensic audit 2026-11-07). */
+    private val VAR_EXPANSION = Regex("\\$\\{[^}]*\\}|\\$[A-Za-z_][A-Za-z0-9_]*")
+
+    /** Words that print the process environment when no command follows them. */
+    private val ENV_DUMP_WORDS = setOf("env", "printenv", "set", "export", "declare", "typeset", "compgen")
+
+    /**
+     * The segment has no command word (only wrappers/assignments): if its
+     * first word is an environment-dump builtin, gate it — bare `env`,
+     * `printenv`, `set`, `export -p` and friends print every environment
+     * variable, which on the Pi engine includes the provider API key
+     * (SEC-001, forensic audit 2026-11-07).
+     */
+    private fun envDumpRisk(segment: String): Assessment? {
+        val first = segment.split(Regex("\\s+")).firstOrNull { it.isNotEmpty() }
+            ?.trim('\'', '"')?.substringAfterLast('/')?.lowercase() ?: return null
+        return if (first in ENV_DUMP_WORDS) {
+            destructive("Printing the process environment can expose credentials (provider API keys).")
+        } else {
+            null
+        }
+    }
 
     private val WRAPPER_WORDS = setOf(
         "env", "busybox", "toybox", "sudo", "command", "time", "nice",
@@ -198,7 +245,23 @@ object ActionSafetyPolicy {
         if (cmd in setOf("eval", "source", ".")) {
             return destructive("Shell evaluation executes an arbitrary command string.")
         }
-        if (cmd in INTERPRETER_COMMANDS && args.any { it == "-e" || it == "-c" || it == "--eval" || it == "-r" }) {
+        // printenv reads the process environment directly (SEC-001,
+        // forensic audit 2026-11-07) — every form is gated, even
+        // `printenv HOME`: the environment is the credential store of
+        // the Pi engine process.
+        if (cmd == "printenv") {
+            return destructive("Printing the process environment can expose credentials (provider API keys).")
+        }
+        // SEC-003 (forensic audit, 2026-11-07): the exact-flag match let
+        // flag CLUSTERS through (`python3 -Bc`, `perl -le`) and missed
+        // node's print flag (`node -p`). Any short-flag cluster carrying
+        // an inline-code letter (e/c/p/r) is code execution.
+        if (cmd in INTERPRETER_COMMANDS && args.any { arg ->
+                arg == "-e" || arg == "-c" || arg == "--eval" || arg == "-r" ||
+                    (arg.length >= 2 && arg.startsWith("-") && !arg.startsWith("--") &&
+                        arg.drop(1).any { it in "ecpr" })
+            }
+        ) {
             return destructive("Interpreter code execution (-e/-c) runs arbitrary code.")
         }
         return when (cmd) {

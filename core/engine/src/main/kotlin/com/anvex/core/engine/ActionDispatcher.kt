@@ -225,7 +225,10 @@ class ActionDispatcher(
      */
     private fun isProtectedPath(path: String): Boolean {
         val parts = path.split('/')
-        if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" }) return true
+        // SEC-004 (forensic audit, 2026-11-07): `.pi` joins the set — Pi
+        // discovers project-local extensions/skills/prompts under it, so
+        // agent writes there would plant code for the next Pi launch.
+        if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" || it == ".pi" }) return true
         // Same definition as SensitivePaths (a `.github/workflows` pair at
         // ANY depth): a nested project's workflows run with the same
         // repository secrets as the root ones, so the old root-anchored

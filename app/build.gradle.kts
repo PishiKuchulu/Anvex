@@ -15,8 +15,8 @@ android {
         applicationId = "com.anvex.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 107
-        versionName = "4.15.8"
+        versionCode = 108
+        versionName = "4.15.9"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -149,9 +149,15 @@ dependencies {
 // verified when the package was produced). A missing or misaligned library
 // fails the build here instead of crashing on a device.
 // ---------------------------------------------------------------------------
+// REL-002 (forensic audit, 2026-11-07): the APK under test is a Gradle
+// property so the signed-release workflow runs the SAME check against
+// the release universal APK (-PanvexVerifyApk=outputs/apk/release/
+// app-universal-release.apk). The debug path stays the default.
+val verifyApkPath = providers.gradleProperty("anvexVerifyApk")
+    .getOrElse("outputs/apk/debug/app-universal-debug.apk")
 val verifyNativeLibs = tasks.register("verifyNativeLibs") {
-    description = "Smoke-checks bundled native libraries inside the universal debug APK."
-    val apkFile = layout.buildDirectory.file("outputs/apk/debug/app-universal-debug.apk")
+    description = "Smoke-checks bundled native libraries inside the universal APK (debug by default; -PanvexVerifyApk to override)."
+    val apkFile = layout.buildDirectory.file(verifyApkPath)
     inputs.file(apkFile)
     onlyIf { apkFile.get().asFile.isFile }
     doLast {

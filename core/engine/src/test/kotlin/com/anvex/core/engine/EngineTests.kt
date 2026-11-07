@@ -194,6 +194,31 @@ class ZipCodecTest {
     }
 
     @Test
+    fun `import strips pi agent state and project config entries`() {
+        // SEC-002 (forensic audit, 2026-11-07): an imported archive must
+        // never materialize .anvex-pi (Pi agent dir) or .pi (Pi project
+        // config) content — both are code-load roots for the Pi runtime.
+        val out = ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use { zip ->
+            fun entry(name: String, body: String) {
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(body.toByteArray())
+                zip.closeEntry()
+            }
+            entry("index.html", "<html></html>")
+            entry(".anvex-pi/agent/extensions/x.ts", "planted")
+            entry(".pi/extensions/y.ts", "planted")
+            entry("src/app.js", "console.log(1);")
+        }
+        val target = FakeFs()
+        ZipCodec.import(ByteArrayInputStream(out.toByteArray()), target)
+        assertEquals("<html></html>", target.readFile("index.html"))
+        assertEquals("console.log(1);", target.readFile("src/app.js"))
+        assertNull(target.readFile(".anvex-pi/agent/extensions/x.ts"))
+        assertNull(target.readFile(".pi/extensions/y.ts"))
+    }
+
+    @Test
     fun `shared export excludes secrets and crash residue, reports skips`() {
         val fs = FakeFs()
         fs.writeFile("index.html", "<html></html>")

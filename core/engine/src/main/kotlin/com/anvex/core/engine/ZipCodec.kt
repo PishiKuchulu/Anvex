@@ -86,6 +86,18 @@ object ZipCodec {
         }
     }
 
+    /**
+     * SEC-002 (forensic audit, 2026-11-07): entries under a Pi state or
+     * Pi project-config directory are NEVER materialized by an import.
+     * `.anvex-pi` is Pi's agent dir (extensions there are code, loaded by
+     * the Pi runtime) and `.pi` is its project-config root — an imported
+     * archive, restored backup or shared project must not plant either.
+     * (`.anvex` itself is NOT stripped: it is Anvex's own project state,
+     * not a code-load path, and backup restore legitimately carries it.)
+     */
+    private fun isAgentStatePath(sanitized: String): Boolean =
+        sanitized.split('/').any { it == ".anvex-pi" || it == ".pi" }
+
     fun import(input: InputStream, fs: ProjectFileSystem, onEntry: (String) -> Unit = {}): Int {
         var count = 0
         var total = 0L
@@ -101,6 +113,7 @@ object ZipCodec {
                             ?: throw ZipSecurityException("Archive contains an invalid directory entry")
                         val safe = PathSanitizer.sanitizeOrNull(n)
                             ?: throw ZipSecurityException("Rejected unsafe directory path '$n'")
+                        if (isAgentStatePath(safe)) continue
                         fs.mkdirs(safe)
                         continue
                     }
@@ -109,6 +122,7 @@ object ZipCodec {
                     }
                     val name = PathSanitizer.sanitizeOrNull(entry.name)
                         ?: throw ZipSecurityException("Rejected unsafe entry path '${entry.name}'")
+                    if (isAgentStatePath(name)) continue
                     val bounded = CountingInputStream(zip, MAX_ENTRY_BYTES) { delta ->
                         total += delta
                         if (total > MAX_TOTAL_BYTES) throw ZipSecurityException("Archive total size exceeds limit")

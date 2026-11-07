@@ -62,6 +62,19 @@ class DispatcherProtectionTest {
     }
 
     @Test
+    fun `pi project config writes are refused`() {
+        // SEC-004 (forensic audit, 2026-11-07): .pi is Pi's project-local
+        // extension/skill root — planting files there is code placement.
+        val d = dispatcherWithSecrets()
+        assertFalse(
+            d.writeFile(".pi/extensions/marker.ts", "x", MutationSource.AI_FILE_ACTION).success
+        )
+        assertFalse(
+            d.writeFile("sub/.pi/settings.json", "x", MutationSource.AI_FILE_ACTION).success
+        )
+    }
+
+    @Test
     fun `translated cat of a secret is refused`() {
         val d = dispatcherWithSecrets()
         val results = d.applyShellAction(BoltAction.ShellAction("cat .env"), "shell")

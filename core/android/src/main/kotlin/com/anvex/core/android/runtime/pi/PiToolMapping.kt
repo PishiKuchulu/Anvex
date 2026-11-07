@@ -103,11 +103,14 @@ object PiToolMapping {
      * app/VCS metadata segments at any depth, plus any `.github/workflows`
      * subtree (those files run with repository secrets). Blank paths are
      * not protected here — pathDenied/Pi itself handles those.
+     * SEC-004 (forensic audit, 2026-11-07): `.pi` joins the set — Pi
+     * discovers project-local extensions/skills/prompts under `<cwd>/.pi`,
+     * so the agent must never be able to plant them for the next launch.
      */
     private fun protectedPath(path: String): Boolean {
         if (path.isBlank()) return false
         val parts = path.replace('\\', '/').split('/')
-        if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" }) return true
+        if (parts.any { it == ".git" || it == ".anvex" || it == ".anvex-pi" || it == ".pi" }) return true
         return SensitivePaths.isWorkflowPath(path)
     }
 
@@ -129,6 +132,15 @@ object PiToolMapping {
 
     private fun bashDenied(command: String, projectRoot: File?): Boolean {
         if (command.isBlank()) return false
+        // SEC-001 (forensic audit, 2026-11-07): the provider API key lives
+        // in the Pi process environment under this exact name (driver.mjs
+        // places it there for models.json interpolation). A bash command
+        // that names it is reading the credential — never legitimate
+        // project work, and never something a prompt should talk a user
+        // into allowing. Hard-denied before any approval is consulted.
+        // (Generic env dumps — printenv, $VAR — are approval-gated in
+        // ActionSafetyPolicy; this name is denied outright.)
+        if (command.contains("ANVEX_PI_API_KEY")) return true
         if (SensitivePaths.commandReferencesSensitiveOutsideExtracted(command)) return true
         val root = projectRoot?.canonicalFile
         val tokens = command.split(Regex("\\s+")).filter { it.isNotEmpty() }
@@ -145,6 +157,64 @@ object PiToolMapping {
             }
         }
         return false
+    }
+
+    /** Interpreter command words whose file argument is code execution. */
+    private val SCRIPT_INTERPRETERS = setOf(
+        "node", "nodejs", "deno", "bun", "python", "python2", "python3",
+        "perl", "ruby", "php", "lua",
+    )
+
+    /**
+     * Normalize a tool path to a project-relative form for session
+     * bookkeeping: relative paths are cleaned (`./x`, duplicate slashes),
+     * absolute paths inside [projectRoot] are relativized, and anything
+     * escaping the project returns null. Pure string work — no filesystem.
+     */
+    fun normalizeProjectPath(path: String, projectRoot: File?): String? {
+        if (path.isBlank()) return null
+        var p = path.replace('\\', '/').trim()
+        val isAbsolute = p.startsWith("/") || p.matches(Regex("^[A-Za-z]:/.*"))
+        if (isAbsolute) {
+            val root = projectRoot?.absolutePath?.replace('\\', '/')?.trimEnd('/') ?: return null
+            if (p == root) return null
+            if (!p.startsWith("$root/")) return null
+            p = p.removePrefix("$root/")
+        }
+        val parts = mutableListOf<String>()
+        for (seg in p.split('/')) {
+            when (seg) {
+                "", "." -> Unit
+                ".." -> return null
+                else -> parts += seg
+            }
+        }
+        return parts.joinToString("/").ifBlank { null }
+    }
+
+    /**
+     * SEC-003 (forensic audit, 2026-11-07): true when [command] runs an
+     * interpreter on a file that was written earlier in this session
+     * ([writtenPaths], normalized project-relative). A file write under
+     * the size budget assesses SAFE and an interpreter run on an existing
+     * file assesses SAFE — combined, they are silent code execution of
+     * model-written code. PiEngine forces a real approval prompt for
+     * exactly this combination; scripts that predate the session are
+     * unaffected.
+     */
+    fun executesWrittenScript(command: String, writtenPaths: Set<String>, projectRoot: File?): Boolean {
+        if (command.isBlank() || writtenPaths.isEmpty()) return false
+        val tokens = command.split(Regex("\\s+")).filter { it.isNotEmpty() }
+            .map { it.trim('\'', '"') }
+        val interpreterIndex = tokens.indexOfFirst {
+            it.substringAfterLast('/').lowercase() in SCRIPT_INTERPRETERS
+        }
+        if (interpreterIndex < 0) return false
+        return tokens.drop(interpreterIndex + 1).any { token ->
+            // --flag=<path> and KEY=<path> shapes carry the path after '='.
+            val candidate = if (token.contains('=')) token.substringAfter('=') else token
+            normalizeProjectPath(candidate, projectRoot) in writtenPaths
+        }
     }
 
     /**

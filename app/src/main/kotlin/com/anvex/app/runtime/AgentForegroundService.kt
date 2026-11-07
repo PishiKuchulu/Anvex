@@ -19,9 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
  * Keeps long-running agent orchestration eligible for Android foreground execution.
@@ -48,11 +46,14 @@ class AgentForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // One short DataStore read so the very first (mandatory) foreground notification is already
-        // in the right language; the collector below keeps it current afterwards.
-        language = resolveLanguage(
-            runCatching { runBlocking { AppGraph.get().settings.settings.first().language } }.getOrNull(),
-        )
+        // LOG-001 (forensic audit, 2026-11-07): the first notification
+        // used to wait on a main-thread runBlocking DataStore read (plus
+        // AppGraph construction) inside the foreground-service start
+        // deadline — an ANR / ForegroundServiceDidNotStartInTime risk on
+        // cold starts. Start foreground IMMEDIATELY in the device locale;
+        // the settings collector below re-posts the notification in the
+        // persisted language as soon as it arrives.
+        language = resolveLanguage(null)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, trIn(language, "Agent runtime"), NotificationManager.IMPORTANCE_LOW),
@@ -62,7 +63,15 @@ class AgentForegroundService : Service() {
         )
         startForeground(NOTIFICATION_ID, notification(trIn(language, "Agent runtime active")))
         scope.launch {
-            runCatching { AppGraph.get().settings.settings.collect { language = resolveLanguage(it.language) } }
+            runCatching {
+                AppGraph.get().settings.settings.collect {
+                    val resolved = resolveLanguage(it.language)
+                    if (resolved != language) {
+                        language = resolved
+                        runCatching { nm.notify(NOTIFICATION_ID, notification(trIn(language, "Agent runtime active"))) }
+                    }
+                }
+            }
         }
         WatchdogState.markHeartbeat()
         scope.launch {
@@ -135,6 +144,16 @@ class AgentForegroundService : Service() {
             .setContentTitle(title)
             .setContentText(text.take(180))
             .setStyle(NotificationCompat.BigTextStyle().bigText(text.take(600)))
+            // SEC-014 (forensic audit, 2026-11-07): task detail must not
+            // render on the lock screen — the public version is generic.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(this, EVENT_CHANNEL)
+                    .setSmallIcon(R.drawable.ic_stat_agent)
+                    .setContentTitle(trIn(language, "Anvex Agent"))
+                    .setContentText(trIn(language, "Agent event"))
+                    .build(),
+            )
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
@@ -145,6 +164,14 @@ class AgentForegroundService : Service() {
         .setSmallIcon(R.drawable.ic_stat_agent)
         .setContentTitle(trIn(language, "Anvex Agent"))
         .setContentText(text)
+        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+        .setPublicVersion(
+            NotificationCompat.Builder(this, CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_agent)
+                .setContentTitle(trIn(language, "Anvex Agent"))
+                .setContentText(trIn(language, "Agent runtime active"))
+                .build(),
+        )
         .setOngoing(true)
         .build()
 

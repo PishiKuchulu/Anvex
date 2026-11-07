@@ -166,7 +166,7 @@ class AppGraph private constructor(private val app: Application) {
             taskEngine.drain()
             approvals.purgeExpired()
             val persistedSettings = settings.settings.first()
-            if (persistedSettings.lanEnabled) runCatching { webServer.start(persistedSettings.webPort) }
+            if (persistedSettings.lanEnabled) runCatching { webServer.start(persistedSettings.webPort, persistedSettings.lanExposeOnLan) }
             
             reliability.registerBuiltInPlugins()
             val latest = reliability.latestAutomaticBackup()

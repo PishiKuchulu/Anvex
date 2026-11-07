@@ -1,3 +1,4 @@
+import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import java.util.zip.ZipFile
@@ -29,6 +30,31 @@ plugins {
 // this task downloads it once, verifies its SHA-256, and extracts bin/ +
 // include/ into libnode/ (gitignored). preBuild depends on it, so local
 // and CI builds both fetch it deterministically.
+// CFG-002 (forensic audit, 2026-11-07): every native-artifact download
+// goes through this one helper with explicit timeouts — a stalled
+// connection used to hang the build until the CI job timeout. Redirect
+// behaviour matches URL.openStream() (HttpURLConnection follows
+// same-scheme redirects for GET, which covers GitHub release assets).
+fun anvexDownload(url: String, dest: File) {
+    val conn = URL(url).openConnection() as HttpURLConnection
+    conn.connectTimeout = 30_000
+    conn.readTimeout = 180_000
+    conn.instanceFollowRedirects = true
+    conn.inputStream.use { input -> dest.outputStream().use { input.copyTo(it) } }
+}
+
+// SEC-013 (forensic audit, 2026-11-07): extraction targets must stay
+// inside the destination directory. The archives are SHA-256 pinned, so
+// this is defence in depth, not the primary control.
+fun anvexInside(dest: File, out: File, entryName: String): File {
+    val destPath = dest.canonicalPath
+    val outPath = out.canonicalPath
+    check(outPath == destPath || outPath.startsWith(destPath + File.separator)) {
+        "Archive entry escapes its destination: $entryName"
+    }
+    return out
+}
+
 val nodeLibsDir = layout.projectDirectory.dir("libnode").asFile
 val nodeLibsMarker = File(nodeLibsDir, ".anvex-node-24.22.1.ok")
 val downloadNodeLibs = tasks.register("downloadNodeLibs") {
@@ -40,7 +66,7 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
         val expectedSha256 = "d7c2e9ea3f23bb2bd0461dfeadf55b02b6f0a4964d2a2c0e7c90e5eda617d6a2"
         val zipFile = File(layout.buildDirectory.get().asFile, "nodejs-mobile.zip")
         zipFile.parentFile.mkdirs()
-        URL(url).openStream().use { input -> zipFile.outputStream().use { input.copyTo(it) } }
+        anvexDownload(url, zipFile)
         val digest = MessageDigest.getInstance("SHA-256")
         zipFile.inputStream().use { input ->
             val buf = ByteArray(1 shl 16)
@@ -56,7 +82,7 @@ val downloadNodeLibs = tasks.register("downloadNodeLibs") {
             while (true) {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory && (entry.name.startsWith("bin/") || entry.name.startsWith("include/"))) {
-                    val out = File(nodeLibsDir, entry.name)
+                    val out = anvexInside(nodeLibsDir, File(nodeLibsDir, entry.name), entry.name)
                     out.parentFile.mkdirs()
                     out.outputStream().use { zip.copyTo(it) }
                 }
@@ -84,7 +110,7 @@ val downloadLibgit2 = tasks.register("downloadLibgit2") {
         val url = "https://github.com/libgit2/libgit2/archive/refs/tags/v1.9.7.tar.gz"
         val expectedSha256 = "1a4fbe7589e814777ae76b64734ad80f4ecad22cd33a22682a2aaea4ae5375e7"
         gitLibsDir.mkdirs()
-        URL(url).openStream().use { input -> gitTarball.outputStream().use { input.copyTo(it) } }
+        anvexDownload(url, gitTarball)
         val digest = MessageDigest.getInstance("SHA-256")
         gitTarball.inputStream().use { input ->
             val buf = ByteArray(1 shl 16)
@@ -123,7 +149,7 @@ val downloadTreeSitter = tasks.register("downloadTreeSitter") {
         tsLibsDir.mkdirs()
         for ((name, url, expectedSha256) in artifacts) {
             val file = File(tsLibsDir, name)
-            URL(url).openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+            anvexDownload(url, file)
             val digest = MessageDigest.getInstance("SHA-256")
             file.inputStream().use { input ->
                 val buf = ByteArray(1 shl 16)
@@ -175,7 +201,7 @@ val downloadRagLibs = tasks.register("downloadRagLibs") {
             val file = File(outDir, pin.name)
             if (!file.exists() || shaOf(file) != pin.sha) {
                 logger.lifecycle("Anvex: downloading ${pin.name}")
-                URL(pin.url).openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+                anvexDownload(pin.url, file)
                 check(shaOf(file) == pin.sha) { "SHA-256 mismatch for ${pin.name}" }
             }
         }
@@ -184,7 +210,7 @@ val downloadRagLibs = tasks.register("downloadRagLibs") {
                 val entries = zf.entries()
                 while (entries.hasMoreElements()) {
                     val e = entries.nextElement()
-                    val out = File(dest, e.name)
+                    val out = anvexInside(dest, File(dest, e.name), e.name)
                     if (e.isDirectory) out.mkdirs() else {
                         out.parentFile?.mkdirs()
                         zf.getInputStream(e).use { input -> out.outputStream().use { input.copyTo(it) } }

@@ -65,7 +65,13 @@ class PiEngine(
         val sessionFile: String? = null,
         /** Extra Pi extensions to load (after the gateway). Absolute paths. */
         val extraExtensions: List<String> = emptyList(),
-        /** Override for the Pi agent dir (default: <project>/.anvex-pi/agent). */
+        /**
+         * Override for the Pi agent dir. Default (SEC-002, forensic audit
+         * 2026-11-07): an app-private directory under filesDir, per
+         * project — NEVER inside the project tree. The old default put
+         * Pi's agent dir at <project>/.anvex-pi/agent, where imported
+         * project content could plant auto-loaded extensions.
+         */
         val agentDir: String? = null,
         val sessionId: String = "pi-${System.currentTimeMillis()}",
         val projectId: String? = null,
@@ -174,20 +180,36 @@ class PiEngine(
             }
 
             // Config line (consumed by the driver; carries the API key,
-            // which then lives only in the :node process's environment).
+            // which then lives in the :node process's environment — and
+            // therefore in every shell child's environment too, which is
+            // why ActionSafetyPolicy gates env dumps / variable expansion
+            // and PiToolMapping hard-denies naming the key (SEC-001,
+            // forensic audit 2026-11-07)).
             val configJson = JSONObject()
                 .put("extraExtensions", org.json.JSONArray(config.extraExtensions))
             if (config.providerName != null) configJson.put("providerName", config.providerName)
             if (config.modelId != null) configJson.put("modelId", config.modelId)
             if (config.thinkingLevel != null) configJson.put("thinkingLevel", config.thinkingLevel)
             if (config.sessionFile != null) configJson.put("sessionFile", config.sessionFile)
-            if (config.agentDir != null) configJson.put("agentDir", config.agentDir)
+            // SEC-002 (forensic audit, 2026-11-07): the agent dir is
+            // ALWAYS set explicitly — app-private, per project — so the
+            // driver's in-project fallback can never apply in production.
+            val effectiveAgentDir = config.agentDir ?: File(
+                context.filesDir,
+                "pi-agent/" + (config.projectId ?: "default").replace(Regex("[^A-Za-z0-9_.-]"), "_"),
+            ).absolutePath
+            configJson.put("agentDir", effectiveAgentDir)
             if (config.modelsJson != null) configJson.put("modelsJson", config.modelsJson)
             if (!config.apiKey.isNullOrEmpty()) configJson.put("apiKey", config.apiKey)
             send(configJson)
 
             val pending = ConcurrentHashMap<String, CompletableDeferred<JSONObject>>()
             val settled = CompletableDeferred<Unit>()
+            // SEC-003 (forensic audit, 2026-11-07): files written during
+            // THIS run, and the script-execution commands the user has
+            // already approved once — see handleUiRequest.
+            val sessionWrites = ConcurrentHashMap.newKeySet<String>()
+            val promptedScriptRuns = ConcurrentHashMap.newKeySet<String>()
             var sessionFile: String? = config.sessionFile
             val readerJob = launch(Dispatchers.IO) {
                 val reader = BufferedReader(InputStreamReader(activeSocket.getInputStream(), Charsets.UTF_8))
@@ -210,7 +232,11 @@ class PiEngine(
                         "extension_ui_request" -> launch {
                             // A response racing teardown may hit a closed
                             // socket; the run is already ending either way.
-                            runCatching { handleUiRequest(record, config, projectRoot, approvalPrompt) { response -> send(response) } }
+                            runCatching {
+                                handleUiRequest(record, config, projectRoot, approvalPrompt, sessionWrites, promptedScriptRuns) { response ->
+                                    send(response)
+                                }
+                            }
                         }
                         else -> {
                             val type = record.optString("type")
@@ -299,6 +325,8 @@ class PiEngine(
         config: RunConfig,
         projectRoot: File,
         approvalPrompt: ApprovalPrompt,
+        sessionWrites: MutableSet<String>,
+        promptedScriptRuns: MutableSet<String>,
         respond: suspend (JSONObject) -> Unit,
     ) {
         val id = record.optString("id")
@@ -324,11 +352,25 @@ class PiEngine(
         }
         val action = PiToolMapping.toBoltAction(toolName, input)
         val decision = approvals.decide(config.sessionId, config.projectId, action)
-        if (decision.allowed) {
+        // SEC-003 (forensic audit, 2026-11-07): running an interpreter on
+        // a file written earlier in THIS run is silent code execution of
+        // model-written code when both halves assess SAFE — force a real
+        // prompt for that combination (once per exact command per run).
+        val bashCommand = if (toolName == "bash") input.optString("command") else ""
+        val forcePrompt = bashCommand.isNotEmpty() && bashCommand !in promptedScriptRuns &&
+            PiToolMapping.executesWrittenScript(bashCommand, sessionWrites, projectRoot)
+        fun recordWrite() {
+            if (toolName == "write" || toolName == "edit") {
+                PiToolMapping.normalizeProjectPath(input.optString("path"), projectRoot)
+                    ?.let { sessionWrites += it }
+            }
+        }
+        if (decision.allowed && !forcePrompt) {
+            recordWrite()
             respond(response(true))
             return
         }
-        if (!decision.requiresApproval) {
+        if (!decision.requiresApproval && !forcePrompt) {
             respond(response(false))
             return
         }
@@ -336,6 +378,8 @@ class PiEngine(
         val granted = withTimeoutOrNull(APPROVAL_TIMEOUT_MS) { approvalPrompt.ask(ask) } ?: false
         if (granted) {
             approvals.grantForAction(config.sessionId, config.projectId, action, GRANT_TTL_MS)
+            if (forcePrompt) promptedScriptRuns += bashCommand
+            recordWrite()
         }
         respond(response(granted))
     }

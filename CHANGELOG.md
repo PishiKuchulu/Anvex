@@ -1,5 +1,65 @@
 # Changelog
 
+## 4.15.9 — Forensic-audit fix wave: Pi engine hardening
+
+Fixes for the verified findings of the 2026-11-07 forensic audit of the
+4.15.5 source (run in-app, verified line-by-line against source before
+any fix; the report's three HIGH findings were all in the opt-in Pi
+engine and all confirmed).
+
+- **SEC-001 — the Pi provider API key can no longer leak through bash.**
+  The key lives in the Pi process environment for models.json
+  interpolation, and every shell child inherits it. Now: a bash command
+  that names `ANVEX_PI_API_KEY` is hard-denied before any approval;
+  environment dumps (`printenv`, bare `env`/`set`/`export`) and shell
+  variable expansion (`$NAME`, `${NAME}`) always require approval in
+  `ActionSafetyPolicy`.
+- **SEC-002 — Pi's agent dir leaves the project tree.** The host now
+  always passes an app-private, per-project agent dir (under filesDir);
+  the driver's in-project default can no longer apply, so a project can
+  never contain Pi's extension/session root. Zip imports (project import
+  and backup restore share the path) silently strip `.anvex-pi/` and
+  `.pi/` entries.
+- **SEC-003 — the Pi bash gate no longer fails open.** A lone `&` now
+  separates command segments (a destructive half can no longer hide
+  behind `echo`); interpreter flag clusters (`node -p`, `python3 -Bc`,
+  `perl -le`) count as inline code execution; and running an
+  interpreter on a file WRITTEN EARLIER IN THE SAME Pi RUN forces a
+  real approval prompt (once per exact command) instead of two SAFE
+  halves combining into silent code execution. Pre-existing project
+  scripts are unaffected.
+- **SEC-004 — `.pi` is a protected path** in both the native dispatcher
+  and the Pi tool mapping (Pi's project-local extension/skill root).
+- **LOG-001 — the agent foreground service starts immediately.** The
+  first (mandatory) notification no longer waits on a main-thread
+  DataStore read inside the FGS start deadline; it posts in the device
+  locale and is re-posted in the persisted language when settings load.
+- **SEC-014 — notification content stays off the lock screen**
+  (VISIBILITY_PRIVATE with generic public versions; task detail no
+  longer renders there).
+- **LOG-003 — LAN exposure survives restarts.** The Developer Center
+  "expose on LAN" choice is persisted and the on-launch web-server
+  start honors it, instead of silently coming back loopback-only.
+- **LOG-005 — `a..b.txt` is a file again.** SafeDirUnzip rejects `..`
+  segments and canonical escapes, not innocent double dots in a name.
+- **SEC-010 — terminal/AI-shell parity.** The interactive terminal's
+  AI-origin checks regain the `find -fprint/-fprintf/-fls` and
+  recursive-grep rejections the shell runtime already had.
+- **CFG-002 / SEC-013 — build-time native fetches hardened:** one
+  download helper with connect/read timeouts for all pinned native
+  artifacts, and canonical containment checks on build-time archive
+  extraction.
+- **REL-001 / REL-002 — signed releases are checked like CI builds:**
+  the source mirror is generated and verified in the signed workflow
+  too, and `verifyNativeLibs` can target the RELEASE universal APK
+  (`-PanvexVerifyApk`) and runs there before publishing.
+- Tests: engine suite 310 (was 300) — new ActionSafetyPolicy cases for
+  the SEC-001/003 gates, DispatcherProtection `.pi` case, ZipCodec
+  import-strip case; PiMappingsTest 13 (was 11); new SafeDirUnzipTest.
+  Deferred by design (unchanged): SEC-005/006/007/008 trust-model
+  decisions, DEP-001 dependency updates (need a networked OSV pass),
+  the god-file splits (MNT-001) and the other performance refactors.
+
 ## 4.15.8 — Chunked file writes: long files can always finish
 
 - **A file longer than one response's output budget can now be written to

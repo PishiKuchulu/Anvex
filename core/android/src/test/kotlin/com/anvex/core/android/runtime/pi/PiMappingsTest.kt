@@ -124,6 +124,39 @@ class PiMappingsTest {
     }
 
     @Test
+    fun `forensic audit pi config writes and key reads are hard denied`() {
+        val root = java.io.File(System.getProperty("java.io.tmpdir"), "anvex-pi-test-root").apply { mkdirs() }
+        fun denied(tool: String, json: String) =
+            PiToolMapping.isHardDenied(tool, JSONObject(json), root)
+        // SEC-004: .pi is Pi's project-local code-load root.
+        assertTrue(denied("write", """{"path":".pi/extensions/marker.ts","content":"x"}"""))
+        assertTrue(denied("edit", """{"path":"sub/.pi/settings.json","edits":[]}"""))
+        // SEC-001: naming the key's env var is a credential read, not work.
+        assertTrue(denied("bash", """{"command":"printenv ANVEX_PI_API_KEY"}"""))
+        val echoKey = JSONObject().put("command", "echo \$ANVEX_PI_API_KEY")
+        assertTrue(PiToolMapping.isHardDenied("bash", echoKey, root))
+    }
+
+    @Test
+    fun `forensic audit written script execution detection`() {
+        val root = java.io.File("/proj")
+        val written = setOf("x.js", "tools/run.py")
+        // SEC-003: interpreter + a session-written file = forced prompt.
+        assertTrue(PiToolMapping.executesWrittenScript("node x.js", written, root))
+        assertTrue(PiToolMapping.executesWrittenScript("python3 ./tools/run.py", written, root))
+        assertTrue(PiToolMapping.executesWrittenScript("node /proj/x.js", written, root))
+        // Pre-existing scripts and unrelated commands are unaffected.
+        assertFalse(PiToolMapping.executesWrittenScript("node server.js", written, root))
+        assertFalse(PiToolMapping.executesWrittenScript("cat x.js", written, root))
+        assertFalse(PiToolMapping.executesWrittenScript("node x.js", emptySet(), root))
+        // Path normalization: ./ and duplicate slashes collapse; escapes fail.
+        assertEquals("tools/run.py", PiToolMapping.normalizeProjectPath("./tools//run.py", root))
+        assertEquals("x.js", PiToolMapping.normalizeProjectPath("/proj/x.js", root))
+        assertNull(PiToolMapping.normalizeProjectPath("../outside.js", root))
+        assertNull(PiToolMapping.normalizeProjectPath("/etc/passwd", root))
+    }
+
+    @Test
     fun `provider families map to pi apis`() {
         assertEquals("openai-completions", PiProviderMapping.apiFor(ProviderKind.DEEPSEEK))
         assertEquals("openai-completions", PiProviderMapping.apiFor(ProviderKind.CUSTOM_OPENAI))

@@ -40,7 +40,13 @@ class AndroidTerminalSession(
             // H-02: the shell runtime already rejected globs; the terminal
             // did not, so `cat .e?v` (and `cat *`) slipped through here.
             // Globs expand to files the sensitive-path check never sees.
-            val safeSyntax = !normalized.contains("..") && !containsSensitivePath(normalized) && !normalized.contains(Regex("(^|\\s)(?:/|~[/\\s])")) && !normalized.contains(Regex("[;|&`$<>\\\r\n]")) && !normalized.contains(Regex("(?i)(^|\\s)-(?:exec|execdir|ok|okdir|delete)(?:\\s|$)")) && !normalized.any { it == '*' || it == '?' || it == '[' || it == '{' || it == '!' }
+            // SEC-010 (forensic audit, 2026-11-07): the terminal's copy of
+            // the allow-list had also drifted from AndroidShellRuntime —
+            // it lacked the find -fprint/-fprintf/-fls rejection and the
+            // recursive-grep rejection. Both are restored here so the two
+            // copies judge the same commands the same way.
+            val safeSyntax = !normalized.contains("..") && !containsSensitivePath(normalized) && !normalized.contains(Regex("(^|\\s)(?:/|~[/\\s])")) && !normalized.contains(Regex("[;|&`$<>\\\r\n]")) && !normalized.contains(Regex("(?i)(^|\\s)-(?:exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)(?:\\s|$)")) && !normalized.any { it == '*' || it == '?' || it == '[' || it == '{' || it == '!' } &&
+                !(normalized.contains(Regex("(?i)(^|\\s)(?:-[a-z]*r[a-z]*|--recursive|--dereference-recursive)(?:\\s|$)")) && normalized.trimStart().lowercase().startsWith("grep"))
             val assessment = if (safeHead && safeSyntax) ActionSafetyPolicy.assess(command) else ActionSafetyPolicy.Assessment(ActionSafetyPolicy.Risk.REQUIRES_APPROVAL, "AI-originated command is outside the non-destructive terminal allowlist.")
             if (assessment.requiresApproval && !approval(assessment)) return@withContext false
         }

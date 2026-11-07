@@ -44,7 +44,11 @@ object SafeDirUnzip {
                     }
                     val segments = raw.split('/').filter { it.isNotEmpty() }
                     if (segments.any { it == ".." }) throw SecurityException("Zip-slip entry: $raw")
-                    if (raw.contains("..")) throw SecurityException("Zip-slip entry: $raw")
+                    // LOG-005 (forensic audit, 2026-11-07): the old extra
+                    // `raw.contains("..")` rejection also refused innocent
+                    // names like `a..b.txt`. Traversal needs a `..`
+                    // SEGMENT (rejected above) and the canonical-path
+                    // check below is the containment guarantee.
 
                     if (entry.isDirectory) {
                         File(target, raw).mkdirs()

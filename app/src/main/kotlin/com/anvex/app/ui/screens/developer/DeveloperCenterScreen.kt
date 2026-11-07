@@ -119,7 +119,12 @@ fun DeveloperCenterScreen(nav: NavController) {
                 "Safety" -> ApprovalTab(command, { command = it }, approvalCapability, { approvalCapability = it }, approvalTtl, { approvalTtl = it }, approvalGranted, onGrant = {
                     scope.launch { runCatching { graph.approvals.grant(APPROVAL_SESSION, null, setOf(approvalCapability), approvalTtl); approvalGranted = true }.onSuccess { status = "Approved ${approvalCapability.name} for ${approvalTtl / 60_000} minutes." }.onFailure { status = "Approval failed: ${it.message}" } }
                 }, onRevoke = { scope.launch { graph.approvals.revoke(APPROVAL_SESSION); approvalGranted = false; status = "Approval revoked." } })
-                "LAN" -> LanStatusTab(lan, exposeLan, onExposeLanChange = { exposeLan = it }, onStart = {
+                "LAN" -> LanStatusTab(lan, exposeLan, onExposeLanChange = { exposeLan = it
+                    // LOG-003 (forensic audit, 2026-11-07): persist the
+                    // choice so the on-launch auto-start binds the same
+                    // way the manual start did.
+                    scope.launch { runCatching { graph.settings.setLanExposeOnLan(it) } }
+                }, onStart = {
                     runCatching { lan = graph.lanAccess.start(
                         { "runningTasks=${tasks.count { it.state == "RUNNING" }}" },
                         exposeOnLan = exposeLan,

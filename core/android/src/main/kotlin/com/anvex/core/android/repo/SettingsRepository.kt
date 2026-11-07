@@ -81,6 +81,12 @@ data class AppSettings(
     val thinkingLevel: ThinkingLevel = ThinkingLevel.NORMAL,
     val onboardingSeen: Boolean = false,
     val lanEnabled: Boolean = false,
+    /**
+     * LOG-003 (forensic audit, 2026-11-07): whether the persisted
+     * on-launch web server may bind the LAN. The Developer Center toggle
+     * writes this too, so a restart behaves like the manual start did.
+     */
+    val lanExposeOnLan: Boolean = false,
     val webPort: Int = 8765,
     /** v4.2: long-term memory (learn preferences across chats). */
     val memoryEnabled: Boolean = true,
@@ -121,6 +127,7 @@ class SettingsRepository(private val context: Context) {
         val THINKING = stringPreferencesKey("thinking_level")
         val ONBOARDING = booleanPreferencesKey("onboarding_seen")
         val LAN_ENABLED = booleanPreferencesKey("lan_enabled")
+        val LAN_EXPOSE_ON_LAN = booleanPreferencesKey("lan_expose_on_lan")
         val WEB_PORT = intPreferencesKey("web_port")
         val MEMORY_ENABLED = booleanPreferencesKey("memory_enabled")
         val CUSTOM_INSTRUCTIONS = stringPreferencesKey("custom_instructions")
@@ -186,6 +193,7 @@ class SettingsRepository(private val context: Context) {
             thinkingLevel = p[Keys.THINKING]?.let { runCatching { ThinkingLevel.valueOf(it) }.getOrNull() } ?: ThinkingLevel.NORMAL,
             onboardingSeen = p[Keys.ONBOARDING] ?: false,
             lanEnabled = p[Keys.LAN_ENABLED] ?: false,
+            lanExposeOnLan = p[Keys.LAN_EXPOSE_ON_LAN] ?: false,
             webPort = (p[Keys.WEB_PORT] ?: 8765).coerceIn(1024, 65535),
             memoryEnabled = p[Keys.MEMORY_ENABLED] ?: true,
             customInstructions = p[Keys.CUSTOM_INSTRUCTIONS] ?: "",
@@ -211,6 +219,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setThinkingLevel(level: ThinkingLevel) = context.dataStore.edit { it[Keys.THINKING] = level.name }
     suspend fun setOnboardingSeen(v: Boolean) = context.dataStore.edit { it[Keys.ONBOARDING] = v }
     suspend fun setLanEnabled(v: Boolean) = context.dataStore.edit { it[Keys.LAN_ENABLED] = v }
+    suspend fun setLanExposeOnLan(v: Boolean) = context.dataStore.edit { it[Keys.LAN_EXPOSE_ON_LAN] = v }
     suspend fun setWebPort(v: Int) = context.dataStore.edit { it[Keys.WEB_PORT] = v.coerceIn(1024, 65535) }
     suspend fun setMemoryEnabled(v: Boolean) = context.dataStore.edit { it[Keys.MEMORY_ENABLED] = v }
     suspend fun setCustomInstructions(v: String) = context.dataStore.edit { it[Keys.CUSTOM_INSTRUCTIONS] = v.take(4_000) }
