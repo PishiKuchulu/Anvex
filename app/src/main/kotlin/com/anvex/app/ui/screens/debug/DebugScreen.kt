@@ -49,7 +49,7 @@ import com.anvex.app.i18n.tr
 fun DebugScreen(nav: NavController) {
     val context = LocalContext.current
     val graph = AppGraph.get()
-    val providers by graph.providers.observeAll().collectAsStateWithLifecycle(initial = emptyList())
+    val providers by graph.providers.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
     var memory by remember { mutableStateOf("--") }
     var nativeHeap by remember { mutableStateOf("--") }
 
