@@ -182,7 +182,7 @@ fun DirectChatScreen(nav: NavController) {
     val webAvail by vm.webSearchAvailable.collectAsStateWithLifecycle()
     val attachmentError by vm.attachmentError.collectAsStateWithLifecycle()
     // Wiring gap 6: chatFontSize scales the message typography below.
-    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
+    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
