@@ -45,7 +45,7 @@ fun MemoryScreen(nav: NavController) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val items by graph.memory.items.collectAsStateWithLifecycle()
-    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = null)
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = null)
     var filter by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<MemoryItem?>(null) }
     var adding by remember { mutableStateOf(false) }
