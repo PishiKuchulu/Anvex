@@ -48,7 +48,7 @@ fun PiEnginePanel() {
     val graph = remember { AppGraph.get() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
 
     var running by remember { mutableStateOf(false) }
     var promptText by remember {
