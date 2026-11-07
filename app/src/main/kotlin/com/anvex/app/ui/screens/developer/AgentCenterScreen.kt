@@ -35,8 +35,8 @@ import com.anvex.app.i18n.tr
 fun AgentCenterScreen(nav: NavController? = null) {
     val graph = AppGraph.get()
     val scope = rememberCoroutineScope()
-    val projects by graph.projects.observeAll().collectAsStateWithLifecycle(initial = emptyList())
-    val tasks by graph.reliability.observeTaskItems(50).collectAsStateWithLifecycle(initial = emptyList())
+    val projects by graph.projects.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val tasks by graph.reliability.observeTaskItems(50).collectAsStateWithLifecycle(initialValue = emptyList())
     val caps = remember { graph.deviceCapabilities.detect() }
     var selected by remember(projects) { mutableStateOf(projects.firstOrNull()) }
     var goal by remember { mutableStateOf("") }
