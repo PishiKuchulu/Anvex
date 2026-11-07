@@ -4,8 +4,8 @@ name: Dependency audit (OSV)
 # published advisory. This job asks the public OSV database about every pinned coordinate in
 # gradle/libs.versions.toml (see tools/osv_audit_catalog.py — stdlib only, no third-party action).
 #
-# Report-only on purpose: the result is written to the job summary. Once the current backlog is
-# cleared, add `--fail` to the script line to make new advisories block merges.
+# Blocking since 4.15.10 (AUD-014): the script runs with `--fail`, so a published advisory
+# against a shipped coordinate fails this job instead of only being reported.
 
 on:
   schedule:
@@ -26,4 +26,4 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # same SHA as build-apk.yml
       - name: Audit pinned versions against OSV
-        run: python3 tools/osv_audit_catalog.py
+        run: python3 tools/osv_audit_catalog.py --fail
