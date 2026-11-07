@@ -46,9 +46,10 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Run instrumented smoke test on emulator
-        # E2: still a floating tag. This repo has no pinned SHA for this action and none could be looked
-        # up offline — pin it to a reviewed commit SHA (Dependabot will then keep it current).
-        uses: reactivecircus/android-emulator-runner@v2
+        # REL-003 (forensic audit, 2026-11-07): pinned by commit SHA like
+        # every other action in this repo. SHA = the v2 tag's peeled commit
+        # (git ls-remote, 2026-11-07).
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
           arch: x86_64
