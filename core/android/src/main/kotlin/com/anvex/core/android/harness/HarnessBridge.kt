@@ -687,13 +687,15 @@ class HarnessBridge(
             scope.launch {
                 val result = runCatching { SkillGitInstaller.installFromGit(graph.pluginInstaller, gitUrl) }
                 result.fold(
-                    onSuccess = { installed ->
-                        emitEvent("skill_installed") {
-                            put("id", installed.id)
-                            put("version", installed.version)
-                            put("name", installed.name)
-                            installed.commit?.let { put("commit", it) }
-                            installed.archiveSha256?.let { put("archiveSha256", it) }
+                    onSuccess = { installedList ->
+                        installedList.forEach { installed ->
+                            emitEvent("skill_installed") {
+                                put("id", installed.id)
+                                put("version", installed.version)
+                                put("name", installed.name)
+                                installed.commit?.let { put("commit", it) }
+                                installed.archiveSha256?.let { put("archiveSha256", it) }
+                            }
                         }
                     },
                     onFailure = { emitEvent("skill_install_error") { put("message", it.message ?: "install failed") } },
