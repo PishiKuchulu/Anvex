@@ -1,5 +1,7 @@
 package com.anvex.app.ui.screens.build
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -39,22 +41,22 @@ import java.util.Date
 @Composable
 fun BuildScreen(nav: NavController, projectId: String) {
     val vm: BuildViewModel = remember(projectId) { BuildViewModel(projectId) }
-    val toolchain by vm.toolchainStatus.collectAsState()
-    val logLines by vm.logLines.collectAsState()
-    val building by vm.building.collectAsState()
-    val buildError by vm.buildError.collectAsState()
-    val importMessage by vm.importMessage.collectAsState()
-    val artifacts by vm.artifacts.collectAsState()
-    val useWrapper by vm.useWrapper.collectAsState()
-    val riskAcknowledged by vm.wrapperRiskAcknowledged.collectAsState()
+    val toolchain by vm.toolchainStatus.collectAsStateWithLifecycle()
+    val logLines by vm.logLines.collectAsStateWithLifecycle()
+    val building by vm.building.collectAsStateWithLifecycle()
+    val buildError by vm.buildError.collectAsStateWithLifecycle()
+    val importMessage by vm.importMessage.collectAsStateWithLifecycle()
+    val artifacts by vm.artifacts.collectAsStateWithLifecycle()
+    val useWrapper by vm.useWrapper.collectAsStateWithLifecycle()
+    val riskAcknowledged by vm.wrapperRiskAcknowledged.collectAsStateWithLifecycle()
     var variant by remember { mutableStateOf("debug") }
 
     // Cloud build (GitHub Actions) state — same saved token as GitHub Sync.
-    val cloudBusy by vm.cloudBusy.collectAsState()
-    val cloudStatus by vm.cloudStatus.collectAsState()
-    val cloudError by vm.cloudError.collectAsState()
-    val cloudRun by vm.cloudRun.collectAsState()
-    val cloudLogLines by vm.cloudLogLines.collectAsState()
+    val cloudBusy by vm.cloudBusy.collectAsStateWithLifecycle()
+    val cloudStatus by vm.cloudStatus.collectAsStateWithLifecycle()
+    val cloudError by vm.cloudError.collectAsStateWithLifecycle()
+    val cloudRun by vm.cloudRun.collectAsStateWithLifecycle()
+    val cloudLogLines by vm.cloudLogLines.collectAsStateWithLifecycle()
     var cloudOwner by remember { mutableStateOf("") }
     var cloudRepo by remember { mutableStateOf("") }
     var cloudBranch by remember { mutableStateOf("main") }

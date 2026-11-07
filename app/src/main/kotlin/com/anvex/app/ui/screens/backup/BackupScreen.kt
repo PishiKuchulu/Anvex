@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.anvex.core.android.AppGraph
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +80,16 @@ fun BackupScreen(nav: NavController) {
     val restoreOkText = tr("Restore committed successfully after pre-restore inspection with rollback protection.")
     val restorePartialStart = tr("Restore committed, but")
     val restorePartialEnd = tr("provider(s) were skipped and need re-adding")
+    val projectInspectedText = tr("Project backup inspected and ready to restore.")
+    val projectRestoredText = tr("Project restored successfully with rollback protection.")
+    // AUD-009 (4.15.10): the encrypted project-archive service shipped in
+    // 4.0 but was never wired to any screen; it is connected here.
+    val projects by graph.projects.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    var selectedProjectId by remember { mutableStateOf<String?>(null) }
+    var pendingProjectRestore by remember { mutableStateOf<String?>(null) }
+    var projectMenuOpen by remember { mutableStateOf(false) }
+    val projectBackup = remember { com.anvex.core.android.ProjectBackupService() }
+    val selectedProject = projects.firstOrNull { it.id == selectedProjectId } ?: projects.firstOrNull()
 
     // Zero the secret buffer when the screen leaves composition.
     DisposableEffect(Unit) {
@@ -115,6 +126,44 @@ fun BackupScreen(nav: NavController) {
                 BackupStatus.Info("$inspectionPassedText: ${payload.providers.size} $providersWord. $inspectionSuffixText")
             }.getOrElse { BackupStatus.Failure("$restoreFailedText: ${it.message ?: invalidBackupText}") }
             Arrays.fill(secret, '0') // zero the inspection copy
+            busy = false
+        }
+    }
+
+    val exportProject = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val projectId = selectedProject?.id ?: return@rememberLauncherForActivityResult
+        val secret = password.snapshot()
+        scope.launch(Dispatchers.IO) {
+            busy = true
+            status = runCatching {
+                val text = projectBackup.export(graph.projects.fileSystemFor(projectId), secret)
+                graph.context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                    ?: error(destErrorText)
+                BackupStatus.Success(exportedText)
+            }.getOrElse { BackupStatus.Failure("$exportFailedText: ${it.message ?: unknownErrorText}") }
+            Arrays.fill(secret, '0')
+            busy = false
+        }
+    }
+    val openProject = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val secret = password.snapshot()
+        scope.launch(Dispatchers.IO) {
+            busy = true
+            status = runCatching {
+                val text = graph.context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                    reader.readText()
+                } ?: error(readErrorText)
+                require(text.toByteArray(Charsets.UTF_8).size <= 64 * 1024 * 1024) { tooLargeText }
+                // Validation only: decrypt fully so a wrong password or a
+                // corrupt envelope fails HERE, at inspection time, not
+                // halfway through the restore.
+                projectBackup.decryptToBytes(text, secret)
+                pendingProjectRestore = text
+                BackupStatus.Info(projectInspectedText)
+            }.getOrElse { BackupStatus.Failure("$restoreFailedText: ${it.message ?: invalidBackupText}") }
+            Arrays.fill(secret, '0')
             busy = false
         }
     }
@@ -168,6 +217,55 @@ fun BackupScreen(nav: NavController) {
             inspected?.let { payload ->
                 Card(Modifier.fillMaxWidth()) {
                     ListItem(headlineContent = { Text(tr("Pre-restore inspection")) }, supportingContent = { Text("${tr("Valid encrypted payload")} • ${payload.providers.size} ${tr("provider(s)")} • ${tr("settings payload present. No changes have been committed yet.")}") })
+                }
+            }
+            HorizontalDivider()
+            Text(tr("Project archive"), style = MaterialTheme.typography.titleMedium)
+            Text(tr("Encrypt a whole project into one backup file, or restore one into the selected project. A failed restore rolls back automatically."), style = MaterialTheme.typography.bodyMedium)
+            ExposedDropdownMenuBox(expanded = projectMenuOpen, onExpandedChange = { projectMenuOpen = it }) {
+                OutlinedTextField(
+                    value = selectedProject?.name ?: tr("No projects yet."),
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(tr("Project")) },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = projectMenuOpen) },
+                    enabled = !busy && projects.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                )
+                ExposedDropdownMenu(expanded = projectMenuOpen, onDismissRequest = { projectMenuOpen = false }) {
+                    projects.forEach { project ->
+                        DropdownMenuItem(
+                            text = { Text(project.name) },
+                            onClick = {
+                                selectedProjectId = project.id
+                                projectMenuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(enabled = !busy && password.chars.size >= 12 && selectedProject != null, onClick = { exportProject.launch("anvex-project-backup.json") }, modifier = Modifier.weight(1f)) { Text(tr("Export"), maxLines = 1) }
+                OutlinedButton(enabled = !busy && password.chars.size >= 8 && selectedProject != null, onClick = { openProject.launch(arrayOf("application/json", "text/plain")) }, modifier = Modifier.weight(1f)) { Text(tr("Inspect backup"), maxLines = 1) }
+                Button(enabled = !busy && password.chars.size >= 8 && pendingProjectRestore != null && selectedProject != null, modifier = Modifier.weight(1f), onClick = {
+                    val envelope = pendingProjectRestore ?: return@Button
+                    val projectId = selectedProject?.id ?: return@Button
+                    val secret = password.snapshot()
+                    scope.launch(Dispatchers.IO) {
+                        busy = true
+                        status = runCatching {
+                            projectBackup.import(envelope, secret, graph.projects.fileSystemFor(projectId))
+                            pendingProjectRestore = null
+                            BackupStatus.Success(projectRestoredText)
+                        }.getOrElse { BackupStatus.Failure("$restoreFailedText: ${it.message ?: unknownErrorText}") }
+                        Arrays.fill(secret, '0')
+                        busy = false
+                    }
+                }) { Text(tr("Restore")) }
+            }
+            pendingProjectRestore?.let {
+                Card(Modifier.fillMaxWidth()) {
+                    ListItem(headlineContent = { Text(tr("Pre-restore inspection")) }, supportingContent = { Text(projectInspectedText) })
                 }
             }
             status?.let { s ->

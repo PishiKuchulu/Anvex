@@ -1,4 +1,4 @@
-# Known Limitations — Anvex 4.11.0
+# Known Limitations — Anvex 4.15.10
 
 This document describes the **actual** runtime rather than the original bolt.diy/WebContainer
 assumptions.
@@ -97,7 +97,7 @@ assumptions.
 
 ### Persian language
 - The in-app language switch applies the platform locale immediately (API 33+ via
-  `LocaleManager`, API 26-32 via legacy recreate). All `tr()`-based strings (385 entries)
+  `LocaleManager`, API 26-32 via legacy recreate). All `tr()`-based strings (915 entries)
   render Persian under the فارسی setting. A short list of legacy literals (mostly
   non-interactive captions in Home/Chat chrome, e.g. relative-time labels and the
   onboarding blurb) remains English-only until those call sites are converted to `tr()`;

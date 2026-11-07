@@ -29,7 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,11 +46,11 @@ import com.anvex.app.i18n.tr
 @Composable
 fun ExtensionsScreen(nav: NavController) {
     val vm: ExtensionsViewModel = viewModel { ExtensionsViewModel() }
-    val skills by vm.skills.collectAsState()
-    val servers by vm.servers.collectAsState()
-    val tools by vm.tools.collectAsState()
-    val status by vm.status.collectAsState()
-    val busy by vm.busy.collectAsState()
+    val skills by vm.skills.collectAsStateWithLifecycle()
+    val servers by vm.servers.collectAsStateWithLifecycle()
+    val tools by vm.tools.collectAsStateWithLifecycle()
+    val status by vm.status.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(0) }
     // v4.4.5 (UX): removals delete files / stored tokens — confirm first.

@@ -1,5 +1,7 @@
 package com.anvex.app.ui.screens.history
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,7 +26,7 @@ import com.anvex.app.i18n.tr
 @Composable
 fun HistoryScreen(nav: NavController, projectId: String) {
     val graph = AppGraph.get(); val scope = rememberCoroutineScope()
-    val changes by graph.mutations.observeRecent(projectId).collectAsState(initial = emptyList())
+    val changes by graph.mutations.observeRecent(projectId).collectAsStateWithLifecycle(initial = emptyList())
     var selected by remember { mutableStateOf<FileMutation?>(null) }
     // UI #5: a failed revert used to close the dialog like a success did —
     // the failure now stays visible inside the dialog.

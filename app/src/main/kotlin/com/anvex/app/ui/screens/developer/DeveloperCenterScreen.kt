@@ -1,5 +1,7 @@
 package com.anvex.app.ui.screens.developer
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,10 +36,10 @@ private const val APPROVAL_SESSION = "developer-center"
 fun DeveloperCenterScreen(nav: NavController) {
     val graph = AppGraph.get()
     val scope = rememberCoroutineScope()
-    val events by graph.reliability.observeEvents(500).collectAsState(initial = emptyList())
-    val tasks by graph.reliability.observeTaskItems().collectAsState(initial = emptyList())
-    val backups by graph.reliability.observeBackups().collectAsState(initial = emptyList())
-    val plugins by graph.reliability.observePlugins().collectAsState(initial = emptyList())
+    val events by graph.reliability.observeEvents(500).collectAsStateWithLifecycle(initial = emptyList())
+    val tasks by graph.reliability.observeTaskItems().collectAsStateWithLifecycle(initial = emptyList())
+    val backups by graph.reliability.observeBackups().collectAsStateWithLifecycle(initial = emptyList())
+    val plugins by graph.reliability.observePlugins().collectAsStateWithLifecycle(initial = emptyList())
     var health by remember { mutableStateOf<List<ReliabilityRepository.HealthItem>>(emptyList()) }
     var repairs by remember { mutableStateOf<List<ReliabilityRepository.RepairItem>>(emptyList()) }
     var status by remember { mutableStateOf<String?>(null) }

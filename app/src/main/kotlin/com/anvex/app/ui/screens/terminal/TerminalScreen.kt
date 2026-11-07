@@ -355,7 +355,7 @@ fun TerminalScreen(navController: NavHostController, projectId: String) {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (starting) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                     if (pty != null) {
-                        items(ptyRows.size + notices.size) { index ->
+                        items(ptyRows.size + notices.size, key = { it }) { index ->
                             if (index < ptyRows.size) {
                                 Text(
                                     cellsToAnnotated(ptyRows[index], defaultTextColor),

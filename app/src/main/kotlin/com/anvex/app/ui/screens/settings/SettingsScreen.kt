@@ -47,7 +47,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,9 +96,9 @@ fun SettingsScreen(
 ) {
     val vm: SettingsViewModel = viewModel { SettingsViewModel() }
     val graph = AppGraph.get()
-    val settings by vm.settings.collectAsState()
-    val projects by vm.projects.collectAsState()
-    val cacheBytes by vm.cacheBytes.collectAsState()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val projects by vm.projects.collectAsStateWithLifecycle()
+    val cacheBytes by vm.cacheBytes.collectAsStateWithLifecycle()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     // 2026-11-04 (owner request): accordion settings — one section open

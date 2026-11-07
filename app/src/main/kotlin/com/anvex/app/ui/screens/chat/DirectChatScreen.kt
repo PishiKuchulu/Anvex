@@ -72,7 +72,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -153,36 +153,36 @@ fun DirectChatScreen(nav: NavController) {
     } else {
         viewModel()
     }
-    val conversations by vm.conversations.collectAsState()
-    val archivedConversations by vm.archivedConversations.collectAsState()
-    val visibleConversations by vm.visibleConversations.collectAsState()
-    val visibleArchived by vm.visibleArchivedConversations.collectAsState()
-    val chatQuery by vm.chatQuery.collectAsState()
-    val providerChoices by vm.providerChoices.collectAsState()
-    val modelChoices by vm.modelChoices.collectAsState()
-    val activeProviderId by vm.activeProviderId.collectAsState()
-    val activeId by vm.activeId.collectAsState()
-    val messages by vm.messages.collectAsState()
+    val conversations by vm.conversations.collectAsStateWithLifecycle()
+    val archivedConversations by vm.archivedConversations.collectAsStateWithLifecycle()
+    val visibleConversations by vm.visibleConversations.collectAsStateWithLifecycle()
+    val visibleArchived by vm.visibleArchivedConversations.collectAsStateWithLifecycle()
+    val chatQuery by vm.chatQuery.collectAsStateWithLifecycle()
+    val providerChoices by vm.providerChoices.collectAsStateWithLifecycle()
+    val modelChoices by vm.modelChoices.collectAsStateWithLifecycle()
+    val activeProviderId by vm.activeProviderId.collectAsStateWithLifecycle()
+    val activeId by vm.activeId.collectAsStateWithLifecycle()
+    val messages by vm.messages.collectAsStateWithLifecycle()
     // P-05 (audit round 2): the root collects only narrow session slices
     // that change a few times per turn — collecting the full sessionState
     // here recomposed the whole screen on every 80 ms stream publish.
     // The stream text itself is collected inside DirectStreamingBubble.
-    val uiStreaming by vm.uiStreaming.collectAsState()
-    val uiStatusLine by vm.uiStatusLine.collectAsState()
-    val uiError by vm.uiError.collectAsState()
-    val uiContextWarning by vm.uiContextWarning.collectAsState()
-    val uiQuickActions by vm.uiQuickActions.collectAsState()
-    val uiHasStreamContent by vm.uiHasStreamContent.collectAsState()
+    val uiStreaming by vm.uiStreaming.collectAsStateWithLifecycle()
+    val uiStatusLine by vm.uiStatusLine.collectAsStateWithLifecycle()
+    val uiError by vm.uiError.collectAsStateWithLifecycle()
+    val uiContextWarning by vm.uiContextWarning.collectAsStateWithLifecycle()
+    val uiQuickActions by vm.uiQuickActions.collectAsStateWithLifecycle()
+    val uiHasStreamContent by vm.uiHasStreamContent.collectAsStateWithLifecycle()
     val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
         com.anvex.core.android.repo.UiThemeStyle.ATELIER
-    val streamActive by vm.streamActive.collectAsState()
-    val noProvider by vm.noProviderConfigured.collectAsState()
-    val activeModel by vm.activeModel.collectAsState()
-    val webOn by vm.webSearchOn.collectAsState()
-    val webAvail by vm.webSearchAvailable.collectAsState()
-    val attachmentError by vm.attachmentError.collectAsState()
+    val streamActive by vm.streamActive.collectAsStateWithLifecycle()
+    val noProvider by vm.noProviderConfigured.collectAsStateWithLifecycle()
+    val activeModel by vm.activeModel.collectAsStateWithLifecycle()
+    val webOn by vm.webSearchOn.collectAsStateWithLifecycle()
+    val webAvail by vm.webSearchAvailable.collectAsStateWithLifecycle()
+    val attachmentError by vm.attachmentError.collectAsStateWithLifecycle()
     // Wiring gap 6: chatFontSize scales the message typography below.
-    val appSettings by AppGraph.get().settings.settings.collectAsState(initial = AppSettings())
+    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -203,7 +203,7 @@ fun DirectChatScreen(nav: NavController) {
     var dismissedErrorKey by remember { mutableStateOf<String?>(null) }
     val sheetState = rememberModalBottomSheetState()
     val listState = rememberLazyListState()
-    val hasOlderMessages by vm.hasOlderMessages.collectAsState()
+    val hasOlderMessages by vm.hasOlderMessages.collectAsStateWithLifecycle()
     // P-01 (audit 2026-11-03): reaching the top pages older history in.
     LaunchedEffect(listState, hasOlderMessages) {
         if (!hasOlderMessages) return@LaunchedEffect
@@ -219,7 +219,7 @@ fun DirectChatScreen(nav: NavController) {
     // rendered them — every approval-gated action stalled for the full
     // 45 s bridge timeout and was then silently denied. Same shared
     // fail-closed component as the project chat.
-    val pendingApproval by vm.pendingApproval.collectAsState()
+    val pendingApproval by vm.pendingApproval.collectAsStateWithLifecycle()
     pendingApproval?.let { prompt ->
         com.anvex.app.ui.components.ApprovalDialog(
             summary = prompt.summary,
@@ -1075,7 +1075,7 @@ private fun DirectStreamingBubble(
     session: StateFlow<com.anvex.core.android.session.ChatSession.UiState>,
     listState: LazyListState,
 ) {
-    val s by session.collectAsState()
+    val s by session.collectAsStateWithLifecycle()
     val text = s.streamText
     val reasoning = s.streamReasoning
     LaunchedEffect(text.length / 160) {

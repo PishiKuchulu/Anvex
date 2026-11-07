@@ -40,7 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -92,17 +92,17 @@ private interface PreviewJs {
 @Composable
 fun PreviewScreen(nav: NavController, projectId: String) {
     val vm: PreviewViewModel = viewModel(key = "preview-$projectId") { PreviewViewModel(projectId) }
-    val project by vm.project.collectAsState()
-    val url by vm.url.collectAsState()
-    val console by vm.console.collectAsState()
-    val refreshTick by vm.refreshTick.collectAsState()
-    val previewFiles by vm.previewFiles.collectAsState()
+    val project by vm.project.collectAsStateWithLifecycle()
+    val url by vm.url.collectAsStateWithLifecycle()
+    val console by vm.console.collectAsStateWithLifecycle()
+    val refreshTick by vm.refreshTick.collectAsStateWithLifecycle()
+    val previewFiles by vm.previewFiles.collectAsStateWithLifecycle()
     // Wiring gap 6: the console pane's visibility comes from the
     // persisted previewConsoleVisible setting, and the toolbar toggle
     // now persists through SettingsRepository.setPreviewConsoleVisible
     // (the seeding below applies the persisted value once per entry;
     // in-session toggles are never overwritten by it).
-    val appSettings by AppGraph.get().settings.settings.collectAsState(initial = AppSettings())
+    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
     var showConsole by remember { mutableStateOf(false) }
     var consoleSeeded by remember { mutableStateOf(false) }
     LaunchedEffect(appSettings.previewConsoleVisible) {
@@ -405,8 +405,8 @@ fun PreviewScreen(nav: NavController, projectId: String) {
                     }
                 }
                 // F5a (P5): origin switch — static files vs the live dev server.
-                val origin by vm.origin.collectAsState()
-                val devState by vm.devState.collectAsState()
+                val origin by vm.origin.collectAsStateWithLifecycle()
+                val devState by vm.devState.collectAsStateWithLifecycle()
                 LaunchedEffect(origin, devState) {
                     while (origin == PreviewViewModel.PreviewOrigin.DEV &&
                         devState is com.anvex.core.android.server.DevServerState.Running

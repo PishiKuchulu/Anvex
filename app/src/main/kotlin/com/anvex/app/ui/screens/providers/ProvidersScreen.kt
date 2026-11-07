@@ -48,7 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,8 +75,8 @@ import androidx.compose.ui.semantics.Role
 @Composable
 fun ProvidersScreen(nav: NavController) {
     val vm: ProvidersViewModel = viewModel { ProvidersViewModel() }
-    val providers by vm.providers.collectAsState()
-    val brokenProviders by vm.brokenProviders.collectAsState()
+    val providers by vm.providers.collectAsStateWithLifecycle()
+    val brokenProviders by vm.brokenProviders.collectAsStateWithLifecycle()
 
     Scaffold(
         // UI #3: transparent like the other list screens — the opaque
@@ -189,8 +189,8 @@ fun ProvidersScreen(nav: NavController) {
 @Composable
 private fun ZaiAccountCard(vm: ProvidersViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val login by vm.zaiLogin.collectAsState()
-    val providers by vm.providers.collectAsState()
+    val login by vm.zaiLogin.collectAsStateWithLifecycle()
+    val providers by vm.providers.collectAsStateWithLifecycle()
     val connected = providers.firstOrNull { it.kind == ProviderKind.ZAI_ACCOUNT }
     val extras = com.anvex.app.ui.theme.LocalBoltExtras.current
 
@@ -307,18 +307,18 @@ private fun ZaiAccountCard(vm: ProvidersViewModel) {
 @Composable
 fun ProviderEditScreen(nav: NavController, id: String, initialKind: String = "") {
     val vm: ProvidersViewModel = viewModel(key = "provider-edit-$id") { ProvidersViewModel() }
-    val ui by vm.edit.collectAsState()
-    val testResult by vm.testResult.collectAsState()
-    val testing by vm.testing.collectAsState()
-    val models by vm.models.collectAsState()
-    val loadingModels by vm.loadingModels.collectAsState()
-    val modelTestResults by vm.modelTestResults.collectAsState()
-    val testingModels by vm.testingModels.collectAsState()
-    val modelTestProgress by vm.modelTestProgress.collectAsState()
-    val modelTestingId by vm.modelTestingId.collectAsState()
-    val selectedModels by vm.selectedModels.collectAsState()
-    val saveMessage by vm.saveMessage.collectAsState()
-    val credentialWarning by vm.credentialWarning.collectAsState()
+    val ui by vm.edit.collectAsStateWithLifecycle()
+    val testResult by vm.testResult.collectAsStateWithLifecycle()
+    val testing by vm.testing.collectAsStateWithLifecycle()
+    val models by vm.models.collectAsStateWithLifecycle()
+    val loadingModels by vm.loadingModels.collectAsStateWithLifecycle()
+    val modelTestResults by vm.modelTestResults.collectAsStateWithLifecycle()
+    val testingModels by vm.testingModels.collectAsStateWithLifecycle()
+    val modelTestProgress by vm.modelTestProgress.collectAsStateWithLifecycle()
+    val modelTestingId by vm.modelTestingId.collectAsStateWithLifecycle()
+    val selectedModels by vm.selectedModels.collectAsStateWithLifecycle()
+    val saveMessage by vm.saveMessage.collectAsStateWithLifecycle()
+    val credentialWarning by vm.credentialWarning.collectAsStateWithLifecycle()
     var showKey by remember { mutableStateOf(false) }
     // v4.4.5 (UX): deleting a provider discards encrypted credentials.
     var confirmDelete by remember { mutableStateOf(false) }

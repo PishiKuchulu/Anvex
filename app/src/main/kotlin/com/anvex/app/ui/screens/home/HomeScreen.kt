@@ -61,7 +61,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,22 +116,22 @@ object NewProjectHandoff {
 fun HomeScreen(nav: NavController) {
     val vm: HomeViewModel = viewModel { HomeViewModel() }
     val context = androidx.compose.ui.platform.LocalContext.current
-    val projects by vm.projects.collectAsState()
-    val visibleProjects by vm.visibleProjects.collectAsState()
-    val query by vm.query.collectAsState()
-    val pinnedIds by vm.pinned.collectAsState()
-    val providers by vm.providers.collectAsState()
-    val activeProviderId by vm.activeProviderId.collectAsState()
-    val newUi by vm.newProjectUi.collectAsState()
-    val events by vm.events.collectAsState(initial = null as String?)
+    val projects by vm.projects.collectAsStateWithLifecycle()
+    val visibleProjects by vm.visibleProjects.collectAsStateWithLifecycle()
+    val query by vm.query.collectAsStateWithLifecycle()
+    val pinnedIds by vm.pinned.collectAsStateWithLifecycle()
+    val providers by vm.providers.collectAsStateWithLifecycle()
+    val activeProviderId by vm.activeProviderId.collectAsStateWithLifecycle()
+    val newUi by vm.newProjectUi.collectAsStateWithLifecycle()
+    val events by vm.events.collectAsStateWithLifecycle(initial = null as String?)
     val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
         com.anvex.core.android.repo.UiThemeStyle.ATELIER
     val tasks by com.anvex.core.android.AppGraph.get().reliability.observeTaskItems(20)
-        .collectAsState(initial = emptyList())
+        .collectAsStateWithLifecycle(initial = emptyList())
     var showNewDialog by remember { mutableStateOf(false) }
 
     // Phase 3.2: content shared from another app -> choose the chat that receives it.
-    val sharePayload by vm.sharePending.collectAsState()
+    val sharePayload by vm.sharePending.collectAsStateWithLifecycle()
     sharePayload?.let { payload ->
         AlertDialog(
             onDismissRequest = vm::dismissShare,
@@ -745,7 +745,7 @@ private fun NewProjectDialog(
                 // ProjectRepository.create).
                 Text(tr("Template"), style = MaterialTheme.typography.labelLarge)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(ProjectTemplates.Starter.entries) { starter ->
+                    items(ProjectTemplates.Starter.entries, key = { it.name }) { starter ->
                         FilterChip(
                             selected = ui.starter == starter,
                             onClick = { onUpdate { copy(starter = starter) } },

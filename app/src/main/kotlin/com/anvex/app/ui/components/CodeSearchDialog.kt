@@ -15,7 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +53,7 @@ fun CodeSearchDialog(projectId: String, onDismiss: () -> Unit) {
     var chunks by remember { mutableIntStateOf(0) }
     var busy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
-    val modelState by manager.models.state.collectAsState()
+    val modelState by manager.models.state.collectAsStateWithLifecycle()
     // tr() is @Composable: note strings are hoisted here because the
     // assignments happen inside click/coroutine lambdas.
     val noteQueued = tr("Indexing queued.")

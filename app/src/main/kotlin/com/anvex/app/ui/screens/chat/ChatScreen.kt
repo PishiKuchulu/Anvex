@@ -105,7 +105,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -232,37 +232,37 @@ fun ChatScreen(nav: NavController, projectId: String) {
     }
     val atelierStyle = com.anvex.app.ui.theme.LocalThemeStyle.current ==
         com.anvex.core.android.repo.UiThemeStyle.ATELIER
-    val messages by vm.messages.collectAsState()
+    val messages by vm.messages.collectAsStateWithLifecycle()
     // v4.4.4 (smoothness): the full sessionState ticks up to every 80ms while
     // streaming — the root now collects only the lightweight streamUi snapshot
     // (emits on visibility-relevant changes). Live text is collected locally
     // inside StreamingBubble.
-    val streamUi by vm.streamUi.collectAsState()
+    val streamUi by vm.streamUi.collectAsStateWithLifecycle()
     // Full session state collected once here for the quick-action chips
     // (gap 5) — streamUi deliberately excludes them.
-    val sessionUi by vm.sessionState.collectAsState()
+    val sessionUi by vm.sessionState.collectAsStateWithLifecycle()
     // Wiring gap 6: chatFontSize scales the message typography below.
-    val appSettings by AppGraph.get().settings.settings.collectAsState(initial = AppSettings())
-    val project by vm.project.collectAsState()
-    val noProvider by vm.noProviderConfigured.collectAsState()
-    val attachmentError by vm.attachmentError.collectAsState()
-    val thinkingLevel by vm.thinkingLevel.collectAsState()
-    val activeModel by vm.activeModel.collectAsState()
-    val activeProviderId by vm.activeProviderId.collectAsState()
-    val webAvail by vm.webSearchAvailable.collectAsState()
+    val appSettings by AppGraph.get().settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
+    val project by vm.project.collectAsStateWithLifecycle()
+    val noProvider by vm.noProviderConfigured.collectAsStateWithLifecycle()
+    val attachmentError by vm.attachmentError.collectAsStateWithLifecycle()
+    val thinkingLevel by vm.thinkingLevel.collectAsStateWithLifecycle()
+    val activeModel by vm.activeModel.collectAsStateWithLifecycle()
+    val activeProviderId by vm.activeProviderId.collectAsStateWithLifecycle()
+    val webAvail by vm.webSearchAvailable.collectAsStateWithLifecycle()
     var pythonCode by remember { mutableStateOf<String?>(null) }
     var showKnowledge by remember { mutableStateOf(false) }
-    val knowledgeFiles by vm.knowledgeFiles.collectAsState()
+    val knowledgeFiles by vm.knowledgeFiles.collectAsStateWithLifecycle()
     val knowledgePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { vm.addKnowledgeFile(it) }
     }
     LaunchedEffect(showKnowledge) { if (showKnowledge) vm.refreshKnowledge() }
-    val webOn by vm.webSearchOn.collectAsState()
-    val providerChoices by vm.providerChoices.collectAsState()
-    val modelChoices by vm.modelChoices.collectAsState()
+    val webOn by vm.webSearchOn.collectAsStateWithLifecycle()
+    val providerChoices by vm.providerChoices.collectAsStateWithLifecycle()
+    val modelChoices by vm.modelChoices.collectAsStateWithLifecycle()
     // v4.10: Pi gateway approvals surface here as a dialog (the engine is
     // blocked on this decision; dismissing denies — fail-closed).
-    val pendingPiApproval by vm.pendingPiApproval.collectAsState()
+    val pendingPiApproval by vm.pendingPiApproval.collectAsStateWithLifecycle()
     pendingPiApproval?.let { ask ->
         // Shared component (audit round 2, R2-3): one fail-closed
         // implementation for both engines — the hand-inlined copies here
@@ -274,7 +274,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
     // the user answers; dismissing denies — fail-closed, same as Pi.
     // The prompt carries the concrete action detail (command / path +
     // size) in its monospace detail slot — never a blind approval.
-    val pendingApproval by vm.pendingApproval.collectAsState()
+    val pendingApproval by vm.pendingApproval.collectAsStateWithLifecycle()
     pendingApproval?.let { prompt ->
         ApprovalDialog(summary = prompt.summary, detail = prompt.detail) { approved ->
             vm.answerApproval(approved)
@@ -304,9 +304,9 @@ fun ChatScreen(nav: NavController, projectId: String) {
     // v4.4 (architect feature 8): the user message being edited for a branch turn.
     var editing by remember { mutableStateOf<ChatMessage?>(null) }
     var editText by remember { mutableStateOf("") }
-    val branchNote by vm.branchNote.collectAsState()
+    val branchNote by vm.branchNote.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    val hasOlderMessages by vm.hasOlderMessages.collectAsState()
+    val hasOlderMessages by vm.hasOlderMessages.collectAsStateWithLifecycle()
     // P-01 (audit 2026-11-03): the list starts with the newest window
     // only — reaching the very top pages older history in.
     LaunchedEffect(listState, hasOlderMessages) {
@@ -333,13 +333,13 @@ fun ChatScreen(nav: NavController, projectId: String) {
 
     // Phase 3.5 read-aloud: one shared engine per screen, released on leave.
     val readAloud = remember { ReadAloud(context) }
-    val speakingId by readAloud.speakingId.collectAsState()
+    val speakingId by readAloud.speakingId.collectAsStateWithLifecycle()
     DisposableEffect(Unit) { onDispose { readAloud.shutdown() } }
 
     // v4.0 audit fix (pendingChanges recomposition cost): the mutation journal snapshot
     // is derived from the persisted mutations flow instead of polling the session on
     // every recomposition. Declared before the effects that read it.
-    val persistedMutations by vm.persistedMutations.collectAsState()
+    val persistedMutations by vm.persistedMutations.collectAsStateWithLifecycle()
     val pendingChangesCached = remember(persistedMutations) {
         vm.pendingChangesSnapshot(persistedMutations)
     }
@@ -679,7 +679,7 @@ fun ChatScreen(nav: NavController, projectId: String) {
         )
     }
 
-    val mcpRequest by vm.mcpApproval.collectAsState()
+    val mcpRequest by vm.mcpApproval.collectAsStateWithLifecycle()
     mcpRequest?.let { request ->
         AlertDialog(
             onDismissRequest = { vm.answerMcp(request.id, false) },
@@ -1551,7 +1551,7 @@ private fun StreamingBubble(
     versionsFor: (String) -> List<FileVersion> = { emptyList() },
     onShowVersion: (String, Int) -> Unit = { _, _ -> },
 ) {
-    val s by session.collectAsState()
+    val s by session.collectAsStateWithLifecycle()
     val text = s.streamText
     val artifact = s.currentArtifact
     val statusLine = s.statusLine

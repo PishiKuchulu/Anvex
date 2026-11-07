@@ -24,7 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,7 +49,7 @@ import com.anvex.app.i18n.tr
 fun DebugScreen(nav: NavController) {
     val context = LocalContext.current
     val graph = AppGraph.get()
-    val providers by graph.providers.observeAll().collectAsState(initial = emptyList())
+    val providers by graph.providers.observeAll().collectAsStateWithLifecycle(initial = emptyList())
     var memory by remember { mutableStateOf("--") }
     var nativeHeap by remember { mutableStateOf("--") }
 

@@ -560,7 +560,7 @@ fun AtelierNewProjectSheet(
             // The actual Template row: selects a ProjectTemplates starter.
             Text(tr("Template"), style = MaterialTheme.typography.titleSmall)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(ProjectTemplates.Starter.entries) { starter ->
+                items(ProjectTemplates.Starter.entries, key = { it.name }) { starter ->
                     FilterChip(
                         selected = ui.starter == starter,
                         onClick = { onUpdate { copy(starter = starter) } },

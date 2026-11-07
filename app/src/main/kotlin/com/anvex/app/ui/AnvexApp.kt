@@ -23,7 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -114,8 +114,8 @@ fun AnvexApp() {
         currentRoute == Routes.SETTINGS
 
     val graph = com.anvex.core.android.AppGraph.get()
-    val settings by graph.settings.settings.collectAsState(initial = null)
-    val tasks by graph.reliability.observeTaskItems(20).collectAsState(initial = emptyList())
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = null)
+    val tasks by graph.reliability.observeTaskItems(20).collectAsStateWithLifecycle(initial = emptyList())
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     // v4.7: in-app updates — one controller for the on-launch check, the

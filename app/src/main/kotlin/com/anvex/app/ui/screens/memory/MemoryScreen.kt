@@ -1,5 +1,7 @@
 package com.anvex.app.ui.screens.memory
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.foundation.layout.*
@@ -42,8 +44,8 @@ fun MemoryScreen(nav: NavController) {
     val graph = remember { AppGraph.get() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val items by graph.memory.items.collectAsState()
-    val settings by graph.settings.settings.collectAsState(initial = null)
+    val items by graph.memory.items.collectAsStateWithLifecycle()
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = null)
     var filter by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<MemoryItem?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -118,7 +120,7 @@ fun MemoryScreen(nav: NavController) {
                                 onClick = { filter = null },
                             )
                         }
-                        items(MemoryCategory.ALL) { c ->
+                        items(MemoryCategory.ALL, key = { it }) { c ->
                             val name = c.replaceFirstChar { it.uppercase() }
                             val count = items.count { it.category == c }
                             NebulaChip(

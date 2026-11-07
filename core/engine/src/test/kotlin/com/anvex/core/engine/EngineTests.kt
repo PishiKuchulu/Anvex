@@ -136,6 +136,26 @@ class PathSanitizerTest {
     fun `backslashes converted`() {
         assertEquals("src/app.js", PathSanitizer.sanitize("src\\app.js"))
     }
+
+    @Test
+    fun `windows device names rejected (AUD-004)`() {
+        assertNull(PathSanitizer.sanitizeOrNull("con.txt"))
+        assertNull(PathSanitizer.sanitizeOrNull("AUX"))
+        assertNull(PathSanitizer.sanitizeOrNull("dir/lpt1.md"))
+        assertNull(PathSanitizer.sanitizeOrNull("COM9"))
+        assertNull(PathSanitizer.sanitizeOrNull("src/NUL"))
+        assertNull(PathSanitizer.sanitizeOrNull("prn"))
+    }
+
+    @Test
+    fun `device name lookalikes allowed`() {
+        assertEquals("console.txt", PathSanitizer.sanitize("console.txt"))
+        assertEquals("contact.kt", PathSanitizer.sanitize("contact.kt"))
+        assertEquals(".env", PathSanitizer.sanitize(".env"))
+        assertEquals("src/auxiliary.md", PathSanitizer.sanitize("src/auxiliary.md"))
+        assertEquals("com.example/Main.kt", PathSanitizer.sanitize("com.example/Main.kt"))
+        assertEquals("nulbyte.kt", PathSanitizer.sanitize("nulbyte.kt"))
+    }
 }
 
 class DiffEngineTest {

@@ -36,9 +36,21 @@ object PathSanitizer {
             }
         }
         require(parts.isNotEmpty()) { "Empty path after normalization" }
-        // Reject reserved names on the fs we control
+        // Reject reserved names on the fs we control (implemented 4.15.10,
+        // AUD-004 — this comment previously promised a check that did not
+        // exist): Windows device names are illegal file names on the
+        // Windows/NTFS side of project exchange (GitHub sync, SAF export),
+        // matched case-insensitively on the segment's base name before any
+        // extension, so "con.txt" and "AUX" are both rejected.
+        for (seg in parts) {
+            val base = seg.substringBefore('.').uppercase()
+            require(base !in RESERVED_NAMES) { "Reserved file name: $seg" }
+        }
         return parts.joinToString("/")
     }
+
+    private val RESERVED_NAMES: Set<String> = setOf("CON", "PRN", "AUX", "NUL") +
+        (1..9).map { "COM$it" } + (1..9).map { "LPT$it" }
 
     fun sanitizeOrNull(relativePath: String): String? = try {
         sanitize(relativePath)

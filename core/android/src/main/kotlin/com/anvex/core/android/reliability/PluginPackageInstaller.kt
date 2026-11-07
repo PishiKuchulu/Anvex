@@ -38,7 +38,11 @@ class PluginPackageInstaller(
     // by a plugin author broke installation of an otherwise valid package.
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val maxArchiveBytes = 20L * 1024 * 1024
-    private val maxEntries = 256
+    // 4.15.10: 256 -> 1024, in step with SkillGitInstaller's TAR budget — a
+    // real skill collection (DietrichGebert/ponytail) carries 273 entries and
+    // was uninstallable at the old cap. Per-entry and total byte caps below
+    // are unchanged, so the expansion risk stays bounded.
+    private val maxEntries = 1024
     private val maxEntryBytes = 2L * 1024 * 1024
 
     suspend fun installArchive(archive: File, expectedSha256: String? = null, expectedGitUrl: String? = null): Result {

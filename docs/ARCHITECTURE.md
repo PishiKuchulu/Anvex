@@ -1,5 +1,11 @@
 # ARCHITECTURE.md
 
+> Currency note (4.15.10, AUD-003): the module map and pipeline below are the
+> original v4.0 layout and remain structurally accurate. Added since: multi-round
+> tool execution with cut-file salvage/append (ChatSession), declarative skills
+> and MCP (Extensions), the optional Pi agent engine, on-device RAG/LSP/PTY,
+> and GitHub skill installation (plugin.json and SKILL.md shapes).
+
 ## Module map (Gradle Kotlin DSL, version catalog `gradle/libs.versions.toml`)
 
 ```

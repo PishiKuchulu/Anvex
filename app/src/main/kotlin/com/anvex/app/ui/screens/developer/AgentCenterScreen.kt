@@ -1,5 +1,7 @@
 package com.anvex.app.ui.screens.developer
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import android.Manifest
 import android.os.Build
 import android.content.Intent
@@ -33,8 +35,8 @@ import com.anvex.app.i18n.tr
 fun AgentCenterScreen(nav: NavController? = null) {
     val graph = AppGraph.get()
     val scope = rememberCoroutineScope()
-    val projects by graph.projects.observeAll().collectAsState(initial = emptyList())
-    val tasks by graph.reliability.observeTaskItems(50).collectAsState(initial = emptyList())
+    val projects by graph.projects.observeAll().collectAsStateWithLifecycle(initial = emptyList())
+    val tasks by graph.reliability.observeTaskItems(50).collectAsStateWithLifecycle(initial = emptyList())
     val caps = remember { graph.deviceCapabilities.detect() }
     var selected by remember(projects) { mutableStateOf(projects.firstOrNull()) }
     var goal by remember { mutableStateOf("") }

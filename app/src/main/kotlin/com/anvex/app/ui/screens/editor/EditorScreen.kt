@@ -40,7 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,13 +65,13 @@ import com.anvex.app.i18n.tr
 @Composable
 fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
     val vm: EditorViewModel = viewModel(key = "editor-$projectId") { EditorViewModel(projectId) }
-    val tabs by vm.tabs.collectAsState()
-    val tsStates by vm.tsStates.collectAsState()
-    val foldedMap by vm.foldedRanges.collectAsState()
-    val activePath by vm.activePath.collectAsState()
-    val project by vm.project.collectAsState()
-    val treeRevision by vm.treeRevision.collectAsState()
-    val fileTree by vm.fileTreeState.collectAsState()
+    val tabs by vm.tabs.collectAsStateWithLifecycle()
+    val tsStates by vm.tsStates.collectAsStateWithLifecycle()
+    val foldedMap by vm.foldedRanges.collectAsStateWithLifecycle()
+    val activePath by vm.activePath.collectAsStateWithLifecycle()
+    val project by vm.project.collectAsStateWithLifecycle()
+    val treeRevision by vm.treeRevision.collectAsStateWithLifecycle()
+    val fileTree by vm.fileTreeState.collectAsStateWithLifecycle()
     val settings = rememberSettingsFontSize()
 
     var showExplorer by remember { mutableStateOf(false) }
@@ -99,8 +99,8 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
     val labelDefinition = tr("definition")
 
     // P9 (F2c): LSP diagnostics + hover.
-    val lspDiagnostics by vm.lspDiagnostics.collectAsState()
-    val lspState by vm.lspState.collectAsState()
+    val lspDiagnostics by vm.lspDiagnostics.collectAsStateWithLifecycle()
+    val lspState by vm.lspState.collectAsStateWithLifecycle()
     var hoverText by remember { mutableStateOf<String?>(null) }
     var showHover by remember { mutableStateOf(false) }
     var showProblems by remember { mutableStateOf(false) }
@@ -411,7 +411,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
                     Text(tr("No occurrences found."))
                 } else {
                     LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                        items(references) { occurrence ->
+                        items(references, key = { "${it.path}:${it.startOffset}" }) { occurrence ->
                             Text(
                                 "${occurrence.path}:${occurrence.line + 1}" +
                                     if (occurrence.isDefinition) " ($labelDefinition)" else "",
@@ -512,7 +512,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
             title = { Text(tr("Problems")) },
             text = {
                 LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                    items(lspDiagnostics) { diagnostic ->
+                    items(lspDiagnostics, key = { "${it.line}:${it.character}:${it.endCharacter}:${it.severity}" }) { diagnostic ->
                         Text(
                             "${diagnostic.line + 1}: ${diagnostic.message}" +
                                 (diagnostic.source?.let { " ($it)" } ?: ""),
@@ -550,7 +550,7 @@ fun EditorScreen(nav: NavController, projectId: String, initialFile: String?) {
 private fun rememberSettingsFontSize(): Int {
     // settings flow via AppGraph directly (kept light for the editor screen)
     val graph = com.anvex.core.android.AppGraph.get()
-    val settings by graph.settings.settings.collectAsState(initial = null)
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = null)
     return settings?.editorFontSize ?: 13
 }
 

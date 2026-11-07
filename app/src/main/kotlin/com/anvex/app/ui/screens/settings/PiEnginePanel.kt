@@ -12,7 +12,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,7 +48,7 @@ fun PiEnginePanel() {
     val graph = remember { AppGraph.get() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val settings by graph.settings.settings.collectAsState(initial = AppSettings())
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = AppSettings())
 
     var running by remember { mutableStateOf(false) }
     var promptText by remember {

@@ -32,7 +32,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,10 +66,10 @@ import com.anvex.core.model.Project
 @Composable
 fun ProjectsScreen(nav: NavController) {
     val vm: HomeViewModel = viewModel { HomeViewModel() }
-    val projects by vm.projects.collectAsState()
-    val visibleProjects by vm.visibleProjects.collectAsState()
-    val query by vm.query.collectAsState()
-    val newUi by vm.newProjectUi.collectAsState()
+    val projects by vm.projects.collectAsStateWithLifecycle()
+    val visibleProjects by vm.visibleProjects.collectAsStateWithLifecycle()
+    val query by vm.query.collectAsStateWithLifecycle()
+    val newUi by vm.newProjectUi.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var deleteProject by remember { mutableStateOf<Project?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -184,7 +184,7 @@ fun ProjectsScreen(nav: NavController) {
                     // Wiring gap 2: Template chips select a real starter.
                     Text(tr("Template"), style = MaterialTheme.typography.labelLarge)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(ProjectTemplates.Starter.entries) { starter ->
+                        items(ProjectTemplates.Starter.entries, key = { it.name }) { starter ->
                             FilterChip(
                                 selected = newUi.starter == starter,
                                 onClick = { vm.updateNewProject { copy(starter = starter) } },

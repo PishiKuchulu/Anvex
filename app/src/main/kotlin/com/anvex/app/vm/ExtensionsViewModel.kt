@@ -148,7 +148,7 @@ class ExtensionsViewModel : ViewModel() {
         }
     }
 
-    /** Installs a skill from a public GitHub repository (HTTPS only; see SkillGitInstaller). */
+    /** Installs a skill (or every SKILL.md skill in a collection repo) from a public GitHub repository. */
     fun installSkillFromGitHub(url: String) {
         viewModelScope.launch {
             beginOp("skill-git")
@@ -156,7 +156,15 @@ class ExtensionsViewModel : ViewModel() {
                 withContext(Dispatchers.IO) { SkillGitInstaller.installFromGit(graph.pluginInstaller, url.trim()) }
             }
             _status.value = result.fold(
-                onSuccess = { "Installed ${it.name} (${it.id} ${it.version})" + (it.commit?.let { c -> " @ ${c.take(7)}" } ?: "") + "." },
+                onSuccess = { installed ->
+                    val commitSuffix = installed.firstOrNull()?.commit?.let { c -> " @ ${c.take(7)}" } ?: ""
+                    if (installed.size == 1) {
+                        val it = installed.single()
+                        "Installed ${it.name} (${it.id} ${it.version})$commitSuffix."
+                    } else {
+                        "Installed ${installed.size} skills$commitSuffix: ${installed.joinToString(", ") { it.name }}."
+                    }
+                },
                 onFailure = { "GitHub install failed: ${it.message?.take(200)}" },
             )
             endOp("skill-git")

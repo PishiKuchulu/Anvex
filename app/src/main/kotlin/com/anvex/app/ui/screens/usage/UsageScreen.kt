@@ -34,7 +34,7 @@ fun UsageScreen(nav: androidx.navigation.NavController) {
             if (entries.isEmpty()) {
                 item { Text(tr("No usage recorded yet. Token counts appear here after your first AI responses."), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            items(entries.take(200)) { m -> ListItem(headlineContent = { Text(m.model ?: tr("Unknown model")) }, supportingContent = { Text("${m.providerId ?: tr("Unknown provider")} • ${m.usage?.totalTokens ?: 0} ${tr("tokens")}" + (m.usage?.costUsd?.let { " • $${String.format(java.util.Locale.US, "%.4f", it)}" } ?: "")) }) }
+            items(entries.take(200), key = { it.createdAt }) { m -> ListItem(headlineContent = { Text(m.model ?: tr("Unknown model")) }, supportingContent = { Text("${m.providerId ?: tr("Unknown provider")} • ${m.usage?.totalTokens ?: 0} ${tr("tokens")}" + (m.usage?.costUsd?.let { " • $${String.format(java.util.Locale.US, "%.4f", it)}" } ?: "")) }) }
         }
     }
 }
