@@ -36,10 +36,10 @@ private const val APPROVAL_SESSION = "developer-center"
 fun DeveloperCenterScreen(nav: NavController) {
     val graph = AppGraph.get()
     val scope = rememberCoroutineScope()
-    val events by graph.reliability.observeEvents(500).collectAsStateWithLifecycle(initial = emptyList())
-    val tasks by graph.reliability.observeTaskItems().collectAsStateWithLifecycle(initial = emptyList())
-    val backups by graph.reliability.observeBackups().collectAsStateWithLifecycle(initial = emptyList())
-    val plugins by graph.reliability.observePlugins().collectAsStateWithLifecycle(initial = emptyList())
+    val events by graph.reliability.observeEvents(500).collectAsStateWithLifecycle(initialValue = emptyList())
+    val tasks by graph.reliability.observeTaskItems().collectAsStateWithLifecycle(initialValue = emptyList())
+    val backups by graph.reliability.observeBackups().collectAsStateWithLifecycle(initialValue = emptyList())
+    val plugins by graph.reliability.observePlugins().collectAsStateWithLifecycle(initialValue = emptyList())
     var health by remember { mutableStateOf<List<ReliabilityRepository.HealthItem>>(emptyList()) }
     var repairs by remember { mutableStateOf<List<ReliabilityRepository.RepairItem>>(emptyList()) }
     var status by remember { mutableStateOf<String?>(null) }
