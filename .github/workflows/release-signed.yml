@@ -85,6 +85,16 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "${{ runner.temp }}/release.keystore"
           ls -l "${{ runner.temp }}/release.keystore"
 
+      # REL-001 (forensic audit, 2026-11-07): build-apk.yml generates and
+      # verifies the in-app source mirror, but this workflow never did —
+      # so signed release APKs silently shipped without the mirror asset
+      # the Developer Center reads. Same two steps, before the build.
+      - name: Generate source mirror
+        run: python3 tools/build_source_mirror.py
+
+      - name: Verify generated source mirror
+        run: python3 tools/verify_source_mirror.py
+
       - name: Build signed release APK
         # v4.10.1 (CI-03): signing values travel via ORG_GRADLE_PROJECT_* env
         # vars instead of -P command-line properties (which leak into process
@@ -95,6 +105,23 @@ jobs:
           ORG_GRADLE_PROJECT_ANVEX_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           ORG_GRADLE_PROJECT_ANVEX_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew --no-daemon clean :app:assembleRelease
+
+      # REL-002 (forensic audit, 2026-11-07): the native-library smoke
+      # check used to run only against the DEBUG universal APK (as an
+      # assembleDebug finalizer). Run it against the release universal
+      # APK that is about to be published.
+      - name: Verify release native libraries
+        run: ./gradlew --no-daemon :app:verifyNativeLibs -PanvexVerifyApk=outputs/apk/release/app-universal-release.apk
+
+      # REL-002: the published APKs must carry the live release key —
+      # verify the signer digest before anything is renamed or published.
+      - name: Verify signer fingerprint
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -1)
+          echo "apksigner: $APKSIGNER"
+          CERT=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-arm64-v8a-release.apk | grep -oP 'SHA-256 digest: \K[0-9a-f]+')
+          echo "signer SHA-256: $CERT"
+          test "$CERT" = "43c337ec53d1ddb5cab7ba907ff59336ea39da9509173a08c6a53b8a0f1012ef"
 
       - name: Rename APKs with version + checksum
         run: |
