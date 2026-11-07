@@ -114,8 +114,8 @@ fun AnvexApp() {
         currentRoute == Routes.SETTINGS
 
     val graph = com.anvex.core.android.AppGraph.get()
-    val settings by graph.settings.settings.collectAsStateWithLifecycle(initial = null)
-    val tasks by graph.reliability.observeTaskItems(20).collectAsStateWithLifecycle(initial = emptyList())
+    val settings by graph.settings.settings.collectAsStateWithLifecycle(initialValue = null)
+    val tasks by graph.reliability.observeTaskItems(20).collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     // v4.7: in-app updates — one controller for the on-launch check, the
