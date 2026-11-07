@@ -19,8 +19,11 @@
   `ProjectBackupService` (whole-project, password-encrypted export /
   inspect / restore with staged rollback) was fully implemented but wired
   to no screen; the Backup screen now exposes it next to the settings
-  backup, under the same password discipline. `SelfHealingEngine` and
-  `AgentOrchestration`, which had no production callers, are deleted.
+  backup, under the same password discipline. `SelfHealingEngine`, which
+  had no production callers, is deleted. (Correction: `AgentOrchestration`
+    was briefly removed in this wave on a "no callers" reading and restored
+    in the same release — it is live: `AppGraph.agentTaskBridge` runs
+    durable agent tasks through it.)
 - **AUD-001 — lifecycle-aware collection.** All 136 `collectAsState`
   sites in 19 files migrated to `collectAsStateWithLifecycle`, so flow
   collection pauses when the UI is not visible.
