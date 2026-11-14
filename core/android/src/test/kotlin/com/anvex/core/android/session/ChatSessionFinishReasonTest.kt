@@ -29,18 +29,26 @@ import java.util.concurrent.TimeUnit
  * Pack 02, STEP 1 (R4–R6) — cross-module finish-reason behavior at the
  * ChatSession level.
  *
- * R4 (the headline): providers report a NORMAL end of stream in their
- * own vocabularies — OpenAI "stop", Anthropic "end_turn", Gemini "STOP".
- * A fake ProviderClient completing with any of those over a complete
- * file action that merely omits its closing tags must get the Pack 01
- * clean-stop treatment: file written in full + the recovery note.
- * At HEAD, "end_turn" and "STOP" are classified as truncations and the
- * file is dropped — the user-visible defect behind "healthy Gemini /
- * Claude replies end as [Output stopped early …]".
+ * R4 (the headline): a NORMAL end of stream, reported in the canonical
+ * contract value "stop", over a complete file action that merely omits
+ * its closing tags must get the Pack 01 clean-stop treatment: file
+ * written in full + the recovery note. The providers' own words for it
+ * (OpenAI "stop", Anthropic "end_turn", Gemini "STOP") are pinned at
+ * the CLIENT level by R1 in FinishReasonMappingTest — Pack 02-AMEND
+ * (A3) deleted the defensive fold that used to re-map them here, after
+ * verifying every production emission site is canonical, so this seam
+ * now speaks the contract only. (At the original Pack 02 HEAD,
+ * "end_turn" and "STOP" fed through this seam were classified as
+ * truncations and the file was dropped — the user-visible defect
+ * behind "healthy Gemini / Claude replies end as [Output stopped
+ * early …]"; that failure is what R1 + this test together prove gone.)
  *
- * R5 (guard): the canonical truncation words AND their raw provider
- * spellings ("length", "max_tokens", "MAX_TOKENS") must take the
- * salvage/continuation path — file never written as complete.
+ * R5 (guard): the canonical truncation value "length" must take the
+ * salvage path — file never written as complete. Its raw provider
+ * spellings ("max_tokens", "MAX_TOKENS") are mapped at the client
+ * emission sites and pinned there by R2; at this seam a non-canonical
+ * value is an UNCONFIRMED finish (drop + note, no salvage), pinned by
+ * the Pack 02-AMEND A2 tests.
  *
  * R6 (T1, carried from the Pack 01 review): the catch(e: Exception)
  * branch inspects the pending action WITHOUT a final parse. Streaming
@@ -167,40 +175,57 @@ class ChatSessionFinishReasonTest {
     // ------------------------------------------------------------------ R4
 
     @Test
-    fun `R4 every provider word for a normal end takes the clean-stop path`() {
+    fun `R4 a canonical normal end takes the clean-stop path`() {
+        // DECLARED CHANGE (Pack 02-AMEND, A3): this test originally fed
+        // the three raw provider words ("stop", "end_turn", "STOP")
+        // through the fake and relied on a defensive fold inside
+        // ChatSession to re-map them. The fold is deleted: A3 verified
+        // every production emission site emits canonical values, so a
+        // contract-honoring fake completes with "stop" — the value R1
+        // proves each real client produces from its own word. Feeding
+        // raw spellings here would now test a contract violation, whose
+        // defined outcome is the A2 unconfirmed-finish drop, not the
+        // clean-stop path.
         val reply = "Here is the file.\n" +
             "<boltArtifact id=\"a\" title=\"A\">\n" +
             "<boltAction type=\"file\" filePath=\"hello.txt\">\n" +
             "line one\n" +
             "line two\n"
-        for (reason in listOf("stop", "end_turn", "STOP")) {
-            val fs = memoryFs()
-            val dao = FakeMessageDao()
-            val session = newSession(fs, dao, ReasonClient(reply, reason))
-            session.send("write it")
-            assertTrue(
-                "assistant must persist for reason=$reason",
-                dao.assistantPersisted.await(15, TimeUnit.SECONDS),
-            )
-            assertEquals(
-                "file must be written in full for reason=$reason",
-                "line one\nline two\n",
-                fs.readFile("hello.txt"),
-            )
-            val assistants = dao.stored.values.filter { it.role == MessageRole.ASSISTANT.name }
-            assertEquals(1, assistants.size)
-            assertTrue(
-                "clean-stop note must be present for reason=$reason",
-                assistants.single().content.contains("applied as written"),
-            )
-            session.close()
-        }
+        val fs = memoryFs()
+        val dao = FakeMessageDao()
+        val session = newSession(fs, dao, ReasonClient(reply, "stop"))
+        session.send("write it")
+        assertTrue(
+            "assistant must persist for reason=stop",
+            dao.assistantPersisted.await(15, TimeUnit.SECONDS),
+        )
+        assertEquals(
+            "file must be written in full for reason=stop",
+            "line one\nline two\n",
+            fs.readFile("hello.txt"),
+        )
+        val assistants = dao.stored.values.filter { it.role == MessageRole.ASSISTANT.name }
+        assertEquals(1, assistants.size)
+        assertTrue(
+            "clean-stop note must be present for reason=stop",
+            assistants.single().content.contains("applied as written"),
+        )
+        session.close()
     }
 
     // ------------------------------------------------------------------ R5
 
     @Test
-    fun `R5 every provider word for truncation takes the salvage path never the clean-stop path`() {
+    fun `R5 canonical length takes the salvage path never the clean-stop path`() {
+        // DECLARED CHANGE (Pack 02-AMEND, A3): this test originally
+        // looped over "length", "max_tokens" and "MAX_TOKENS" through
+        // the fake, relying on the defensive fold (now deleted) to map
+        // the raw spellings. The spellings are mapped at the client
+        // emission sites and pinned there by R2; this seam accepts the
+        // canonical "length" only, so the loop is now the single
+        // canonical case. Non-canonical values at this seam are the A2
+        // unconfirmed finish (drop + note, no salvage).
+        //
         // Line-complete prefix is 234 chars (>= the 200-char salvage
         // floor); the trailing partial line is never part of it.
         //
@@ -222,30 +247,29 @@ class ChatSessionFinishReasonTest {
             "<boltArtifact id=\"a\" title=\"A\">\n" +
             "<boltAction type=\"file\" filePath=\"big.txt\">\n" +
             body
-        for (reason in listOf("length", "max_tokens", "MAX_TOKENS")) {
-            val fs = memoryFs()
-            val dao = FakeMessageDao()
-            val session = newSession(fs, dao, ReasonClient(reply, reason))
-            session.send("write it")
-            assertTrue(
-                "assistant must persist for reason=$reason",
-                dao.assistantPersisted.await(15, TimeUnit.SECONDS),
-            )
-            val settled = awaitCondition { fs.readFile("big.txt") == prefix }
-            assertTrue("salvage prefix must be saved for reason=$reason", settled)
-            assertEquals(
-                "only the line-complete prefix may be saved for reason=$reason",
-                prefix,
-                fs.readFile("big.txt"),
-            )
-            val assistants = dao.stored.values.filter { it.role == MessageRole.ASSISTANT.name }
-            assertEquals(1, assistants.size)
-            assertFalse(
-                "the clean-stop note must NOT appear for reason=$reason",
-                assistants.single().content.contains("applied as written"),
-            )
-            session.close()
-        }
+        val reason = "length"
+        val fs = memoryFs()
+        val dao = FakeMessageDao()
+        val session = newSession(fs, dao, ReasonClient(reply, reason))
+        session.send("write it")
+        assertTrue(
+            "assistant must persist for reason=$reason",
+            dao.assistantPersisted.await(15, TimeUnit.SECONDS),
+        )
+        val settled = awaitCondition { fs.readFile("big.txt") == prefix }
+        assertTrue("salvage prefix must be saved for reason=$reason", settled)
+        assertEquals(
+            "only the line-complete prefix may be saved for reason=$reason",
+            prefix,
+            fs.readFile("big.txt"),
+        )
+        val assistants = dao.stored.values.filter { it.role == MessageRole.ASSISTANT.name }
+        assertEquals(1, assistants.size)
+        assertFalse(
+            "the clean-stop note must NOT appear for reason=$reason",
+            assistants.single().content.contains("applied as written"),
+        )
+        session.close()
     }
 
     // ------------------------------------------------------------------ R6
