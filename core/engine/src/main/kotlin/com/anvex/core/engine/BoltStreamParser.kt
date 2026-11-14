@@ -28,9 +28,33 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         var actionId = 0
         /** Absolute index into the full message text where the open action's content begins (-1 = none). */
         var actionContentStart = -1
+
+        /** F6: the open action's raw content, appended with only the new suffix per parse call. */
+        val contentBuilder = StringBuilder()
+
+        /** Absolute input index up to which content has been appended to [contentBuilder]. */
+        var contentAppendedUpTo = -1
     }
 
     private val messages = HashMap<String, MessageState>()
+
+    /**
+     * Test instrumentation for the F6 perf budget: total characters the
+     * parser copies while PROCESSING an open action's content (substring
+     * extractions and whole-content transforms on the accumulated content).
+     * The immutable full-content String handed to onActionStream is mandated
+     * by the frozen callback contract and is not counted here.
+     */
+    internal var totalContentCharsCopied: Long = 0
+
+    /**
+     * Test instrumentation, item 5: total characters of content payloads
+     * handed to [ParserCallbacks.onActionStream]. Reported alongside
+     * [totalContentCharsCopied] (processing copies) but NEVER asserted:
+     * each payload is the full accumulated content by contract, so this
+     * number is inherently quadratic in the action's length.
+     */
+    internal var totalStreamPayloadChars: Long = 0
 
     fun parse(messageId: String, input: String): String {
         var state = messages[messageId]
@@ -45,8 +69,17 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         var earlyBreak = false
 
         while (i < input.length) {
+            // ---- F1 tag hold-back ----------------------------------------------
+            // If the unparsed tail is a strict prefix of a known tag opener,
+            // stop and wait for more input — never emit a partial tag as prose
+            // and never advance the cursor past it. (Inside an action the tail
+            // is content, not markup, so the check does not apply there.)
+            if (!st.insideAction && input[i] == '<' && tailIsStrictPrefixOfKnownOpener(input, i)) {
+                break
+            }
+
             // ---- <bolt-quick-actions> block ------------------------------------
-            if (input.startsWith(QUICK_ACTIONS_OPEN, i)) {
+            if (!st.insideAction && input.startsWith(QUICK_ACTIONS_OPEN, i)) {
                 val blockEnd = input.indexOf(QUICK_ACTIONS_CLOSE, i)
                 if (blockEnd != -1) {
                     val block = input.substring(i + QUICK_ACTIONS_OPEN.length, blockEnd)
@@ -54,6 +87,9 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                     i = blockEnd + QUICK_ACTIONS_CLOSE.length
                     continue
                 }
+                // Open tag complete but the block is still streaming in: wait
+                // for the rest instead of leaking the tag into prose.
+                break
             }
 
             if (st.insideArtifact) {
@@ -62,15 +98,20 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                 if (st.insideAction) {
                     val closeIndex = input.indexOf(ACTION_TAG_CLOSE, i)
                     if (closeIndex != -1) {
-                        val action = st.currentAction
-                        val raw = input.substring(i, closeIndex)
-                        var content = (action.content + raw).trim()
-                        if (action is BoltAction.FileAction && !action.filePath.endsWith(".md")) {
-                            content = cleanoutMarkdownSyntax(content)
-                            content = cleanEscapedTags(content)
+                        // A previous chunk may have appended a partial close
+                        // tag as content (it was indistinguishable from
+                        // content then); hand those characters back.
+                        if (st.contentAppendedUpTo > closeIndex) {
+                            st.contentBuilder.setLength(
+                                st.contentBuilder.length - (st.contentAppendedUpTo - closeIndex)
+                            )
+                            st.contentAppendedUpTo = closeIndex
                         }
-                        if (action is BoltAction.FileAction) content += "\n"
-                        val finished = withContent(action, content)
+                        appendContentSuffix(st, input, closeIndex)
+                        val action = st.currentAction
+                        val raw = st.contentBuilder.toString()
+                        totalContentCharsCopied += raw.length
+                        val finished = finishClosedAction(action, raw, (st.actionId - 1).toString())
                         st.currentAction = finished
                         callbacks.onActionClose(
                             ActionCallbackData(messageId, artifact.id, (st.actionId - 1).toString(), finished)
@@ -78,15 +119,23 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                         st.insideAction = false
                         st.currentAction = BoltAction.ShellAction("")
                         st.actionContentStart = -1
+                        st.contentBuilder.setLength(0)
+                        st.contentAppendedUpTo = -1
                         i = closeIndex + ACTION_TAG_CLOSE.length
                     } else {
+                        val appended = appendContentSuffix(st, input, input.length)
                         val action = st.currentAction
-                        if (action is BoltAction.FileAction) {
-                            var content = input.substring(i)
-                            if (!action.filePath.endsWith(".md")) {
-                                content = cleanoutMarkdownSyntax(content)
-                                content = cleanEscapedTags(content)
+                        if (action is BoltAction.FileAction && appended > 0) {
+                            // F4: NO normalization while streaming — the raw
+                            // accumulated content, minus a trailing partial
+                            // close tag that may complete on the next chunk.
+                            val displayLen = st.contentBuilder.length - partialCloseTailLength(st.contentBuilder)
+                            val content = if (displayLen == st.contentBuilder.length) {
+                                st.contentBuilder.toString()
+                            } else {
+                                st.contentBuilder.substring(0, displayLen)
                             }
+                            totalStreamPayloadChars += content.length
                             callbacks.onActionStream(
                                 ActionCallbackData(
                                     messageId, artifact.id, (st.actionId - 1).toString(),
@@ -107,6 +156,8 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                             st.insideAction = true
                             st.currentAction = parseActionTag(input, actionOpenIndex, actionEndIndex)
                             st.actionContentStart = actionEndIndex + 1
+                            st.contentBuilder.setLength(0)
+                            st.contentAppendedUpTo = actionEndIndex + 1
                             callbacks.onActionOpen(
                                 ActionCallbackData(messageId, artifact.id, st.actionId.toString(), st.currentAction)
                             )
@@ -152,8 +203,9 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                         val openTagEnd = input.indexOf('>', j)
                         if (openTagEnd != -1) {
                             val artifactTag = input.substring(i, openTagEnd + 1)
-                            val title = extractAttribute(artifactTag, "title") ?: ""
-                            val type = extractAttribute(artifactTag, "type")
+                            val artifactAttrs = parseAttributes(artifactTag)
+                            val title = artifactAttrs["title"] ?: ""
+                            val type = artifactAttrs["type"]
                             // P0-4 fix (v1.1): respect the id attribute the model supplies
                             // (e.g. <boltArtifact id="project"> -> artifact.id == "project").
                             // The system prompt instructs models to reuse the prior identifier
@@ -162,7 +214,7 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
                             // commented out upstream), but our engine contract (v1.1 §6/§7)
                             // requires compatibility with supplied ids. Blank/missing ids
                             // fall back to a generated one, exactly like upstream.
-                            val suppliedId = extractAttribute(artifactTag, "id")?.trim()
+                            val suppliedId = artifactAttrs["id"]?.trim()
                             val artifactId = if (!suppliedId.isNullOrBlank()) sanitizeArtifactId(suppliedId)
                             else "$messageId-${st.artifactCounter}"
                             st.artifactCounter++
@@ -217,6 +269,8 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         st.insideAction = false
         st.currentAction = BoltAction.ShellAction("")
         st.actionContentStart = -1
+        st.contentBuilder.setLength(0)
+        st.contentAppendedUpTo = -1
         return action
     }
 
@@ -250,63 +304,83 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         st.insideAction = false
         st.currentAction = BoltAction.ShellAction("")
         st.actionContentStart = -1
+        st.contentBuilder.setLength(0)
+        st.contentAppendedUpTo = -1
         return ActionCallbackData(messageId, artifact.id, (st.actionId - 1).toString(), recovered)
     }
 
     /**
      * Flush any pending action at end-of-stream (upstream relies on </boltAction>).
      *
-     * H-06: a stream that ends INSIDE an action (network cut, `max_tokens`
-     * truncation) has produced an incomplete file or command. With
-     * [applyIncomplete] = false the half-written action is dropped instead of
-     * being closed and applied -- a truncated `package.json` or a half-typed
-     * shell command must never run as if it were whole.
+     * H-06 + F5: a stream that ends INSIDE an action (network cut,
+     * `max_tokens` truncation) has produced an incomplete file or command.
+     * The default is DROP — a half-written action is never applied unless
+     * the caller explicitly opts in with [applyIncomplete] = true.
      *
-     * @return true when an unterminated action was pending (dropped or applied).
+     * SAFETY INVARIANT (Pack 01-AMEND item 3): an unterminated SHELL or
+     * START action is NEVER applied by flush under ANY argument shape,
+     * including the explicit opt-in — a truncated command must not run.
+     * Only FILE actions (and other non-executing types) may be applied
+     * under the opt-in. The invariant is pinned by
+     * BoltStreamParserFlushInvariantTest.
+     *
+     * Return contract (Pack 01-AMEND C2): true ⟺ an action was APPLIED
+     * (fired through onActionClose). A dropped pending action returns
+     * false, as does having nothing pending. (Pre-amend, flush returned
+     * true whenever an unterminated action was pending, applied or not;
+     * no production caller reads the value — see the amend report.)
      */
-    fun flush(messageId: String, applyIncomplete: Boolean = true): Boolean =
+    fun flush(messageId: String, applyIncomplete: Boolean = false): Boolean =
         flush(messageId, "", applyIncomplete)
 
     /**
      * [flush] with the complete message text, so a still-open FILE action's
-     * content is recovered from the text (the parser retains only a cursor;
-     * [BoltAction.content] of an unclosed action is always empty). Without
-     * the text, flushing an action whose closing tag the model omitted
-     * would apply an EMPTY file — with it, the file lands whole.
+     * content can be recovered from the text when the caller explicitly
+     * opts into applying it. With no explicit flag the pending action is
+     * dropped, never applied.
      */
-    fun flush(messageId: String, fullText: String, applyIncomplete: Boolean = true): Boolean {
+    fun flush(messageId: String, fullText: String, applyIncomplete: Boolean = false): Boolean {
         val st = messages[messageId] ?: return false
-        if (st.insideArtifact && st.insideAction) {
-            if (!applyIncomplete) {
-                st.insideAction = false
-                st.currentAction = BoltAction.ShellAction("")
-                st.actionContentStart = -1
-                return true
-            }
-            val artifact = st.currentArtifact ?: return false
-            val action = st.currentAction
-            var content = if (action is BoltAction.FileAction && fullText.isNotEmpty() &&
-                st.actionContentStart in 0..fullText.length
-            ) {
-                fullText.substring(st.actionContentStart).trim()
-            } else {
-                action.content.trim()
-            }
-            if (action is BoltAction.FileAction && !action.filePath.endsWith(".md")) {
-                content = cleanoutMarkdownSyntax(content)
-                content = cleanEscapedTags(content)
-            }
-            if (action is BoltAction.FileAction) content += "\n"
-            val finished = withContent(action, content)
-            callbacks.onActionClose(
-                ActionCallbackData(messageId, artifact.id, (st.actionId - 1).toString(), finished)
-            )
-            st.insideAction = false
-            st.currentAction = BoltAction.ShellAction("")
-            st.actionContentStart = -1
-            return true
+        if (!st.insideArtifact || !st.insideAction) return false
+        val action = st.currentAction
+        if (!applyIncomplete || action is BoltAction.ShellAction || action is BoltAction.StartAction) {
+            // DROP — the default, and the ONLY outcome for an unterminated
+            // shell/start action even under the explicit opt-in (item 3).
+            dropOpenAction(st)
+            return false
         }
-        return false
+        val artifact = st.currentArtifact ?: return false
+        val raw = recoveredRawContent(st, action, fullText)
+        val finished = finishClosedAction(action, raw, (st.actionId - 1).toString())
+        callbacks.onActionClose(
+            ActionCallbackData(messageId, artifact.id, (st.actionId - 1).toString(), finished)
+        )
+        dropOpenAction(st)
+        return true
+    }
+
+    /** Clears the still-open action without applying it. */
+    private fun dropOpenAction(st: MessageState) {
+        st.insideAction = false
+        st.currentAction = BoltAction.ShellAction("")
+        st.actionContentStart = -1
+        st.contentBuilder.setLength(0)
+        st.contentAppendedUpTo = -1
+    }
+
+    /**
+     * Raw content of the open action: for a FILE action, recovered from
+     * [fullText] when the caller supplied it (the pre-builder contract);
+     * otherwise the accumulated builder content.
+     */
+    private fun recoveredRawContent(st: MessageState, action: BoltAction, fullText: String): String {
+        return if (action is BoltAction.FileAction && fullText.isNotEmpty() &&
+            st.actionContentStart in 0..fullText.length
+        ) {
+            fullText.substring(st.actionContentStart)
+        } else {
+            st.contentBuilder.toString()
+        }
     }
 
     // ------------------------------------------------------------------ helpers
@@ -322,50 +396,52 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
 
     private fun parseActionTag(input: String, open: Int, end: Int): BoltAction {
         val tag = input.substring(open, end + 1)
-        val type = extractAttribute(tag, "type") ?: ""
+        val attrs = parseAttributes(tag)
+        val type = attrs["type"] ?: ""
         return when (type) {
+            // F3: filePath wins; path is an accepted alias (bolt.diy emits both).
             "file" -> BoltAction.FileAction(
                 "",
-                extractAttribute(tag, "filePath") ?: "",
-                append = extractAttribute(tag, "append") == "true",
+                attrs["filepath"] ?: attrs["path"] ?: "",
+                append = attrs["append"] == "true",
             )
             "shell" -> BoltAction.ShellAction("")
             "start" -> BoltAction.StartAction("")
             "artifact" -> {
-                val format = extractAttribute(tag, "format") ?: "zip"
-                val outputName = extractAttribute(tag, "outputName") ?: "download"
-                val paths = (extractAttribute(tag, "paths") ?: "").split("|").map { it.trim() }.filter { it.isNotBlank() }
-                val title = extractAttribute(tag, "title") ?: ""
+                val format = attrs["format"] ?: "zip"
+                val outputName = attrs["outputname"] ?: "download"
+                val paths = (attrs["paths"] ?: "").split("|").map { it.trim() }.filter { it.isNotBlank() }
+                val title = attrs["title"] ?: ""
                 // v4.6 (media): render parameters for format="mp4" — invalid or
                 // missing values stay 0 and the renderer applies its defaults.
-                val source = extractAttribute(tag, "source") ?: ""
-                val durationSec = extractAttribute(tag, "duration")?.toIntOrNull() ?: 0
-                val fps = extractAttribute(tag, "fps")?.toIntOrNull() ?: 0
-                val width = extractAttribute(tag, "width")?.toIntOrNull() ?: 0
-                val height = extractAttribute(tag, "height")?.toIntOrNull() ?: 0
+                val source = attrs["source"] ?: ""
+                val durationSec = attrs["duration"]?.toIntOrNull() ?: 0
+                val fps = attrs["fps"]?.toIntOrNull() ?: 0
+                val width = attrs["width"]?.toIntOrNull() ?: 0
+                val height = attrs["height"]?.toIntOrNull() ?: 0
                 BoltAction.ArtifactAction("", format, outputName, paths, title, source, durationSec, fps, width, height)
             }
             "mcp" -> BoltAction.ToolAction(
                 type,
-                McpToolTarget.pack(extractAttribute(tag, "server") ?: "", extractAttribute(tag, "tool") ?: ""),
+                McpToolTarget.pack(attrs["server"] ?: "", attrs["tool"] ?: ""),
             )
             "read" -> {
                 // Paged reads (2026-11-06): offset/limit let the model walk a
                 // file larger than one read window instead of re-getting the
                 // same head forever. Invalid values fall back to 0 (= start /
                 // default window), never to a failed parse.
-                val argument = extractAttribute(tag, "path")
-                    ?: extractAttribute(tag, "filePath")
+                val argument = attrs["path"]
+                    ?: attrs["filepath"]
                     ?: ""
-                val offset = extractAttribute(tag, "offset")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
-                val limit = extractAttribute(tag, "limit")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                val offset = attrs["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                val limit = attrs["limit"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
                 BoltAction.ToolAction(type, argument, offset = offset, limit = limit)
             }
             "fetch", "search", "list", "search_code", "extract_archive" -> {
-                val argument = extractAttribute(tag, "url")
-                    ?: extractAttribute(tag, "query")
-                    ?: extractAttribute(tag, "path")
-                    ?: extractAttribute(tag, "filePath")
+                val argument = attrs["url"]
+                    ?: attrs["query"]
+                    ?: attrs["path"]
+                    ?: attrs["filepath"]
                     ?: ""
                 BoltAction.ToolAction(type, argument)
             }
@@ -399,9 +475,193 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         return result
     }
 
-    private fun extractAttribute(tag: String, name: String): String? {
-        val pattern = Regex("""$name="([^"]*)"""", RegexOption.IGNORE_CASE)
-        return pattern.find(tag)?.groupValues?.get(1)
+    private fun extractAttribute(tag: String, name: String): String? =
+        parseAttributes(tag)[name.lowercase()]
+
+    /**
+     * F2: a real attribute tokenizer (replaces the old `name="..."` regex,
+     * which had no word boundaries — `data-path` matched `path` — and only
+     * understood double-quoted values). Names are whole tokens, matched
+     * case-insensitively (keys are stored lowercased); values may be
+     * double-quoted, single-quoted, or bare. `&quot;`, `&apos;` and `&amp;`
+     * are decoded inside attribute values only, `&amp;` last so an escaped
+     * `&amp;quot;` stays literal. First occurrence of a name wins.
+     */
+    private fun parseAttributes(tag: String): Map<String, String> {
+        val result = HashMap<String, String>()
+        var i = 0
+        val n = tag.length
+        // Skip '<' and the tag name itself.
+        if (i < n && tag[i] == '<') i++
+        while (i < n && !tag[i].isWhitespace() && tag[i] != '>' && tag[i] != '/') i++
+        while (i < n) {
+            while (i < n && (tag[i].isWhitespace() || tag[i] == '/')) i++
+            if (i >= n || tag[i] == '>') break
+            val nameStart = i
+            while (i < n && tag[i] != '=' && !tag[i].isWhitespace() && tag[i] != '>' && tag[i] != '/') i++
+            val name = tag.substring(nameStart, i).lowercase()
+            while (i < n && tag[i].isWhitespace()) i++
+            var value: String? = null
+            if (i < n && tag[i] == '=') {
+                i++
+                while (i < n && tag[i].isWhitespace()) i++
+                if (i < n && (tag[i] == '"' || tag[i] == '\'')) {
+                    val quote = tag[i]
+                    i++
+                    val valueStart = i
+                    while (i < n && tag[i] != quote) i++
+                    value = tag.substring(valueStart, i)
+                    if (i < n) i++ // closing quote
+                } else {
+                    val valueStart = i
+                    while (i < n && !tag[i].isWhitespace() && tag[i] != '>' && tag[i] != '/') i++
+                    value = tag.substring(valueStart, i)
+                }
+            }
+            if (name.isNotEmpty() && value != null && name !in result) {
+                result[name] = decodeAttributeValue(value)
+            }
+        }
+        return result
+    }
+
+    private fun decodeAttributeValue(value: String): String {
+        if (!value.contains('&')) return value
+        return value
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+    }
+
+    // ------------------------------------------------------------ F1 helpers
+
+    /**
+     * F1: true when the tail of [input] starting at [i] is a strict prefix
+     * of one of the known tag openers and runs to the end of the input —
+     * the rest of the tag may still arrive with the next chunk.
+     */
+    private fun tailIsStrictPrefixOfKnownOpener(input: String, i: Int): Boolean {
+        val remaining = input.length - i
+        for (opener in KNOWN_OPENERS) {
+            if (remaining < opener.length && input.regionMatches(i, opener, 0, remaining)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // ------------------------------------------------------------ F6 helpers
+
+    /**
+     * Appends only the not-yet-appended content suffix (from the open
+     * action's content start up to [until]) to the content builder.
+     * Returns the number of characters appended this call.
+     */
+    private fun appendContentSuffix(st: MessageState, input: String, until: Int): Int {
+        val from = st.contentAppendedUpTo
+        if (from < 0 || until <= from) return 0
+        val suffix = input.substring(from, until)
+        st.contentBuilder.append(suffix)
+        totalContentCharsCopied += suffix.length
+        st.contentAppendedUpTo = until
+        return suffix.length
+    }
+
+    /** Length of the builder's trailing strict prefix of the action close tag (0 = none). */
+    private fun partialCloseTailLength(builder: StringBuilder): Int {
+        val maxCheck = minOf(ACTION_TAG_CLOSE.length - 1, builder.length)
+        for (len in maxCheck downTo 1) {
+            var matches = true
+            for (k in 0 until len) {
+                if (builder[builder.length - len + k] != ACTION_TAG_CLOSE[k]) {
+                    matches = false
+                    break
+                }
+            }
+            if (matches) return len
+        }
+        return 0
+    }
+
+    // ------------------------------------------------------------ F3/F4 close path
+
+    /**
+     * Produces the action object for an onActionClose: the F3 typed failure
+     * for a file action with no path, otherwise the action with its content
+     * normalized per F4 (or, for a salvage flush, the already-final prefix).
+     */
+    private fun finishClosedAction(
+        action: BoltAction,
+        rawContent: String,
+        actionId: String,
+        salvaged: Boolean = false,
+    ): BoltAction {
+        if (action is BoltAction.FileAction && action.filePath.isBlank()) {
+            return BoltAction.UnknownAction(FAILURE_MISSING_PATH, rawContent)
+        }
+        val content = if (salvaged) rawContent else normalizeClosedContent(action, rawContent, actionId)
+        return withContent(action, content)
+    }
+
+    /**
+     * F4: content normalization happens HERE, at close, never while
+     * streaming. Default is verbatim: the raw body minus the single newline
+     * that separates it from the opening tag, with the single trailing
+     * newline policy applied to file actions. Two narrow exceptions:
+     *  - a whole-document markdown fence is removed, unless the extension
+     *    is a documentation format (.md .mdx .txt .rst);
+     *  - a markup file (.html .htm .xml .svg .jsx .tsx .vue) whose content
+     *    contains zero raw '<' and '>' and at least one &lt;/&gt; entity is
+     *    decoded exactly once (&lt; &gt; first, &amp; last) and the decode
+     *    is reported via onContentNormalized.
+     */
+    private fun normalizeClosedContent(action: BoltAction, raw: String, actionId: String): String {
+        var content = stripOneLeadingNewline(raw)
+        if (action is BoltAction.FileAction) {
+            val ext = action.filePath.substringAfterLast('.', "").lowercase()
+            if (ext !in DOC_EXTENSIONS && startsWithFence(content)) {
+                val cleaned = cleanoutMarkdownSyntax(content)
+                if (cleaned != content) {
+                    totalContentCharsCopied += cleaned.length
+                    content = cleaned
+                }
+            }
+            if (ext in MARKUP_EXTENSIONS && !content.contains('<') && !content.contains('>') &&
+                (content.contains("&lt;") || content.contains("&gt;"))
+            ) {
+                content = content
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&")
+                totalContentCharsCopied += content.length
+                callbacks.onContentNormalized(actionId, NORMALIZED_REASON_FULLY_ESCAPED)
+            }
+            val stripped = stripTrailingNewlines(content)
+            totalContentCharsCopied += stripped.length
+            return stripped + "\n"
+        }
+        return stripTrailingNewlines(content)
+    }
+
+    /** True when the first non-whitespace characters are a code fence. */
+    private fun startsWithFence(content: String): Boolean {
+        var i = 0
+        while (i < content.length && content[i].isWhitespace()) i++
+        return content.startsWith("```", i)
+    }
+
+    /** Removes the single newline separating an action body from its opening tag, if present. */
+    private fun stripOneLeadingNewline(raw: String): String = when {
+        raw.startsWith("\r\n") -> raw.substring(2)
+        raw.startsWith("\n") || raw.startsWith("\r") -> raw.substring(1)
+        else -> raw
+    }
+
+    /** Removes trailing '\n'/'\r' characters only — spaces are content and stay. */
+    private fun stripTrailingNewlines(content: String): String {
+        var end = content.length
+        while (end > 0 && (content[end - 1] == '\n' || content[end - 1] == '\r')) end--
+        return if (end == content.length) content else content.substring(0, end)
     }
 
     /**
@@ -440,6 +700,23 @@ class BoltStreamParser(private val callbacks: ParserCallbacks) {
         private const val QUICK_ACTIONS_CLOSE = "</bolt-quick-actions>"
         private const val QUICK_ACTION_ITEM_OPEN = "<bolt-quick-action"
         private const val QUICK_ACTION_ITEM_CLOSE = "</bolt-quick-action>"
+
+        /** F1: every tag opener a partial tail may be a strict prefix of. */
+        private val KNOWN_OPENERS = listOf(
+            ARTIFACT_TAG_OPEN, ACTION_TAG_OPEN, QUICK_ACTIONS_OPEN, QUICK_ACTION_ITEM_OPEN,
+        )
+
+        /** F3: typed failure emitted at close when a file action has no path at all. */
+        const val FAILURE_MISSING_PATH = "file-missing-path"
+
+        /** T8/F4: reason reported when a fully-escaped markup file is decoded at close. */
+        const val NORMALIZED_REASON_FULLY_ESCAPED = "fully-escaped-markup"
+
+        /** F4: documentation formats never get the markdown-fence cleanout. */
+        private val DOC_EXTENSIONS = setOf("md", "mdx", "txt", "rst")
+
+        /** F4: markup formats eligible for the fully-escaped decode exception. */
+        private val MARKUP_EXTENSIONS = setOf("html", "htm", "xml", "svg", "jsx", "tsx", "vue")
 
         /** Port of upstream `cleanoutMarkdownSyntax` (remove wrapping code fence). */
         internal fun cleanoutMarkdownSyntax(content: String): String {

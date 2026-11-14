@@ -773,11 +773,42 @@ class ChatSession(
                                 lengthCutProse = true
                             }
                         } else {
-                            streamParser.flush(roundId, roundText.toString())
+                            // Clean stop: the stream finished normally, so a
+                            // still-open action is missing only its closing
+                            // tag — a formatting omission, not a truncation.
+                            // EXPLICIT opt-in (Pack 01-AMEND item 2; never the
+                            // parser default): apply the pending action as
+                            // written, and when one was applied, say so in
+                            // the reply. The parser invariant guarantees an
+                            // unterminated shell/start action is never
+                            // applied even under this opt-in.
+                            if (streamParser.flush(roundId, roundText.toString(), applyIncomplete = true)) {
+                                prose.append(
+                                    "\n\n[The reply ended without the closing tag for its last action; " +
+                                        "the pending action was applied as written.]"
+                                )
+                            }
                         }
                     } catch (e: CancellationException) {
                         canceled = true
-                        streamParser.flush(roundId, roundText.toString())
+                        // Bring the parser current with everything received
+                        // before the cancel landed (streaming parses are
+                        // throttled, so the parser can lag roundText), the
+                        // same final parse the normal path runs.
+                        prose.append(streamParser.parse(roundId, roundText.toString()))
+                        // DROP stays (a user-cancelled turn never applies
+                        // its still-open action) but it is not silent
+                        // (Pack 01-AMEND item 2): inspect the pending
+                        // action, drop it via takeOpenAction, and name it
+                        // in the reply. flush() is deliberately not used
+                        // here — its return cannot distinguish "dropped"
+                        // from "nothing pending".
+                        streamParser.takeOpenAction(roundId)?.let { open ->
+                            prose.append(
+                                incompleteFileNote(open, "cancelled")
+                                    ?: "\n\n[Cancelled: an unfinished action was discarded.]"
+                            )
+                        }
                         // The consumer is a child of this coroutineScope — cancel it now so remaining
                         // queued actions stop; already-applied mutations stay journaled (revertible).
                         consumer.cancel()

@@ -91,6 +91,13 @@ interface ParserCallbacks {
     fun onActionStream(data: ActionCallbackData) {}
     fun onActionClose(data: ActionCallbackData) {}
     fun onQuickActions(actions: List<QuickAction>) {}
+
+    /**
+     * Fired when the parser had to normalize an action's content at close
+     * time (today: a fully HTML-escaped markup file decoded once). Default
+     * no-op so existing implementers are unaffected.
+     */
+    fun onContentNormalized(actionId: String, reason: String) {}
 }
 
 /** Packs an MCP target (server and tool) into one argument string. The separator never appears in names. */
