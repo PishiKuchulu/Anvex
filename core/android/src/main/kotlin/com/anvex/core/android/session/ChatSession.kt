@@ -714,14 +714,23 @@ class ChatSession(
                                 streamReasoning = MemoryTags.stripForDisplay(allReasoning.toString().takeLast(20_000))
                             )
                         }
-                        // H-06: only a clean "stop" may flush a still-open action
+                        // H-06: only a clean stop may flush a still-open action
                         // (the common case of a missing </boltAction> at the very
-                        // end). A failed turn or a non-stop finish reason
-                        // (length/max_tokens/…) means the file is INCOMPLETE:
-                        // drop it and say so instead of writing half a file
-                        // as if it were complete.
+                        // end). A failed turn or a truncation-class finish
+                        // reason means the file is INCOMPLETE: drop it and say
+                        // so instead of writing half a file as if complete.
+                        // Pack 02: the classification runs on the CANONICAL
+                        // finish reason (see canonicalFinishReason below) —
+                        // truncated is true ONLY for a failure, "length", or
+                        // "content_filter". Before this, every reason other
+                        // than the literal "stop" counted as truncated, so
+                        // healthy Gemini ("STOP") and Claude ("end_turn")
+                        // replies were misclassified and their files dropped;
+                        // unknown/absent reasons must NOT count as length.
+                        val canonicalReason = canonicalFinishReason(roundFinishReason)
                         val truncated = failure != null ||
-                            (roundFinishReason != null && roundFinishReason != "stop")
+                            canonicalReason == com.anvex.core.ai.FinishReason.LENGTH ||
+                            canonicalReason == com.anvex.core.ai.FinishReason.CONTENT_FILTER
                         if (truncated) {
                             val open = streamParser.takeOpenActionData(roundId, roundText.toString())?.action
                             if (open != null) {
@@ -736,8 +745,13 @@ class ChatSession(
                                 // Only a non-length cut, a spent cap, or a
                                 // failed salvage ends the turn with a note.
                                 val openFile = open as? BoltAction.FileAction
+                                // Pack 02: the old {"length","max_tokens"} string
+                                // set is replaced by the canonical constant; the
+                                // raw provider spellings are folded by
+                                // canonicalFinishReason, so "max_tokens" and
+                                // "MAX_TOKENS" still classify as length here.
                                 val lengthClass = failure == null &&
-                                    roundFinishReason?.lowercase() in setOf("length", "max_tokens")
+                                    canonicalReason == com.anvex.core.ai.FinishReason.LENGTH
                                 if (openFile != null && lengthClass && openFile.append &&
                                     appendPath == openFile.filePath &&
                                     appendContinuations < MAX_APPEND_CONTINUATIONS
@@ -765,7 +779,7 @@ class ChatSession(
                                         ?.let { prose.append(it) }
                                 }
                             } else if (failure == null &&
-                                roundFinishReason?.lowercase() in setOf("length", "max_tokens") &&
+                                canonicalReason == com.anvex.core.ai.FinishReason.LENGTH &&
                                 lengthContinuations < 2
                             ) {
                                 // 15.1: prose cut by the output limit, no file
@@ -819,6 +833,13 @@ class ChatSession(
                             kind = AiError.Kind.UNKNOWN,
                             message = e.message?.take(500).orEmpty().ifBlank { "Unexpected provider failure" },
                         )
+                        // Pack 02 (T1): bring the parser current BEFORE
+                        // inspecting the pending action — streaming parses
+                        // are throttled, so without this final parse (the
+                        // same one the cancellation branch runs) the parser
+                        // lags roundText, takeOpenAction returns null, and
+                        // the pending file is discarded SILENTLY.
+                        prose.append(streamParser.parse(roundId, roundText.toString()))
                         // H-06: same rule as the normal path — a failed turn
                         // never applies its still-open action. A file being
                         // assembled chunk-wise already exists PARTIALLY, so
@@ -1146,6 +1167,28 @@ class ChatSession(
      * appends) is left incomplete: unlike [incompleteFileNote], part of the
      * file DOES exist on disk, and the note must say so truthfully.
      */
+    /**
+     * Pack 02: fold a finish reason onto the canonical
+     * [com.anvex.core.ai.FinishReason] vocabulary for this session's
+     * truncated/length classification. Post-Pack-02 clients already emit
+     * canonical values (this fold is the identity for them); the fold
+     * also covers raw provider spellings from any not-yet-migrated
+     * emission path, so "end_turn", "STOP", "max_tokens" and
+     * "MAX_TOKENS" classify exactly like their canonical equivalents.
+     * Unknown values become OTHER and absent stays null — neither is
+     * ever treated as LENGTH.
+     */
+    private fun canonicalFinishReason(raw: String?): String? =
+        when (raw?.trim()?.lowercase()) {
+            null, "" -> null
+            "stop", "end_turn", "stop_sequence" -> com.anvex.core.ai.FinishReason.STOP
+            "length", "max_tokens" -> com.anvex.core.ai.FinishReason.LENGTH
+            "tool_call", "tool_calls", "tool_use" -> com.anvex.core.ai.FinishReason.TOOL_CALL
+            "content_filter", "safety", "blocklist", "prohibited_content" ->
+                com.anvex.core.ai.FinishReason.CONTENT_FILTER
+            else -> com.anvex.core.ai.FinishReason.OTHER
+        }
+
     private fun partialFileNote(path: String, savedChars: Int, reason: String): String =
         "\n\n[Output stopped early ($reason): file '$path' was PARTIALLY written " +
             "($savedChars characters saved) because the model output was cut off. " +

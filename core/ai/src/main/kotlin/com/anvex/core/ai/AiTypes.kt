@@ -35,6 +35,33 @@ data class ChatRequest(
 /** A web page the provider consulted, reported with native search (Phase 4.2). */
 data class WebSource(val title: String, val url: String)
 
+/**
+ * The canonical finish-reason contract for [StreamEvent.Completed.finishReason]
+ * (Pack 02). A Completed event's finishReason is ALWAYS one of these five
+ * values, or null when the provider reported no finish reason at all.
+ * Provider-native vocabularies must never leak through — every client maps
+ * at its emission site:
+ *
+ *  - OpenAI-compatible: stop→[STOP], length→[LENGTH],
+ *    tool_calls→[TOOL_CALL], content_filter→[CONTENT_FILTER], else→[OTHER]
+ *  - Anthropic: end_turn→[STOP], stop_sequence→[STOP],
+ *    max_tokens→[LENGTH], tool_use→[TOOL_CALL], else→[OTHER]
+ *  - Gemini: STOP→[STOP], MAX_TOKENS→[LENGTH],
+ *    SAFETY/BLOCKLIST/PROHIBITED_CONTENT→[CONTENT_FILTER], else→[OTHER]
+ *
+ * Before this contract existed, Gemini hardcoded "STOP", Anthropic leaked
+ * "end_turn"/"max_tokens" and OpenAI-compatible endpoints leaked their raw
+ * strings, so ChatSession's `!= "stop"` test classified healthy replies as
+ * truncated. Consumers compare against these constants only.
+ */
+object FinishReason {
+    const val STOP = "stop"
+    const val LENGTH = "length"
+    const val TOOL_CALL = "tool_call"
+    const val CONTENT_FILTER = "content_filter"
+    const val OTHER = "other"
+}
+
 sealed class StreamEvent {
     object Started : StreamEvent()
     /** v4.4 (architect feature 1): model reasoning / extended-thinking text, streamed before answer tokens. */
