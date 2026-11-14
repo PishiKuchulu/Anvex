@@ -1,6 +1,7 @@
 package com.anvex.core.engine
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -124,7 +125,7 @@ class BoltStreamParserTest {
     }
 
     @Test
-    fun `file action strips markdown fence and unescapes tags`() {
+    fun `file action strips markdown fence but keeps entities verbatim when raw tags present`() {
         val rec = Recorder()
         val parser = BoltStreamParser(rec)
         val input = """
@@ -141,7 +142,12 @@ class BoltStreamParserTest {
 
         val content = rec.lastFileAction?.content ?: ""
         assertTrue(content.startsWith("const T"))
-        assertTrue(content.contains("<b>hi</b>"))
+        // F4 (parser repair): the fence cleanout still applies, but entity
+        // decoding no longer does — this document contains raw '<' (the
+        // <div>), so it is NOT a fully-escaped document and stays verbatim.
+        // (Before the repair this asserted the decoded "<b>hi</b>".)
+        assertTrue(content.contains("&lt;b&gt;hi&lt;/b&gt;"))
+        assertTrue(content.contains("<div>"))
         assertTrue(!content.contains("```"))
         assertTrue(content.endsWith("\n"))
     }
@@ -224,7 +230,15 @@ class BoltStreamParserTest {
     }
 
     @Test
-    fun `flush closes pending action at end of stream`() {
+    fun `flush drops a pending shell action even under the explicit opt-in`() {
+        // F5/T7 (parser repair): the flush default flipped to DROP — with no
+        // explicit flag the pending shell action is dropped, never applied.
+        // Pack 01-AMEND item 3 (declared expectation change): the opt-in
+        // (applyIncomplete = true) NO LONGER closes an unterminated shell
+        // action either — a truncated command must never run. This half
+        // previously asserted the legacy close (1 actionClose); it now
+        // asserts the invariant (0). The opt-in still applies FILE actions
+        // (see m23 and BoltStreamParserFlushInvariantTest's control).
         val rec = Recorder()
         val parser = BoltStreamParser(rec)
         var full = "<boltArtifact id=\"f\" title=\"F\">"
@@ -233,7 +247,13 @@ class BoltStreamParserTest {
         parser.parse("m9", full)
         assertEquals(0, rec.events.count { it.startsWith("actionClose") })
         parser.flush("m9")
-        assertEquals(1, rec.events.count { it.startsWith("actionClose") })
+        assertEquals(0, rec.events.count { it.startsWith("actionClose") })
+
+        val rec2 = Recorder()
+        val parser2 = BoltStreamParser(rec2)
+        parser2.parse("m9b", full)
+        parser2.flush("m9b", applyIncomplete = true)
+        assertEquals(0, rec2.events.count { it.startsWith("actionClose") })
     }
 
     @Test
@@ -245,7 +265,10 @@ class BoltStreamParserTest {
         full += "<boltAction type=\"file\" filePath=\"package.json\">{ \"name\": \"x\", \"dep"
         parser.parse("m10", full)
         val dropped = parser.flush("m10", applyIncomplete = false)
-        assertEquals(true, dropped)
+        // Pack 01-AMEND C2 (declared expectation change): flush now returns
+        // true ⟺ an action was APPLIED. This drop previously returned true
+        // ("an action was pending"); it now returns false.
+        assertEquals(false, dropped)
         assertEquals(0, rec.events.count { it.startsWith("actionClose") })
     }
 
@@ -349,6 +372,9 @@ class BoltStreamParserTest {
 
     @Test
     fun `flush with the full text recovers an unclosed file action`() {
+        // F5/T7 (parser repair): flush(messageId, fullText) with no explicit
+        // flag now DROPS the unterminated action instead of applying it; the
+        // recovery below happens only under the explicit opt-in.
         val rec = Recorder()
         val parser = BoltStreamParser(rec)
         // The model ended cleanly but omitted the closing tags.
@@ -358,9 +384,19 @@ class BoltStreamParserTest {
             complete body
         """.trimIndent().replace("            ", "")
         parser.parse("m23", input)
-        assertTrue(parser.flush("m23", input))
-        assertEquals("whole.txt", rec.lastFileAction?.filePath)
-        assertEquals("complete body\n", rec.lastFileAction?.content)
+        // Pack 01-AMEND C2 (declared expectation change): the default flush
+        // DROPS, and the return contract is now true ⟺ applied — so this
+        // previously-true call now returns false. The opt-in half below is
+        // unchanged (applied → true).
+        assertFalse(parser.flush("m23", input))
+        assertNull(rec.lastFileAction)
+
+        val rec2 = Recorder()
+        val parser2 = BoltStreamParser(rec2)
+        parser2.parse("m23b", input)
+        assertTrue(parser2.flush("m23b", input, applyIncomplete = true))
+        assertEquals("whole.txt", rec2.lastFileAction?.filePath)
+        assertEquals("complete body\n", rec2.lastFileAction?.content)
     }
 }
 

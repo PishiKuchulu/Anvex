@@ -42,7 +42,14 @@ class ProviderAgentPlanner(private val provider: suspend () -> ProviderClient?) 
         // H-06: on a failed turn the still-open action is dropped, not
         // kept as a plan step (the error below discards the plan anyway;
         // this keeps the invariant explicit).
-        if (failed == null) parser.flush(messageId) else parser.takeOpenAction(messageId)
+        // Flush policy (Pack 01-AMEND item 2, stated explicitly — no
+        // reliance on the parser default): on a SUCCESSFULLY finished
+        // stream a still-open action is missing only its closing tag, so
+        // the planner opts in to applying it; a recovered step still
+        // passes ActionSafetyPolicy and the approval flow before anything
+        // executes. An unterminated shell/start action can never be
+        // recovered this way — the parser drops those under every shape.
+        if (failed == null) parser.flush(messageId, applyIncomplete = true) else parser.takeOpenAction(messageId)
         val failure = failed
         if (failure != null) error(failure)
         val steps = actions.mapIndexed { i, action -> AgentStep("step-$i", "Agent action ${i + 1}", action, ActionSafetyPolicy.assess(action).requiresApproval) }
