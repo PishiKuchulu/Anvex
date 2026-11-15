@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -42,6 +43,15 @@ import java.util.concurrent.TimeUnit
  * A4: a thinking-only reply (reasoning delivered, zero answer tokens,
  * "stop") must not leave the user with a blank message and no
  * explanation.
+ *
+ * Pack 02-AMEND-2:
+ * B1: the A1 note must not claim "Nothing from it was applied" in the
+ * MIXED case — closed actions execute during collect, so a reply can
+ * legitimately write file A and then be blocked mid-B. The note must
+ * name what was applied and what was dropped.
+ * B2: the canonical values "other" and "tool_call" (real production
+ * values — Anthropic pause_turn / unknown stop_reasons map to "other")
+ * take the same UNCONFIRMED drop as absent/unrecognized reasons.
  *
  * Fakes mirror ChatSessionFinishReasonTest's (same harness).
  */
@@ -229,6 +239,91 @@ class ChatSessionFinishReasonAmendTest {
             assistants.single().content.contains("hello.txt"),
         )
         session.close()
+    }
+
+    // ------------------------------------------------------------------ B1
+
+    @Test
+    fun `B1 blocked reply that already applied a closed action must not claim nothing was applied`() {
+        val fs = memoryFs()
+        val dao = FakeMessageDao()
+        // File A is COMPLETE and fully closed — it is dispatched and
+        // executed during collect. File B is left open when the block
+        // lands. The truthful note names both; the A1 note's blanket
+        // "Nothing from it was applied" is false here.
+        val reply = "Writing both files.\n" +
+            "<boltArtifact id=\"a\" title=\"A\">\n" +
+            "<boltAction type=\"file\" filePath=\"hello.txt\">\n" +
+            "line one\n" +
+            "line two\n" +
+            "</boltAction>\n" +
+            "</boltArtifact>\n" +
+            "<boltArtifact id=\"b\" title=\"B\">\n" +
+            "<boltAction type=\"file\" filePath=\"second.txt\">\n" +
+            "partial body\n"
+        val session = newSession(fs, dao, ReasonClient(reply, "content_filter"))
+        session.send("write both")
+        assertTrue(dao.assistantPersisted.await(15, TimeUnit.SECONDS))
+
+        assertEquals(
+            "the closed action was legitimately applied during collect",
+            "line one\nline two\n",
+            fs.readFile("hello.txt"),
+        )
+        assertNull("the open action at the block must be dropped", fs.readFile("second.txt"))
+        val assistants = dao.stored.values.filter { it.role == MessageRole.ASSISTANT.name }
+        assertEquals(1, assistants.size)
+        val message = assistants.single()
+        assertNotNull("the turn is still marked not-successful", message.error)
+        assertFalse(
+            "the note must NOT claim nothing was applied — hello.txt is on disk",
+            message.content.contains("Nothing from it was applied"),
+        )
+        assertTrue(
+            "the note must name what was applied; was: ${message.content}",
+            message.content.contains("hello.txt"),
+        )
+        assertTrue(
+            "the note must name what was dropped; was: ${message.content}",
+            message.content.contains("second.txt"),
+        )
+        session.close()
+    }
+
+    // ------------------------------------------------------------------ B2
+
+    @Test
+    fun `B2 canonical other and tool_call are unconfirmed finishes too`() {
+        val reply = "Here is the file.\n" +
+            "<boltArtifact id=\"a\" title=\"A\">\n" +
+            "<boltAction type=\"file\" filePath=\"hello.txt\">\n" +
+            "line one\n" +
+            "line two\n"
+        for (reason in listOf("other", "tool_call")) {
+            val fs = memoryFs()
+            val dao = FakeMessageDao()
+            val session = newSession(fs, dao, ReasonClient(reply, reason))
+            session.send("write it")
+            assertTrue(
+                "assistant must persist for reason=$reason",
+                dao.assistantPersisted.await(15, TimeUnit.SECONDS),
+            )
+            assertNull(
+                "reason=$reason is not a confirmed clean finish — the file must not be written",
+                fs.readFile("hello.txt"),
+            )
+            val assistants = dao.stored.values.filter { it.role == MessageRole.ASSISTANT.name }
+            assertEquals(1, assistants.size)
+            assertTrue(
+                "the discard must be named for reason=$reason",
+                assistants.single().content.contains("hello.txt"),
+            )
+            assertFalse(
+                "the clean-stop claim must not appear for reason=$reason",
+                assistants.single().content.contains("applied as written"),
+            )
+            session.close()
+        }
     }
 
     // ------------------------------------------------------------------ A4

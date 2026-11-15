@@ -431,6 +431,16 @@ class ChatSession(
         // (after the scope) also reads it, to decide whether leftover alien
         // tool scaffolding may be stripped from the persisted prose.
         var turnActionsExecuted = 0
+        // Pack 02-AMEND-2 (B1): actions the parser has CLOSED this turn,
+        // counted synchronously on the collect thread in onActionClose,
+        // plus their file paths. turnActionsExecuted alone lags at the
+        // A1 note site — the consumer executes asynchronously, so on a
+        // fast stream a closed action can still be queued when the note
+        // is built (it is then applied by the drain below, which joins
+        // before finalize). The closed count is the deterministic
+        // quantity the note's truthfulness gate needs.
+        var turnActionsClosed = 0
+        val turnClosedFilePaths = ArrayList<String>()
         // Turn-local artifact attribution for finalize: the persisted
         // summary must describe THIS turn's artifact, not whatever the
         // shared UI state currently shows — after Stop→Send a newer turn
@@ -613,6 +623,11 @@ class ChatSession(
                         }
 
                         override fun onActionClose(data: ActionCallbackData) {
+                            // Pack 02-AMEND-2 (B1): count the close (and the
+                            // file path) synchronously, before queueing — the
+                            // A1 note's gate reads these on this same thread.
+                            turnActionsClosed++
+                            (data.action as? BoltAction.FileAction)?.let { turnClosedFilePaths.add(it.filePath) }
                             // P0-1 fix: NEVER fire-and-forget. Queue the action; the
                             // consumer (a supervised child coroutine) owns its lifecycle.
                             actionChannel.trySend(data)
@@ -756,9 +771,33 @@ class ChatSession(
                                 AiError.Kind.PROTOCOL,
                                 "The provider blocked this response (content filter).",
                             )
+                            // Pack 02-AMEND-2 (B1): the "nothing applied"
+                            // clause is gated on BOTH action counters.
+                            // Closed actions run during collect (and any
+                            // still queued are applied by the drain that
+                            // joins before finalize), so a reply can
+                            // legitimately apply file A and then be blocked
+                            // mid-B — claiming nothing was applied would
+                            // deny a write that happened, and the user
+                            // would never check or revert it. The executed
+                            // counter alone lags on fast streams (the
+                            // consumer is asynchronous), so the gate also
+                            // reads the parser's synchronous closed count.
+                            // When actions did close, state their count
+                            // and file paths instead; the dropped pending
+                            // action is named by the truncated branch below.
                             prose.append(
                                 "\n\n[The provider blocked this response (content filter) " +
-                                    "before it finished. Nothing from it was applied.]"
+                                    "before it finished. " +
+                                    if (turnActionsExecuted == 0 && turnActionsClosed == 0) {
+                                        "Nothing from it was applied.]"
+                                    } else {
+                                        "$turnActionsClosed action(s) from this reply were already complete" +
+                                            (turnClosedFilePaths.distinct().takeIf { it.isNotEmpty() }?.let {
+                                                " (${it.joinToString(", ")})"
+                                            } ?: "") +
+                                            " and stay in place; the unfinished rest was discarded.]"
+                                    }
                             )
                         }
                         if (truncated) {
