@@ -431,6 +431,16 @@ class ChatSession(
         // (after the scope) also reads it, to decide whether leftover alien
         // tool scaffolding may be stripped from the persisted prose.
         var turnActionsExecuted = 0
+        // Pack 02-AMEND-2 (B1): actions the parser has CLOSED this turn,
+        // counted synchronously on the collect thread in onActionClose,
+        // plus their file paths. turnActionsExecuted alone lags at the
+        // A1 note site — the consumer executes asynchronously, so on a
+        // fast stream a closed action can still be queued when the note
+        // is built (it is then applied by the drain below, which joins
+        // before finalize). The closed count is the deterministic
+        // quantity the note's truthfulness gate needs.
+        var turnActionsClosed = 0
+        val turnClosedFilePaths = ArrayList<String>()
         // Turn-local artifact attribution for finalize: the persisted
         // summary must describe THIS turn's artifact, not whatever the
         // shared UI state currently shows — after Stop→Send a newer turn
@@ -613,6 +623,11 @@ class ChatSession(
                         }
 
                         override fun onActionClose(data: ActionCallbackData) {
+                            // Pack 02-AMEND-2 (B1): count the close (and the
+                            // file path) synchronously, before queueing — the
+                            // A1 note's gate reads these on this same thread.
+                            turnActionsClosed++
+                            (data.action as? BoltAction.FileAction)?.let { turnClosedFilePaths.add(it.filePath) }
                             // P0-1 fix: NEVER fire-and-forget. Queue the action; the
                             // consumer (a supervised child coroutine) owns its lifecycle.
                             actionChannel.trySend(data)
@@ -714,14 +729,77 @@ class ChatSession(
                                 streamReasoning = MemoryTags.stripForDisplay(allReasoning.toString().takeLast(20_000))
                             )
                         }
-                        // H-06: only a clean "stop" may flush a still-open action
+                        // H-06: only a clean stop may flush a still-open action
                         // (the common case of a missing </boltAction> at the very
-                        // end). A failed turn or a non-stop finish reason
-                        // (length/max_tokens/…) means the file is INCOMPLETE:
-                        // drop it and say so instead of writing half a file
-                        // as if it were complete.
+                        // end). A failed turn or a truncation-class finish
+                        // reason means the file is INCOMPLETE: drop it and say
+                        // so instead of writing half a file as if complete.
+                        // Pack 02: truncated is true ONLY for a failure,
+                        // "length", or "content_filter". Before this, every
+                        // reason other than the literal "stop" counted as
+                        // truncated, so healthy Gemini ("STOP") and Claude
+                        // ("end_turn") replies were misclassified and their
+                        // files dropped; unknown/absent reasons must NOT
+                        // count as length.
+                        // Pack 02-AMEND: the classification is a three-way
+                        // switch on the contract value itself (below):
+                        // LENGTH/CONTENT_FILTER/failure -> truncated;
+                        // STOP -> clean stop; ANYTHING ELSE (absent, OTHER,
+                        // TOOL_CALL, or a value outside the contract) ->
+                        // UNCONFIRMED: drop + note, never apply, never
+                        // salvage. The defensive fold that used to
+                        // re-map raw spellings here is deleted — A3
+                        // verified every production emission site already
+                        // emits canonical values (OpenCodeClient delegates
+                        // to OpenAiCompatibleClient; FallbackProviderClient
+                        // only re-stamps), so a non-canonical value at
+                        // this seam is a contract violation and must be
+                        // treated as unconfirmed, not silently absorbed.
                         val truncated = failure != null ||
-                            (roundFinishReason != null && roundFinishReason != "stop")
+                            roundFinishReason == com.anvex.core.ai.FinishReason.LENGTH ||
+                            roundFinishReason == com.anvex.core.ai.FinishReason.CONTENT_FILTER
+                        // A1 (Pack 02-AMEND): a content_filter outcome must
+                        // never be silent. Mark the turn failed and say so
+                        // in the reply, whether or not an action is open —
+                        // before this, a blocked reply with no open action
+                        // persisted as a normal successful message with
+                        // error = null and no note.
+                        if (failure == null &&
+                            roundFinishReason == com.anvex.core.ai.FinishReason.CONTENT_FILTER
+                        ) {
+                            failure = AiError(
+                                AiError.Kind.PROTOCOL,
+                                "The provider blocked this response (content filter).",
+                            )
+                            // Pack 02-AMEND-2 (B1): the "nothing applied"
+                            // clause is gated on BOTH action counters.
+                            // Closed actions run during collect (and any
+                            // still queued are applied by the drain that
+                            // joins before finalize), so a reply can
+                            // legitimately apply file A and then be blocked
+                            // mid-B — claiming nothing was applied would
+                            // deny a write that happened, and the user
+                            // would never check or revert it. The executed
+                            // counter alone lags on fast streams (the
+                            // consumer is asynchronous), so the gate also
+                            // reads the parser's synchronous closed count.
+                            // When actions did close, state their count
+                            // and file paths instead; the dropped pending
+                            // action is named by the truncated branch below.
+                            prose.append(
+                                "\n\n[The provider blocked this response (content filter) " +
+                                    "before it finished. " +
+                                    if (turnActionsExecuted == 0 && turnActionsClosed == 0) {
+                                        "Nothing from it was applied.]"
+                                    } else {
+                                        "$turnActionsClosed action(s) from this reply were already complete" +
+                                            (turnClosedFilePaths.distinct().takeIf { it.isNotEmpty() }?.let {
+                                                " (${it.joinToString(", ")})"
+                                            } ?: "") +
+                                            " and stay in place; the unfinished rest was discarded.]"
+                                    }
+                            )
+                        }
                         if (truncated) {
                             val open = streamParser.takeOpenActionData(roundId, roundText.toString())?.action
                             if (open != null) {
@@ -736,8 +814,13 @@ class ChatSession(
                                 // Only a non-length cut, a spent cap, or a
                                 // failed salvage ends the turn with a note.
                                 val openFile = open as? BoltAction.FileAction
+                                // Pack 02: the old {"length","max_tokens"} string
+                                // set is replaced by the canonical constant.
+                                // The raw spellings are mapped at the client
+                                // emission sites (Pack 02 / A3), so only the
+                                // canonical value reaches this check.
                                 val lengthClass = failure == null &&
-                                    roundFinishReason?.lowercase() in setOf("length", "max_tokens")
+                                    roundFinishReason == com.anvex.core.ai.FinishReason.LENGTH
                                 if (openFile != null && lengthClass && openFile.append &&
                                     appendPath == openFile.filePath &&
                                     appendContinuations < MAX_APPEND_CONTINUATIONS
@@ -765,14 +848,14 @@ class ChatSession(
                                         ?.let { prose.append(it) }
                                 }
                             } else if (failure == null &&
-                                roundFinishReason?.lowercase() in setOf("length", "max_tokens") &&
+                                roundFinishReason == com.anvex.core.ai.FinishReason.LENGTH &&
                                 lengthContinuations < 2
                             ) {
                                 // 15.1: prose cut by the output limit, no file
                                 // action open — the next round continues it.
                                 lengthCutProse = true
                             }
-                        } else {
+                        } else if (roundFinishReason == com.anvex.core.ai.FinishReason.STOP) {
                             // Clean stop: the stream finished normally, so a
                             // still-open action is missing only its closing
                             // tag — a formatting omission, not a truncation.
@@ -787,6 +870,25 @@ class ChatSession(
                                     "\n\n[The reply ended without the closing tag for its last action; " +
                                         "the pending action was applied as written.]"
                                 )
+                            }
+                        } else {
+                            // UNCONFIRMED finish (Pack 02-AMEND, A2): the
+                            // stream ended without a confirmed clean finish
+                            // — no finish reason at all (a gateway closing
+                            // cleanly without a final frame), canonical
+                            // OTHER/TOOL_CALL, or a value outside the
+                            // contract. Absence of a reason is NOT a clean
+                            // finish: the pending action is dropped and
+                            // named, never applied (a half file must not
+                            // land as complete) and never salvaged or
+                            // continued (it is not a length cut either).
+                            val open = streamParser.takeOpenActionData(roundId, roundText.toString())?.action
+                            if (open != null) {
+                                incompleteFileNote(
+                                    open,
+                                    roundFinishReason?.let { "finish_reason=$it" }
+                                        ?: "no finish reason was reported",
+                                )?.let { prose.append(it) }
                             }
                         }
                     } catch (e: CancellationException) {
@@ -819,6 +921,13 @@ class ChatSession(
                             kind = AiError.Kind.UNKNOWN,
                             message = e.message?.take(500).orEmpty().ifBlank { "Unexpected provider failure" },
                         )
+                        // Pack 02 (T1): bring the parser current BEFORE
+                        // inspecting the pending action — streaming parses
+                        // are throttled, so without this final parse (the
+                        // same one the cancellation branch runs) the parser
+                        // lags roundText, takeOpenAction returns null, and
+                        // the pending file is discarded SILENTLY.
+                        prose.append(streamParser.parse(roundId, roundText.toString()))
                         // H-06: same rule as the normal path — a failed turn
                         // never applies its still-open action. A file being
                         // assembled chunk-wise already exists PARTIALLY, so

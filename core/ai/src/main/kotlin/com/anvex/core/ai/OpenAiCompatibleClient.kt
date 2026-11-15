@@ -91,7 +91,7 @@ class OpenAiCompatibleClient(
         }
         when {
             outcome.failure != null -> emit(StreamEvent.Failed(outcome.failure))
-            outcome.sawDone || outcome.tokenCount > 0 -> emit(StreamEvent.Completed(outcome.finishReason, outcome.usage))
+            outcome.sawDone || outcome.tokenCount > 0 -> emit(StreamEvent.Completed(canonicalFinishReason(outcome.finishReason), outcome.usage))
             else -> emit(StreamEvent.Failed(AiError(AiError.Kind.PROTOCOL, "Stream ended without content")))
         }
     }.flowOn(Dispatchers.IO)
@@ -103,6 +103,23 @@ class OpenAiCompatibleClient(
         val finishReason: String?,
         val usage: Usage?,
     )
+
+    /**
+     * Pack 02: map the endpoint's raw finish_reason onto the canonical
+     * [FinishReason] contract at the emission site. OpenAI's vocabulary
+     * is close to canonical but not identical ("tool_calls" plural), and
+     * compatible endpoints invent their own strings — those become
+     * [FinishReason.OTHER], never a leak of the raw value. Null stays
+     * null (provider reported none).
+     */
+    private fun canonicalFinishReason(raw: String?): String? = when (raw?.trim()?.lowercase()) {
+        null, "" -> null
+        "stop" -> FinishReason.STOP
+        "length" -> FinishReason.LENGTH
+        "tool_calls" -> FinishReason.TOOL_CALL
+        "content_filter" -> FinishReason.CONTENT_FILTER
+        else -> FinishReason.OTHER
+    }
 
     /**
      * Provider vocabulary for this endpoint's reasoning knob. OpenAI and

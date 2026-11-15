@@ -107,6 +107,14 @@ class GeminiClient(
         var usage: Usage? = null
         var failure: AiError? = null
         var tokenCount = 0
+        var reasoningCount = 0
+        // Pack 02: the candidate's REAL finishReason, captured per frame
+        // (it typically arrives on the final one) and mapped onto the
+        // canonical contract at emission. Before this, the value was
+        // read only for the safety check and then discarded — the
+        // completion hardcoded "STOP", so a MAX_TOKENS truncation was
+        // invisible and no continuation could ever fire.
+        var lastFinishReason: String? = null
 
         Sse.stream(http, req) { err -> failure = err }.collect { frame ->
             val obj = try { json.parseToJsonElement(frame.data).jsonObjectOrNull } catch (_: Exception) { null }
@@ -123,10 +131,13 @@ class GeminiClient(
             }
             val candidate = obj["candidates"]?.jsonArrayOrNull?.firstOrNull()?.jsonObjectOrNull
             val finishReason = candidate?.get("finishReason")?.jsonPrimitiveOrNull?.contentOrNull
-            if (finishReason.equals("SAFETY", ignoreCase = true) || finishReason.equals("BLOCKLIST", ignoreCase = true) || finishReason.equals("PROHIBITED_CONTENT", ignoreCase = true)) {
-                failure = AiError(AiError.Kind.PROTOCOL, "Gemini blocked the response: ${finishReason}")
-                return@collect
-            }
+            // Pack 02: a candidate-level block (SAFETY / BLOCKLIST /
+            // PROHIBITED_CONTENT) is a finish reason, not a protocol
+            // failure — it is captured here and emitted as
+            // Completed("content_filter") so ChatSession applies its
+            // truncation handling. (A promptFeedback block above stays
+            // a failure: the prompt itself was rejected.)
+            if (finishReason != null) lastFinishReason = finishReason
             candidate
                 ?.get("content")?.jsonObjectOrNull
                 ?.get("parts")?.jsonArrayOrNull
@@ -138,6 +149,7 @@ class GeminiClient(
                         // part.thought == true — surface them as reasoning, not answer text.
                         val isThought = partObj?.get("thought")?.jsonPrimitiveOrNull?.contentOrNull == "true"
                         if (isThought) {
+                            reasoningCount++
                             emit(StreamEvent.Reasoning(text))
                         } else {
                             tokenCount++
@@ -164,10 +176,29 @@ class GeminiClient(
         val err = failure
         when {
             err != null -> emit(StreamEvent.Failed(err))
-            tokenCount > 0 -> emit(StreamEvent.Completed("STOP", usage))
+            // Pack 02 / R7: reasoning counts as delivered content — a
+            // thinking-only reply (every part thought=true) that ends
+            // with a finish reason completes as a distinct empty-answer
+            // outcome, Completed(canonical reason) with no Token events,
+            // instead of the old Failed("Stream ended without content").
+            tokenCount > 0 || reasoningCount > 0 || lastFinishReason != null ->
+                emit(StreamEvent.Completed(canonicalFinishReason(lastFinishReason), usage))
             else -> emit(StreamEvent.Failed(AiError(AiError.Kind.PROTOCOL, "Stream ended without content")))
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Pack 02: map Gemini's raw finishReason onto the canonical
+     * [FinishReason] contract at the emission site. Null stays null
+     * (provider reported none); unknown values become [FinishReason.OTHER].
+     */
+    private fun canonicalFinishReason(raw: String?): String? = when (raw?.trim()?.uppercase()) {
+        null, "" -> null
+        "STOP" -> FinishReason.STOP
+        "MAX_TOKENS" -> FinishReason.LENGTH
+        "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT" -> FinishReason.CONTENT_FILTER
+        else -> FinishReason.OTHER
+    }
 
     override suspend fun listModels(): List<ModelInfo> {
         val modelsUrlBuilder = base.toHttpUrl().newBuilder()

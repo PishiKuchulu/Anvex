@@ -198,7 +198,7 @@ class AnthropicClient(
         val err = failure
         when {
             err != null -> emit(StreamEvent.Failed(err))
-            sawStop || tokenCount > 0 -> emit(StreamEvent.Completed(stopReason, usage))
+            sawStop || tokenCount > 0 -> emit(StreamEvent.Completed(canonicalFinishReason(stopReason), usage))
             else -> emit(StreamEvent.Failed(AiError(AiError.Kind.PROTOCOL, "Stream ended without content")))
         }
     }.flowOn(Dispatchers.IO)
@@ -259,6 +259,21 @@ class AnthropicClient(
     }
 
     /** Anthropic splits usage across message_start / message_delta — merge per field. */
+    /**
+     * Pack 02: map Anthropic's raw stop_reason onto the canonical
+     * [FinishReason] contract at the emission site — "end_turn" is a
+     * NORMAL end and must reach consumers as [FinishReason.STOP], not
+     * as a foreign string they misread as truncation. Null stays null
+     * (provider reported none); unknown values become [FinishReason.OTHER].
+     */
+    private fun canonicalFinishReason(raw: String?): String? = when (raw?.trim()?.lowercase()) {
+        null, "" -> null
+        "end_turn", "stop_sequence" -> FinishReason.STOP
+        "max_tokens" -> FinishReason.LENGTH
+        "tool_use" -> FinishReason.TOOL_CALL
+        else -> FinishReason.OTHER
+    }
+
     private fun mergeUsage(current: Usage?, update: Usage): Usage = Usage(
         promptTokens = if (update.promptTokens > 0) update.promptTokens else current?.promptTokens ?: 0,
         completionTokens = if (update.completionTokens > 0) update.completionTokens else current?.completionTokens ?: 0,
